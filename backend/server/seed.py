@@ -21,7 +21,7 @@ Currency: All prices are in Kenyan Shillings (KES)
 import os
 import sys
 from datetime import datetime, timedelta
-import hashlib
+
 from flask import Flask
 from extensions import db
 from config import Config
@@ -37,13 +37,12 @@ from models import (
     DeviceStatus, InfrastructureStatus, TicketStatus, TicketPriority,
     CustomerNoteType, NotificationPriority
 )
+from werkzeug.security import generate_password_hash
 
 # Add the current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-def generate_password_hash(password):
-    """Simple password hashing function"""
-    return hashlib.sha256(password.encode()).hexdigest()
+
 
 def create_app():
     """Create Flask application context"""
@@ -62,7 +61,7 @@ def seed_users():
     # Admin users
     admin_users = [
         {
-            'email': 'admin@infora.com',
+            'email': 'admin1@infora.com',
             'password': 'admin123',
             'first_name': 'System',
             'last_name': 'Administrator',
@@ -866,6 +865,13 @@ def main():
     
     with app.app_context():
         try:
+            # Reset DB (drop & recreate all tables)
+            print("🗑️ Dropping all tables...")
+            db.drop_all()
+            print("📦 Creating fresh tables...")
+            db.create_all()
+
+
             # Seed data in order of dependencies
             seed_users()
             seed_service_plans()

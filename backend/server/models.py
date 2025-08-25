@@ -382,7 +382,7 @@ class Ticket(db.Model):
     resolved_note = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
-
+    
     # Foreign Key To store customer id
     customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False)
     # Relationship mapping the ticket to the related customer
@@ -407,7 +407,7 @@ class TicketMessage(db.Model):
     is_internal = db.Column(db.Boolean, default=False) # Internal message cannot be visible to the customer
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
-
+    
     # Relationship mapping the ticket message to the related ticket
     ticket = db.relationship('Ticket', back_populates="messages")
 
@@ -948,4 +948,4 @@ class SystemSetting(db.Model):
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
     
     def __repr__(self):
-        return f"<SystemSetting {self.key} ({self.value})>"
+        return f"<SystemSetting {self.key} ({self.value})>" 
