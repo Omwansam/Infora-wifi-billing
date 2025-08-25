@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { payments } from '../../data/mockData';
 
 export default function PaymentsPage() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,7 +24,7 @@ export default function PaymentsPage() {
 
   const filteredPayments = payments.filter(payment => {
     const matchesSearch = payment.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         payment.invoiceId.toLowerCase().includes(searchTerm.toLowerCase());
+                         payment.reference.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || payment.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -46,11 +47,12 @@ export default function PaymentsPage() {
 
   const getMethodIcon = (method) => {
     const methodConfig = {
-      credit_card: { icon: CreditCard, color: 'text-blue-600' },
-      bank_transfer: { icon: Banknote, color: 'text-green-600' },
-      paypal: { icon: DollarSign, color: 'text-purple-600' }
+      'M-Pesa': { icon: DollarSign, color: 'text-green-600' },
+      'Bank Transfer': { icon: Banknote, color: 'text-blue-600' },
+      'Credit Card': { icon: CreditCard, color: 'text-purple-600' },
+      'PayPal': { icon: DollarSign, color: 'text-purple-600' }
     };
-    const config = methodConfig[method] || methodConfig.credit_card;
+    const config = methodConfig[method] || methodConfig['M-Pesa'];
     const Icon = config.icon;
     return <Icon className={`h-4 w-4 ${config.color}`} />;
   };
@@ -148,7 +150,7 @@ export default function PaymentsPage() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search payments by customer or invoice..."
+                  placeholder="Search payments by customer or reference..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
@@ -213,7 +215,7 @@ export default function PaymentsPage() {
                   <tr key={payment.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{payment.id}</div>
-                      <div className="text-sm text-gray-500">{payment.invoiceId}</div>
+                      <div className="text-sm text-gray-500">{payment.reference}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{payment.customerName}</div>
@@ -225,7 +227,7 @@ export default function PaymentsPage() {
                       <div className="flex items-center">
                         {getMethodIcon(payment.method)}
                         <span className="ml-2 text-sm text-gray-900 capitalize">
-                          {payment.method.replace('_', ' ')}
+                          {payment.method}
                         </span>
                       </div>
                     </td>

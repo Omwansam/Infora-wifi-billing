@@ -2,23 +2,21 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, User, Mail, Phone, MapPin, Wifi, CreditCard } from 'lucide-react';
-import { servicePlans } from '../../data/mockData';
+import { customerService } from '../../services/customerService';
 import toast from 'react-hot-toast';
 
 export default function CustomerForm() {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
+    name: '',
     email: '',
     phone: '',
     address: '',
-    city: '',
-    state: '',
-    zipCode: '',
-    plan: '',
+    package: 'Basic WiFi',
     status: 'active',
-    notes: ''
+    balance: 0.00,
+    usage_percentage: 0,
+    device_count: 1
   });
   const [loading, setLoading] = useState(false);
 
@@ -34,12 +32,20 @@ export default function CustomerForm() {
     setLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      toast.success('Customer added successfully!');
-      navigate('/customers');
+      console.log('Submitting customer data:', formData);
+      
+      const result = await customerService.createCustomer(formData);
+      
+      if (result.success) {
+        toast.success('Customer added successfully!');
+        navigate('/customers');
+      } else {
+        console.error('Failed to create customer:', result.error);
+        toast.error(result.error || 'Failed to add customer');
+      }
     } catch (error) {
-      toast.error('Failed to add customer');
+      console.error('Error creating customer:', error);
+      toast.error('Failed to add customer: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -88,34 +94,37 @@ export default function CustomerForm() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-2">
-                    First Name *
+                  <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                    Full Name *
                   </label>
                   <input
                     type="text"
-                    id="firstName"
-                    name="firstName"
-                    value={formData.firstName}
+                    id="name"
+                    name="name"
+                    value={formData.name}
                     onChange={handleChange}
                     required
                     className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    placeholder="John"
+                    placeholder="John Doe"
                   />
                 </div>
                 <div>
-                  <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-2">
-                    Last Name *
+                  <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
+                    Phone Number *
                   </label>
-                  <input
-                    type="text"
-                    id="lastName"
-                    name="lastName"
-                    value={formData.lastName}
-                    onChange={handleChange}
-                    required
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    placeholder="Doe"
-                  />
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="tel"
+                      id="phone"
+                      name="phone"
+                      value={formData.phone}
+                      onChange={handleChange}
+                      required
+                      className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      placeholder="+254700123456"
+                    />
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
@@ -135,24 +144,6 @@ export default function CustomerForm() {
                     />
                   </div>
                 </div>
-                <div>
-                  <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                    Phone Number *
-                  </label>
-                  <div className="relative">
-                    <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                    <input
-                      type="tel"
-                      id="phone"
-                      name="phone"
-                      value={formData.phone}
-                      onChange={handleChange}
-                      required
-                      className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="+1 (555) 123-4567"
-                    />
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -162,69 +153,20 @@ export default function CustomerForm() {
                 <MapPin className="h-5 w-5 mr-2 text-blue-600" />
                 Address Information
               </h3>
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
-                    Street Address *
-                  </label>
-                  <input
-                    type="text"
-                    id="address"
-                    name="address"
-                    value={formData.address}
-                    onChange={handleChange}
-                    required
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    placeholder="123 Main Street"
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label htmlFor="city" className="block text-sm font-medium text-gray-700 mb-2">
-                      City *
-                    </label>
-                    <input
-                      type="text"
-                      id="city"
-                      name="city"
-                      value={formData.city}
-                      onChange={handleChange}
-                      required
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="New York"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="state" className="block text-sm font-medium text-gray-700 mb-2">
-                      State *
-                    </label>
-                    <input
-                      type="text"
-                      id="state"
-                      name="state"
-                      value={formData.state}
-                      onChange={handleChange}
-                      required
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="NY"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="zipCode" className="block text-sm font-medium text-gray-700 mb-2">
-                      ZIP Code *
-                    </label>
-                    <input
-                      type="text"
-                      id="zipCode"
-                      name="zipCode"
-                      value={formData.zipCode}
-                      onChange={handleChange}
-                      required
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      placeholder="10001"
-                    />
-                  </div>
-                </div>
+              <div>
+                <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
+                  Address *
+                </label>
+                <input
+                  type="text"
+                  id="address"
+                  name="address"
+                  value={formData.address}
+                  onChange={handleChange}
+                  required
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  placeholder="123 Main Street, Nairobi"
+                />
               </div>
             </div>
 
@@ -234,25 +176,23 @@ export default function CustomerForm() {
                 <Wifi className="h-5 w-5 mr-2 text-blue-600" />
                 Service Information
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <label htmlFor="plan" className="block text-sm font-medium text-gray-700 mb-2">
-                    Service Plan *
+                  <label htmlFor="package" className="block text-sm font-medium text-gray-700 mb-2">
+                    Service Package *
                   </label>
                   <select
-                    id="plan"
-                    name="plan"
-                    value={formData.plan}
+                    id="package"
+                    name="package"
+                    value={formData.package}
                     onChange={handleChange}
                     required
                     className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   >
-                    <option value="">Select a plan</option>
-                    {servicePlans.map((plan) => (
-                      <option key={plan.id} value={plan.name}>
-                        {plan.name} - {plan.speed} (${plan.price}/month)
-                      </option>
-                    ))}
+                    <option value="Basic WiFi">Basic WiFi</option>
+                    <option value="Standard WiFi">Standard WiFi</option>
+                    <option value="Premium WiFi">Premium WiFi</option>
+                    <option value="Business WiFi">Business WiFi</option>
                   </select>
                 </div>
                 <div>
@@ -272,30 +212,26 @@ export default function CustomerForm() {
                     <option value="suspended">Suspended</option>
                   </select>
                 </div>
+                <div>
+                  <label htmlFor="device_count" className="block text-sm font-medium text-gray-700 mb-2">
+                    Device Count
+                  </label>
+                  <input
+                    type="number"
+                    id="device_count"
+                    name="device_count"
+                    value={formData.device_count}
+                    onChange={handleChange}
+                    min="1"
+                    max="10"
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    placeholder="1"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Additional Information */}
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <CreditCard className="h-5 w-5 mr-2 text-blue-600" />
-                Additional Information
-              </h3>
-              <div>
-                <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-2">
-                  Notes
-                </label>
-                <textarea
-                  id="notes"
-                  name="notes"
-                  value={formData.notes}
-                  onChange={handleChange}
-                  rows={4}
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  placeholder="Any additional notes about this customer..."
-                />
-              </div>
-            </div>
+
 
             {/* Form Actions */}
             <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">

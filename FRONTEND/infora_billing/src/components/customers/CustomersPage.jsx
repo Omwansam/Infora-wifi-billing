@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Search,
   Plus,
@@ -12,22 +12,155 @@ import {
   UserPlus,
   Users,
   DollarSign,
-  Wifi
+  Wifi,
+  RefreshCw,
+  TrendingUp
 } from 'lucide-react';
-import { customers } from '../../data/mockData';
+import { customerService } from '../../services/customerService';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import toast from 'react-hot-toast';
 
 export default function CustomersPage() {
+  const navigate = useNavigate();
+  const [customers, setCustomers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-
-  const filteredCustomers = customers.filter(customer => {
-    const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         customer.phone.includes(searchTerm);
-    const matchesStatus = statusFilter === 'all' || customer.status === statusFilter;
-    return matchesSearch && matchesStatus;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCustomers, setTotalCustomers] = useState(0);
+  const [stats, setStats] = useState({
+    total_customers: 0,
+    active_customers: 0,
+    suspended_customers: 0,
+    pending_customers: 0,
+    average_balance: 0,
+    total_balance: 0,
+    customers_with_balance: 0,
+    average_usage: 0
   });
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [customerToDelete, setCustomerToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Load customers
+  const loadCustomers = async () => {
+    try {
+      setLoading(true);
+      const params = {
+        page: currentPage,
+        per_page: 20,
+        search: searchTerm || undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined
+      };
+      
+      console.log('Loading customers with params:', params);
+      const result = await customerService.getCustomers(params);
+      console.log('Customer API result:', result);
+      
+      if (result.success) {
+        setCustomers(result.data.customers);
+        setTotalPages(result.data.pages);
+        setTotalCustomers(result.data.total);
+        console.log('Customers loaded successfully:', result.data.customers.length);
+      } else {
+        console.error('Failed to load customers:', result.error);
+        toast.error(result.error || 'Failed to load customers');
+      }
+    } catch (error) {
+      console.error('Error loading customers:', error);
+      toast.error('Failed to load customers: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load stats
+  const loadStats = async () => {
+    try {
+      setStatsLoading(true);
+      console.log('Loading customer stats...');
+      const result = await customerService.getCustomerStats();
+      console.log('Stats API result:', result);
+      
+      if (result.success) {
+        setStats(result.data);
+        console.log('Stats loaded successfully:', result.data);
+      } else {
+        console.error('Failed to load stats:', result.error);
+        toast.error('Failed to load customer statistics');
+      }
+    } catch (error) {
+      console.error('Error loading stats:', error);
+      toast.error('Failed to load customer statistics');
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCustomers();
+    loadStats();
+  }, [currentPage, searchTerm, statusFilter]);
+
+  const handleSearch = (e) => {
+    setSearchTerm(e.target.value);
+    setCurrentPage(1);
+  };
+
+  const handleStatusFilter = (e) => {
+    setStatusFilter(e.target.value);
+    setCurrentPage(1);
+  };
+
+  const handleRefresh = () => {
+    loadCustomers();
+    loadStats();
+  };
+
+  // Action handlers
+  const handleViewCustomer = (customerId) => {
+    navigate(`/customers/${customerId}`);
+  };
+
+  const handleEditCustomer = (customerId) => {
+    navigate(`/customers/${customerId}/edit`);
+  };
+
+  const handleDeleteCustomer = (customer) => {
+    setCustomerToDelete(customer);
+    setDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!customerToDelete) return;
+    
+    try {
+      setDeleting(true);
+      const result = await customerService.deleteCustomer(customerToDelete.id);
+      
+      if (result.success) {
+        toast.success('Customer deleted successfully');
+        setDeleteModalOpen(false);
+        setCustomerToDelete(null);
+        loadCustomers(); // Refresh the list
+        loadStats(); // Refresh stats
+      } else {
+        toast.error(result.error || 'Failed to delete customer');
+      }
+    } catch (error) {
+      console.error('Error deleting customer:', error);
+      toast.error('Failed to delete customer: ' + error.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const cancelDelete = () => {
+    setDeleteModalOpen(false);
+    setCustomerToDelete(null);
+  };
 
   const getStatusBadge = (status) => {
     const statusConfig = {
@@ -43,34 +176,46 @@ export default function CustomersPage() {
     );
   };
 
-  const stats = [
+  const statsCards = [
     {
       title: 'Total Customers',
-      value: customers.length,
-      change: '+12%',
+      value: stats.total_customers || 0,
+      subtitle: 'All registered customers',
       icon: Users,
-      color: 'bg-blue-500'
+      color: 'bg-blue-500',
+      trend: stats.total_customers > 0 ? 'positive' : 'neutral'
     },
     {
       title: 'Active Customers',
-      value: customers.filter(c => c.status === 'active').length,
-      change: '+8%',
+      value: stats.active_customers || 0,
+      subtitle: `${stats.total_customers > 0 ? Math.round((stats.active_customers / stats.total_customers) * 100) : 0}% of total`,
       icon: UserPlus,
-      color: 'bg-green-500'
+      color: 'bg-green-500',
+      trend: 'positive'
     },
     {
-      title: 'Total Revenue',
-      value: formatCurrency(customers.reduce((sum, c) => sum + (c.balance || 0), 0)),
-      change: '+15%',
+      title: 'Total Balance',
+      value: formatCurrency(stats.total_balance || 0),
+      subtitle: `${stats.customers_with_balance || 0} customers with outstanding balance`,
+      icon: TrendingUp,
+      color: 'bg-purple-500',
+      trend: stats.total_balance > 0 ? 'negative' : 'neutral'
+    },
+    {
+      title: 'Average Balance',
+      value: formatCurrency(stats.average_balance || 0),
+      subtitle: 'Per customer',
       icon: DollarSign,
-      color: 'bg-purple-500'
+      color: 'bg-indigo-500',
+      trend: stats.average_balance > 0 ? 'negative' : 'neutral'
     },
     {
-      title: 'Active Devices',
-      value: customers.reduce((sum, c) => sum + c.deviceCount, 0),
-      change: '+5%',
+      title: 'Suspended',
+      value: stats.suspended_customers || 0,
+      subtitle: 'Requires attention',
       icon: Wifi,
-      color: 'bg-orange-500'
+      color: 'bg-orange-500',
+      trend: 'negative'
     }
   ];
 
@@ -89,33 +234,58 @@ export default function CustomersPage() {
               <h1 className="text-3xl font-bold text-gray-900">Customers</h1>
               <p className="text-gray-600 mt-2">Manage your customer base and their subscriptions</p>
             </div>
-            <Link
-              to="/customers/new"
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Customer
-            </Link>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={handleRefresh}
+                disabled={loading || statsLoading}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${(loading || statsLoading) ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <Link
+                to="/customers/new"
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Customer
+              </Link>
+            </div>
           </div>
         </motion.div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {stats.map((stat, index) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
+          {statsCards.map((stat, index) => (
             <motion.div
               key={stat.title}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
+              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
             >
               <div className="flex items-center justify-between">
-                <div>
+                <div className="flex-1">
                   <p className="text-sm font-medium text-gray-600">{stat.title}</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
-                  <p className="text-sm text-green-600 mt-1">{stat.change} from last month</p>
+                  {statsLoading ? (
+                    <div className="animate-pulse">
+                      <div className="h-8 bg-gray-200 rounded mt-1"></div>
+                      <div className="h-4 bg-gray-200 rounded mt-2 w-3/4"></div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
+                      <p className={`text-sm mt-1 ${
+                        stat.trend === 'positive' ? 'text-green-600' : 
+                        stat.trend === 'negative' ? 'text-red-600' : 
+                        'text-gray-500'
+                      }`}>
+                        {stat.subtitle}
+                      </p>
+                    </>
+                  )}
                 </div>
-                <div className={`p-3 rounded-lg ${stat.color}`}>
+                <div className={`p-3 rounded-lg ${stat.color} ml-4 ${statsLoading ? 'opacity-50' : ''}`}>
                   <stat.icon className="h-6 w-6 text-white" />
                 </div>
               </div>
@@ -138,7 +308,7 @@ export default function CustomersPage() {
                   type="text"
                   placeholder="Search customers by name, email, or phone..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={handleSearch}
                   className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                 />
               </div>
@@ -146,7 +316,7 @@ export default function CustomersPage() {
             <div className="flex gap-2">
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
+                onChange={handleStatusFilter}
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               >
                 <option value="all">All Status</option>
@@ -197,7 +367,23 @@ export default function CustomersPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredCustomers.map((customer) => (
+                {loading ? (
+                  <tr>
+                    <td colSpan="7" className="px-6 py-4 text-center">
+                      <div className="flex items-center justify-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                        <span className="ml-2">Loading customers...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : customers.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="px-6 py-4 text-center text-gray-500">
+                      No customers found
+                    </td>
+                  </tr>
+                ) : (
+                  customers.map((customer) => (
                   <tr key={customer.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
@@ -216,8 +402,8 @@ export default function CustomersPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{customer.plan}</div>
-                      <div className="text-sm text-gray-500">{customer.deviceCount} devices</div>
+                      <div className="text-sm text-gray-900">{customer.package}</div>
+                      <div className="text-sm text-gray-500">{customer.device_count} devices</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {getStatusBadge(customer.status)}
@@ -232,33 +418,49 @@ export default function CustomersPage() {
                         <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
                           <div
                             className="bg-blue-600 h-2 rounded-full"
-                            style={{ width: customer.usage }}
+                            style={{ width: `${customer.usage_percentage}%` }}
                           ></div>
                         </div>
-                        <span className="text-sm text-gray-500">{customer.usage}</span>
+                        <span className="text-sm text-gray-500">{customer.usage_percentage}%</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(customer.lastPayment)}
+                      {customer.last_payment_date ? formatDate(customer.last_payment_date) : 'No payments'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-2">
-                        <button className="text-blue-600 hover:text-blue-900">
+                        <button 
+                          onClick={() => handleViewCustomer(customer.id)}
+                          className="text-blue-600 hover:text-blue-900 transition-colors"
+                          title="View customer details"
+                        >
                           <Eye className="h-4 w-4" />
                         </button>
-                        <button className="text-gray-600 hover:text-gray-900">
+                        <button 
+                          onClick={() => handleEditCustomer(customer.id)}
+                          className="text-gray-600 hover:text-gray-900 transition-colors"
+                          title="Edit customer"
+                        >
                           <Edit className="h-4 w-4" />
                         </button>
-                        <button className="text-red-600 hover:text-red-900">
+                        <button 
+                          onClick={() => handleDeleteCustomer(customer)}
+                          className="text-red-600 hover:text-red-900 transition-colors"
+                          title="Delete customer"
+                        >
                           <Trash2 className="h-4 w-4" />
                         </button>
-                        <button className="text-gray-600 hover:text-gray-900">
+                        <button 
+                          className="text-gray-600 hover:text-gray-900 transition-colors"
+                          title="More options"
+                        >
                           <MoreHorizontal className="h-4 w-4" />
                         </button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -273,28 +475,98 @@ export default function CustomersPage() {
         >
           <div className="flex items-center justify-between">
             <div className="text-sm text-gray-700">
-              Showing <span className="font-medium">1</span> to <span className="font-medium">{filteredCustomers.length}</span> of{' '}
-              <span className="font-medium">{customers.length}</span> results
+              Showing <span className="font-medium">{((currentPage - 1) * 20) + 1}</span> to <span className="font-medium">{Math.min(currentPage * 20, totalCustomers)}</span> of{' '}
+              <span className="font-medium">{totalCustomers}</span> results
             </div>
             <div className="flex items-center space-x-2">
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+              <button 
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 Previous
               </button>
-              <button className="px-3 py-2 border border-blue-500 rounded-lg text-sm font-medium text-blue-600 bg-blue-50">
-                1
-              </button>
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                2
-              </button>
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                3
-              </button>
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+              
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                const pageNum = i + 1;
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`px-3 py-2 border rounded-lg text-sm font-medium ${
+                      currentPage === pageNum
+                        ? 'border-blue-500 text-blue-600 bg-blue-50'
+                        : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              
+              <button 
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 Next
               </button>
             </div>
           </div>
         </motion.div>
+
+        {/* Delete Confirmation Modal */}
+        {deleteModalOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4"
+            >
+              <div className="flex items-center mb-4">
+                <div className="flex-shrink-0 h-10 w-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <Trash2 className="h-6 w-6 text-red-600" />
+                </div>
+                <div className="ml-3">
+                  <h3 className="text-lg font-medium text-gray-900">Delete Customer</h3>
+                  <p className="text-sm text-gray-500">This action cannot be undone.</p>
+                </div>
+              </div>
+              
+              <div className="mb-6">
+                <p className="text-sm text-gray-700">
+                  Are you sure you want to delete <span className="font-medium text-gray-900">{customerToDelete?.name}</span>? 
+                  This will permanently remove the customer and all associated data.
+                </p>
+              </div>
+              
+              <div className="flex items-center justify-end space-x-3">
+                <button
+                  onClick={cancelDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deleting ? (
+                    <div className="flex items-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Deleting...
+                    </div>
+                  ) : (
+                    'Delete Customer'
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </div>
     </div>
   );

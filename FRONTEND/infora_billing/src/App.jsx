@@ -12,8 +12,12 @@ import SignupPage from './components/auth/signup';
 import DashboardRedirect from './components/auth/DashboardRedirect';
 import CustomersPage from './components/customers/CustomersPage';
 import CustomerForm from './components/customers/CustomerForm';
+import CustomerDetail from './components/customers/CustomerDetail';
+import CustomerEdit from './components/customers/CustomerEdit';
 import PaymentsPage from './components/billing/PaymentsPage';
 import InvoicesPage from './components/billing/InvoicesPage';
+import InvoiceForm from './components/billing/InvoiceForm';
+import InvoiceDetail from './components/billing/InvoiceDetail';
 import TransactionsPage from './components/billing/TransactionsPage';
 import VouchersPage from './components/billing/VouchersPage';
 import ServicePlansPage from './components/plans/ServicePlansPage';
@@ -63,9 +67,14 @@ function AppRoutes() {
       <Route path="/" element={<ProtectedRoute><MainLayout><Dashboard /></MainLayout></ProtectedRoute>} />
       <Route path="/customers" element={<ProtectedRoute><MainLayout><CustomersPage /></MainLayout></ProtectedRoute>} />
       <Route path="/customers/new" element={<ProtectedRoute><MainLayout><CustomerForm /></MainLayout></ProtectedRoute>} />
+      <Route path="/customers/:customerId" element={<ProtectedRoute><MainLayout><CustomerDetail /></MainLayout></ProtectedRoute>} />
+      <Route path="/customers/:customerId/edit" element={<ProtectedRoute><MainLayout><CustomerEdit /></MainLayout></ProtectedRoute>} />
       <Route path="/customers/kyc" element={<ProtectedRoute><MainLayout><PlaceholderPage title="KYC Management" description="Customer verification and KYC management functionality" /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/payments" element={<ProtectedRoute><MainLayout><PaymentsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/invoices" element={<ProtectedRoute><MainLayout><InvoicesPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/billing/invoices/create" element={<ProtectedRoute><MainLayout><InvoiceForm /></MainLayout></ProtectedRoute>} />
+      <Route path="/billing/invoices/:invoiceId" element={<ProtectedRoute><MainLayout><InvoiceDetail /></MainLayout></ProtectedRoute>} />
+      <Route path="/billing/invoices/:invoiceId/edit" element={<ProtectedRoute><MainLayout><InvoiceForm /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/transactions" element={<ProtectedRoute><MainLayout><TransactionsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/vouchers" element={<ProtectedRoute><MainLayout><VouchersPage /></MainLayout></ProtectedRoute>} />
       <Route path="/plans" element={<ProtectedRoute><MainLayout><ServicePlansPage /></MainLayout></ProtectedRoute>} />

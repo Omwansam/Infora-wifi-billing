@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { payments } from '../../data/mockData';
 
 export default function TransactionsPage() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,8 +24,8 @@ export default function TransactionsPage() {
 
   const filteredTransactions = payments.filter(payment => {
     const matchesSearch = payment.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         payment.invoiceId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         payment.id.toLowerCase().includes(searchTerm.toLowerCase());
+                         payment.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         payment.id.toString().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || payment.status === statusFilter;
     const matchesMethod = methodFilter === 'all' || payment.method === methodFilter;
     return matchesSearch && matchesStatus && matchesMethod;
@@ -48,11 +49,12 @@ export default function TransactionsPage() {
 
   const getMethodBadge = (method) => {
     const methodConfig = {
-      credit_card: { color: 'bg-blue-100 text-blue-800', text: 'Credit Card' },
-      bank_transfer: { color: 'bg-green-100 text-green-800', text: 'Bank Transfer' },
-      paypal: { color: 'bg-purple-100 text-purple-800', text: 'PayPal' }
+      'M-Pesa': { color: 'bg-green-100 text-green-800', text: 'M-Pesa' },
+      'Bank Transfer': { color: 'bg-blue-100 text-blue-800', text: 'Bank Transfer' },
+      'Credit Card': { color: 'bg-purple-100 text-purple-800', text: 'Credit Card' },
+      'PayPal': { color: 'bg-orange-100 text-orange-800', text: 'PayPal' }
     };
-    const config = methodConfig[method] || methodConfig.credit_card;
+    const config = methodConfig[method] || methodConfig['M-Pesa'];
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
         {config.text}
@@ -150,7 +152,7 @@ export default function TransactionsPage() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search transactions by customer, invoice, or transaction ID..."
+                  placeholder="Search transactions by customer, reference, or transaction ID..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
@@ -174,9 +176,10 @@ export default function TransactionsPage() {
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               >
                 <option value="all">All Methods</option>
-                <option value="credit_card">Credit Card</option>
-                <option value="bank_transfer">Bank Transfer</option>
-                <option value="paypal">PayPal</option>
+                <option value="M-Pesa">M-Pesa</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Credit Card">Credit Card</option>
+                <option value="PayPal">PayPal</option>
               </select>
               <button className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
                 <Filter className="h-4 w-4 mr-2" />
@@ -204,7 +207,7 @@ export default function TransactionsPage() {
                     Customer
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Invoice
+                    Reference
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Amount
@@ -233,7 +236,7 @@ export default function TransactionsPage() {
                       <div className="text-sm font-medium text-gray-900">{transaction.customerName}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{transaction.invoiceId}</div>
+                      <div className="text-sm text-gray-900">{transaction.reference}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-bold text-gray-900">{formatCurrency(transaction.amount)}</div>

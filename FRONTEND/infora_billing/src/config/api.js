@@ -12,6 +12,12 @@ export const API_ENDPOINTS = {
   CHANGE_PASSWORD: `${API_BASE_URL}/api/auth/change-password`,
   USERS: `${API_BASE_URL}/api/auth/users`,
   
+  // Customer endpoints
+  CUSTOMERS: `${API_BASE_URL}/api/customers`,
+  
+  // Invoice endpoints
+  INVOICES: `${API_BASE_URL}/api/invoices`,
+  
   // Test endpoint
   TEST: `${API_BASE_URL}/api/test`,
 };
