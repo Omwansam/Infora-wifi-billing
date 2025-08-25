@@ -13,7 +13,7 @@ import {
   Download,
   Eye
 } from 'lucide-react';
-import { payments } from '../../data/mockData';
+
 import { formatCurrency, formatDate } from '../../lib/utils';
 
 export default function TransactionsPage() {

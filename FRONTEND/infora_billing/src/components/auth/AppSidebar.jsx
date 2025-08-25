@@ -23,7 +23,8 @@ import {
   HelpCircle,
   ChevronDown,
   ChevronRight,
-  User
+  User,
+  LogOut
 } from 'lucide-react';
 
 const AppSidebar = () => {
@@ -36,7 +37,7 @@ const AppSidebar = () => {
   });
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   const toggleSection = (section) => {
     setExpandedSections(prev => ({
@@ -67,28 +68,29 @@ const AppSidebar = () => {
     {
       title: "Service Plans", icon: Package, url: "/plans", badge: null
     },
-    {
+    // Admin-only sections
+    ...(user?.is_admin ? [{
       title: "Finance", icon: DollarSign, section: "finance",
       items: [
         { title: "Leads Management", url: "/finance/leads", icon: TrendingUp },
         { title: "Expenses Management", url: "/finance/expenses", icon: DollarSign }
       ]
-    },
-    {
+    }] : []),
+    ...(user?.is_admin ? [{
       title: "Communication", icon: MessageSquare, section: "communication",
       items: [
         { title: "SMS Management", url: "/communication/sms", icon: MessageSquare },
         { title: "Email Management", url: "/communication/emails", icon: Mail },
         { title: "Campaigns", url: "/communication/campaigns", icon: Megaphone }
       ]
-    },
-    {
+    }] : []),
+    ...(user?.is_admin ? [{
       title: "Device Management", icon: Server, section: "devices",
       items: [
         { title: "Mikrotik Routers", url: "/devices/mikrotik", icon: Server },
         { title: "Equipment", url: "/devices/equipment", icon: Wrench }
       ]
-    },
+    }] : []),
     {
       title: "Support Tickets", icon: HelpCircle, url: "/tickets", badge: null
     }
@@ -124,10 +126,15 @@ const AppSidebar = () => {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white truncate">
-              {user?.name || 'Admin User'}
+              {user?.first_name && user?.last_name 
+                ? `${user.first_name} ${user.last_name}` 
+                : user?.email || 'User'}
             </p>
             <p className="text-xs text-gray-400 truncate">
-              {user?.email || 'admin@infora.com'}
+              {user?.email || 'user@example.com'}
+            </p>
+            <p className="text-xs text-blue-400 truncate">
+              {user?.is_admin ? 'Administrator' : 'Support'}
             </p>
           </div>
         </div>
@@ -211,6 +218,20 @@ const AppSidebar = () => {
           })}
         </div>
       </nav>
+
+      {/* Logout Button */}
+      <div className="p-4 border-t border-gray-700">
+        <button
+          onClick={async () => {
+            await logout();
+            navigate('/login');
+          }}
+          className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-all duration-200"
+        >
+          <LogOut className="w-5 h-5" />
+          <span>Logout</span>
+        </button>
+      </div>
     </div>
   );
 };

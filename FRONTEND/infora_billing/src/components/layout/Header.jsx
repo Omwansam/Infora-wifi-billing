@@ -135,7 +135,7 @@ const Header = () => {
                 </div>
                 <div className="text-left">
                   <p className="text-sm font-medium text-gray-900">
-                    {user?.name || 'Admin User'}
+                    {user ? `${user.first_name} ${user.last_name}` : 'Admin User'}
                   </p>
                   <p className="text-xs text-gray-500">
                     {user?.email || 'admin@infora.com'}
@@ -159,10 +159,13 @@ const Header = () => {
                   >
                     <div className="px-4 py-3 border-b border-gray-100">
                       <p className="text-sm font-medium text-gray-900">
-                        {user?.name || 'Admin User'}
+                        {user ? `${user.first_name} ${user.last_name}` : 'Admin User'}
                       </p>
                       <p className="text-sm text-gray-500">
                         {user?.email || 'admin@infora.com'}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {user?.role || 'admin'}
                       </p>
                     </div>
                     <div className="py-1">

@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Eye, EyeOff, Mail, Lock, Server } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
+import ConnectionTest from './ConnectionTest';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -17,19 +18,45 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
 
+    // Basic validation
+    if (!email || !password) {
+      toast.error('Please enter both email and password');
+      setLoading(false);
+      return;
+    }
+
     try {
+      console.log('Attempting login with:', { email, password: '***' });
       const result = await login(email, password);
+      
+      console.log('Login result:', result);
+      
       if (result.success) {
         toast.success('Login successful!');
-        navigate('/');
+        
+        // Check if user is admin and redirect accordingly
+        if (result.user.is_admin) {
+          // Admin users go to dashboard
+          navigate('/', { replace: true });
+        } else {
+          // Support users go to a different route (you can customize this)
+          navigate('/customers', { replace: true });
+        }
       } else {
         toast.error(result.error || 'Login failed');
       }
     } catch (error) {
-      toast.error('An error occurred during login');
+      console.error('Login error:', error);
+      toast.error('Network error. Please check your connection.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDemoLogin = () => {
+    setEmail('admin@infora.com');
+    setPassword('admin123');
+    toast.success('Demo credentials loaded! Click Sign In to login.');
   };
 
   return (
@@ -76,6 +103,7 @@ export default function LoginPage() {
                   required
                   className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   placeholder="Enter your email"
+                  disabled={loading}
                 />
               </div>
             </div>
@@ -97,11 +125,13 @@ export default function LoginPage() {
                   required
                   className="block w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   placeholder="Enter your password"
+                  disabled={loading}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                  disabled={loading}
                 >
                   {showPassword ? (
                     <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" />
@@ -120,6 +150,7 @@ export default function LoginPage() {
                   name="remember-me"
                   type="checkbox"
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  disabled={loading}
                 />
                 <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-700">
                   Remember me
@@ -139,7 +170,10 @@ export default function LoginPage() {
               className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
             >
               {loading ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <div className="flex items-center">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                  Signing In...
+                </div>
               ) : (
                 'Sign In'
               )}
@@ -161,14 +195,26 @@ export default function LoginPage() {
           {/* Demo Login */}
           <div className="mt-6">
             <button
-              onClick={() => {
-                setEmail('admin@infora.com');
-                setPassword('admin123');
-              }}
-              className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+              onClick={handleDemoLogin}
+              disabled={loading}
+              className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
             >
               Use Demo Credentials
             </button>
+          </div>
+
+          {/* Test Credentials Info */}
+          <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+            <p className="text-xs text-blue-700">
+              <strong>Test Credentials:</strong><br />
+              Email: admin@infora.com<br />
+              Password: admin123
+            </p>
+          </div>
+
+          {/* Connection Test */}
+          <div className="mt-4">
+            <ConnectionTest />
           </div>
         </motion.div>
 

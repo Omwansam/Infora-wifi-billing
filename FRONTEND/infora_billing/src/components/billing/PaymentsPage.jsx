@@ -13,7 +13,7 @@ import {
   Clock,
   XCircle
 } from 'lucide-react';
-import { payments, customers } from '../../data/mockData';
+
 import { formatCurrency, formatDate } from '../../lib/utils';
 
 export default function PaymentsPage() {

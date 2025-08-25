@@ -1,12 +1,15 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider } from './contexts/AuthContext';
+import ProtectedRoute from './components/auth/ProtectedRoute';
+import { AdminRoute, AdminOrSupportRoute } from './components/auth/RoleBasedRoute';
 import AppSidebar from './components/auth/AppSidebar';
 import Header from './components/layout/Header';
 import Dashboard from './components/Dashboard';
 import LoginPage from './components/auth/login';
 import SignupPage from './components/auth/signup';
+import DashboardRedirect from './components/auth/DashboardRedirect';
 import CustomersPage from './components/customers/CustomersPage';
 import CustomerForm from './components/customers/CustomerForm';
 import PaymentsPage from './components/billing/PaymentsPage';
@@ -29,24 +32,6 @@ import EmailManagementPage from './components/communication/EmailManagementPage'
 import CampaignsManagementPage from './components/communication/CampaignsManagementPage';
 import PlaceholderPage from './components/placeholder/PlaceholderPage';
 
-// Protected Route Component
-function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return children;
-}
 
 // Main Layout Component
 function MainLayout({ children }) {
@@ -70,8 +55,11 @@ function AppRoutes() {
       {/* Public Routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      
+      {/* Dashboard Redirect Route */}
+      <Route path="/dashboard" element={<ProtectedRoute><DashboardRedirect /></ProtectedRoute>} />
 
-      {/* Protected Routes */}
+      {/* Protected Routes - All users can access */}
       <Route path="/" element={<ProtectedRoute><MainLayout><Dashboard /></MainLayout></ProtectedRoute>} />
       <Route path="/customers" element={<ProtectedRoute><MainLayout><CustomersPage /></MainLayout></ProtectedRoute>} />
       <Route path="/customers/new" element={<ProtectedRoute><MainLayout><CustomerForm /></MainLayout></ProtectedRoute>} />
@@ -81,25 +69,28 @@ function AppRoutes() {
       <Route path="/billing/transactions" element={<ProtectedRoute><MainLayout><TransactionsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/vouchers" element={<ProtectedRoute><MainLayout><VouchersPage /></MainLayout></ProtectedRoute>} />
       <Route path="/plans" element={<ProtectedRoute><MainLayout><ServicePlansPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/finance/leads" element={<ProtectedRoute><MainLayout><PlaceholderPage title="Leads Management" description="Lead generation and management functionality" /></MainLayout></ProtectedRoute>} />
-      <Route path="/finance/expenses" element={<ProtectedRoute><MainLayout><PlaceholderPage title="Expenses Management" description="Expense tracking and management functionality" /></MainLayout></ProtectedRoute>} />
-      <Route path="/communication/sms" element={<ProtectedRoute><MainLayout><SmsManagementPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/communication/emails" element={<ProtectedRoute><MainLayout><EmailManagementPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/communication/campaigns" element={<ProtectedRoute><MainLayout><CampaignsManagementPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/devices/mikrotik" element={<ProtectedRoute><MainLayout><MikrotikPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/devices/equipment" element={<ProtectedRoute><MainLayout><EquipmentPage /></MainLayout></ProtectedRoute>} />
       <Route path="/tickets" element={<ProtectedRoute><MainLayout><TicketsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><MainLayout><SettingsPage /></MainLayout></ProtectedRoute>} />
+
+      {/* Admin-only Routes */}
+      <Route path="/finance/leads" element={<AdminRoute><MainLayout><PlaceholderPage title="Leads Management" description="Lead generation and management functionality" /></MainLayout></AdminRoute>} />
+      <Route path="/finance/expenses" element={<AdminRoute><MainLayout><PlaceholderPage title="Expenses Management" description="Expense tracking and management functionality" /></MainLayout></AdminRoute>} />
+      <Route path="/communication/sms" element={<AdminRoute><MainLayout><SmsManagementPage /></MainLayout></AdminRoute>} />
+      <Route path="/communication/emails" element={<AdminRoute><MainLayout><EmailManagementPage /></MainLayout></AdminRoute>} />
+      <Route path="/communication/campaigns" element={<AdminRoute><MainLayout><CampaignsManagementPage /></MainLayout></AdminRoute>} />
+      <Route path="/devices/mikrotik" element={<AdminRoute><MainLayout><MikrotikPage /></MainLayout></AdminRoute>} />
+      <Route path="/devices/equipment" element={<AdminRoute><MainLayout><EquipmentPage /></MainLayout></AdminRoute>} />
 
       {/* Settings Routes */}
       <Route path="/settings/2fa" element={<ProtectedRoute><MainLayout><TwoFactorAuthPage /></MainLayout></ProtectedRoute>} />
       <Route path="/settings/billing" element={<ProtectedRoute><MainLayout><BillingSubscriptionPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/settings/users" element={<ProtectedRoute><MainLayout><SystemUsersPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/settings/logs" element={<ProtectedRoute><MainLayout><SystemLogsPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/settings/users" element={<AdminRoute><MainLayout><SystemUsersPage /></MainLayout></AdminRoute>} />
+      <Route path="/settings/logs" element={<AdminRoute><MainLayout><SystemLogsPage /></MainLayout></AdminRoute>} />
       <Route path="/settings/bug-report" element={<ProtectedRoute><MainLayout><BugReportPage /></MainLayout></ProtectedRoute>} />
       <Route path="/settings/contact-support" element={<ProtectedRoute><MainLayout><ContactSupportPage /></MainLayout></ProtectedRoute>} />
 
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {/* Default redirect to login for any unmatched routes */}
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }
@@ -108,7 +99,7 @@ function AppRoutes() {
 function App() {
   return (
     <AuthProvider>
-      <Router>
+      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppRoutes />
         <Toaster
           position="top-right"
