@@ -151,7 +151,7 @@ def seed_service_plans():
             'is_active': True
         },
         {
-            'name': 'Premium 100Mbps',
+            'nameflask run: 'Premium 100Mbps',
             'speed': '100 Mbps',
             'price': 7999.00,
             'features': {
@@ -174,6 +174,55 @@ def seed_service_plans():
                 'devices': 'Unlimited',
                 'support': '24/7 Support',
                 'data_cap': 'Unlimited'
+            },
+            'popular': False,
+            'is_active': True
+        },
+        {
+            'name': 'Enterprise 500Mbps',
+            'speed': '500 Mbps',
+            'price': 29999.00,
+            'features': {
+                'download_speed': '500 Mbps',
+                'upload_speed': '100 Mbps',
+                'devices': 'Unlimited',
+                'support': '24/7 Support',
+                'data_cap': 'Unlimited',
+                'static_ip': True,
+                'free_router': True,
+                'sla_guarantee': True,
+                'dedicated_support': True
+            },
+            'popular': False,
+            'is_active': True
+        },
+        {
+            'name': 'Student 25Mbps',
+            'speed': '25 Mbps',
+            'price': 1999.00,
+            'features': {
+                'download_speed': '25 Mbps',
+                'upload_speed': '5 Mbps',
+                'devices': 1,
+                'support': 'Basic Support',
+                'data_cap': 'Unlimited',
+                'student_discount': True
+            },
+            'popular': False,
+            'is_active': True
+        },
+        {
+            'name': 'Senior 25Mbps',
+            'speed': '25 Mbps',
+            'price': 2499.00,
+            'features': {
+                'download_speed': '25 Mbps',
+                'upload_speed': '5 Mbps',
+                'devices': 1,
+                'support': 'Basic Support',
+                'data_cap': 'Unlimited',
+                'senior_discount': True,
+                'easy_setup': True
             },
             'popular': False,
             'is_active': True

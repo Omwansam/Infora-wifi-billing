@@ -305,9 +305,9 @@ export default function InvoicesPage() {
                 onClick={handleCreateInvoice}
                 className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
               >
-                <Plus className="h-4 w-4 mr-2" />
-                Create Invoice
-              </button>
+              <Plus className="h-4 w-4 mr-2" />
+              Create Invoice
+            </button>
             </div>
           </div>
         </motion.div>
@@ -431,35 +431,35 @@ export default function InvoicesPage() {
                   </tr>
                 ) : (
                   invoices.map((invoice) => (
-                    <tr key={invoice.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{invoice.id}</div>
+                  <tr key={invoice.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{invoice.id}</div>
                         <div className="text-sm text-gray-500">{invoice.items?.length || 0} items</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{invoice.customerName}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-bold text-gray-900">{formatCurrency(invoice.amount)}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(invoice.status)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{invoice.customerName}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-bold text-gray-900">{formatCurrency(invoice.amount)}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {getStatusBadge(invoice.status)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {invoice.dueDate ? formatDate(invoice.dueDate) : '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {invoice.paidDate ? formatDate(invoice.paidDate) : '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex items-center space-x-2">
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {invoice.paidDate ? formatDate(invoice.paidDate) : '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <div className="flex items-center space-x-2">
                           <button 
                             onClick={() => handleViewInvoice(invoice)}
                             className="text-blue-600 hover:text-blue-900 transition-colors"
                             title="View Invoice"
                           >
-                            <Eye className="h-4 w-4" />
-                          </button>
+                          <Eye className="h-4 w-4" />
+                        </button>
                           <button 
                             onClick={() => handleEditInvoice(invoice)}
                             className="text-yellow-600 hover:text-yellow-900 transition-colors"
@@ -472,26 +472,26 @@ export default function InvoicesPage() {
                             className="text-gray-600 hover:text-gray-900 transition-colors"
                             title="Download Invoice"
                           >
-                            <Download className="h-4 w-4" />
-                          </button>
+                          <Download className="h-4 w-4" />
+                        </button>
                           <button 
                             onClick={() => handleSendReminder(invoice)}
                             disabled={sendingReminder}
                             className="text-green-600 hover:text-green-900 transition-colors disabled:opacity-50"
                             title="Send Reminder"
                           >
-                            <Send className="h-4 w-4" />
-                          </button>
+                          <Send className="h-4 w-4" />
+                        </button>
                           <button 
                             onClick={() => handleDeleteInvoice(invoice)}
                             className="text-red-600 hover:text-red-900 transition-colors"
                             title="Delete Invoice"
                           >
                             <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                   ))
                 )}
               </tbody>
@@ -501,26 +501,26 @@ export default function InvoicesPage() {
 
         {/* Pagination */}
         {!loading && invoices.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.4 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-4 mt-6"
-          >
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-700">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.4 }}
+          className="bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-4 mt-6"
+        >
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-700">
                 Showing <span className="font-medium">{((currentPage - 1) * 20) + 1}</span> to{' '}
                 <span className="font-medium">{Math.min(currentPage * 20, totalInvoices)}</span> of{' '}
                 <span className="font-medium">{totalInvoices}</span> results
-              </div>
-              <div className="flex items-center space-x-2">
+            </div>
+            <div className="flex items-center space-x-2">
                 <button 
                   onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Previous
-                </button>
+                Previous
+              </button>
                 
                 {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                   const pageNum = i + 1;
@@ -535,7 +535,7 @@ export default function InvoicesPage() {
                       }`}
                     >
                       {pageNum}
-                    </button>
+              </button>
                   );
                 })}
                 
@@ -544,11 +544,11 @@ export default function InvoicesPage() {
                   disabled={currentPage === totalPages}
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Next
-                </button>
-              </div>
+                Next
+              </button>
             </div>
-          </motion.div>
+          </div>
+        </motion.div>
         )}
 
         {/* Delete Confirmation Modal */}

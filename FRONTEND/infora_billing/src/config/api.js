@@ -18,6 +18,9 @@ export const API_ENDPOINTS = {
   // Invoice endpoints
   INVOICES: `${API_BASE_URL}/api/invoices`,
   
+  // Plans endpoints
+  PLANS: `${API_BASE_URL}/api/plans`,
+  
   // Test endpoint
   TEST: `${API_BASE_URL}/api/test`,
 };

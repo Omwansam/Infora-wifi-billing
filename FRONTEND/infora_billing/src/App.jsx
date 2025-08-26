@@ -21,6 +21,7 @@ import InvoiceDetail from './components/billing/InvoiceDetail';
 import TransactionsPage from './components/billing/TransactionsPage';
 import VouchersPage from './components/billing/VouchersPage';
 import ServicePlansPage from './components/plans/ServicePlansPage';
+import PlanDetail from './components/plans/PlanDetail';
 import MikrotikPage from './components/devices/MikrotikPage';
 import EquipmentPage from './components/devices/EquipmentPage';
 import TicketsPage from './components/tickets/TicketsPage';
@@ -78,6 +79,7 @@ function AppRoutes() {
       <Route path="/billing/transactions" element={<ProtectedRoute><MainLayout><TransactionsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/vouchers" element={<ProtectedRoute><MainLayout><VouchersPage /></MainLayout></ProtectedRoute>} />
       <Route path="/plans" element={<ProtectedRoute><MainLayout><ServicePlansPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/plans/:planId" element={<ProtectedRoute><MainLayout><PlanDetail /></MainLayout></ProtectedRoute>} />
       <Route path="/tickets" element={<ProtectedRoute><MainLayout><TicketsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><MainLayout><SettingsPage /></MainLayout></ProtectedRoute>} />
 

@@ -243,13 +243,13 @@ export default function CustomersPage() {
                 <RefreshCw className={`h-4 w-4 mr-2 ${(loading || statsLoading) ? 'animate-spin' : ''}`} />
                 Refresh
               </button>
-              <Link
-                to="/customers/new"
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Customer
-              </Link>
+            <Link
+              to="/customers/new"
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Customer
+            </Link>
             </div>
           </div>
         </motion.div>
@@ -274,7 +274,7 @@ export default function CustomersPage() {
                     </div>
                   ) : (
                     <>
-                      <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
                       <p className={`text-sm mt-1 ${
                         stat.trend === 'positive' ? 'text-green-600' : 
                         stat.trend === 'negative' ? 'text-red-600' : 
@@ -500,7 +500,7 @@ export default function CustomersPage() {
                     }`}
                   >
                     {pageNum}
-                  </button>
+              </button>
                 );
               })}
               

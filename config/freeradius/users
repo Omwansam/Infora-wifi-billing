@@ -1,0 +1,19 @@
+# FreeRADIUS users file
+# Format: username Auth-Type := password, [reply_attributes]
+
+# Test user with cleartext password
+testuser Cleartext-Password := "testpass123"
+    Reply-Message = "Welcome testuser!"
+
+# Test user with MD5 hashed password
+testuser2 Cleartext-Password := "testpass456"
+    Reply-Message = "Welcome testuser2!"
+
+# Admin user
+admin Cleartext-Password := "admin123"
+    Reply-Message = "Welcome admin!"
+    Service-Type = Administrative-User
+
+# Default user for testing
+DEFAULT Auth-Type := Reject
+    Reply-Message = "Access denied"

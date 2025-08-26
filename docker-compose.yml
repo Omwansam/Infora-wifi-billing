@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:13
+    container_name: infora_postgres
+    environment:
+      POSTGRES_DB: infora_billing
+      POSTGRES_USER: infora_user
+      POSTGRES_PASSWORD: infora_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/server/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - infora_network
+
+  # Flask Application
+  flask_app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: infora_flask
+    environment:
+      FLASK_APP: server/app.py
+      FLASK_ENV: development
+      DATABASE_URL: postgresql://infora_user:infora_password@postgres:5432/infora_billing
+      JWT_SECRET_KEY: your-super-secret-jwt-key-change-in-production
+      RADIUS_SECRET: radius_secret_key
+      LDAP_BIND_PASSWORD: admin_password
+      WIREGUARD_SERVER_PUBKEY: sample_public_key
+    volumes:
+      - ./backend:/app
+      - ./certs:/app/certs
+    ports:
+      - "5000:5000"
+    depends_on:
+      - postgres
+      - freeradius
+      - openldap
+    networks:
+      - infora_network
+    command: >
+      sh -c "flask db upgrade &&
+             flask initdb &&
+             python server/app.py"
+
+  # FreeRADIUS Server
+  freeradius:
+    image: freeradius/freeradius-server:latest
+    container_name: infora_freeradius
+    environment:
+      RADIUS_SECRET: radius_secret_key
+    volumes:
+      - ./config/freeradius/clients.conf:/etc/freeradius/3.0/clients.conf
+      - ./config/freeradius/users:/etc/freeradius/3.0/mods-config/files/authorize
+      - ./config/freeradius/ldap:/etc/freeradius/3.0/mods-available/ldap
+      - ./config/freeradius/sql:/etc/freeradius/3.0/mods-available/sql
+    ports:
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+    depends_on:
+      - postgres
+      - openldap
+    networks:
+      - infora_network
+    command: >
+      sh -c "echo 'radius_secret_key' > /etc/freeradius/3.0/clients.conf &&
+             freeradius -X"
+
+  # OpenLDAP Server
+  openldap:
+    image: osixia/openldap:1.5.0
+    container_name: infora_openldap
+    environment:
+      LDAP_ORGANISATION: "Infora Company"
+      LDAP_DOMAIN: "company.com"
+      LDAP_ADMIN_PASSWORD: "admin_password"
+      LDAP_CONFIG_PASSWORD: "config_password"
+    volumes:
+      - ldap_data:/var/lib/ldap
+      - ldap_config:/etc/ldap/slapd.d
+      - ./config/ldap/ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom
+    ports:
+      - "389:389"
+      - "636:636"
+    networks:
+      - infora_network
+
+  # LDAP Admin (Web UI for LDAP management)
+  ldap_admin:
+    image: osixia/phpldapadmin:latest
+    container_name: infora_ldap_admin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: "openldap"
+      PHPLDAPADMIN_HTTPS: "false"
+    ports:
+      - "8080:80"
+    depends_on:
+      - openldap
+    networks:
+      - infora_network
+
+  # Frontend (React/Vite)
+  frontend:
+    build:
+      context: ./frontend/infora_billing
+      dockerfile: Dockerfile
+    container_name: infora_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/infora_billing:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:5000/api
+    depends_on:
+      - flask_app
+    networks:
+      - infora_network
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  postgres_data:
+  ldap_data:
+  ldap_config:
+
+networks:
+  infora_network:
+    driver: bridge

@@ -88,6 +88,9 @@ class User(db.Model):
     audit_logs = db.relationship('AuditLog', back_populates="user")
     # Relationships mapping the user to multiple system logs
     system_logs = db.relationship('SystemLog', back_populates="user")
+    # Relationships mapping the user to multiple isps
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    isp = db.relationship('ISP', back_populates='users')
 
     def __repr__(self):
         return f"<User {self.first_name} {self.last_name} ({self.email})>"
@@ -144,6 +147,9 @@ class Customer(db.Model):
     radius_checks = db.relationship('RadiusCheck', back_populates="customer")
     # Relationships mapping the customer to multiple radius replies
     radius_replies = db.relationship('RadiusReply', back_populates="customer")
+    # Relationships mapping the customer to multiple isps
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    isp = db.relationship('ISP', back_populates='customers')
 
     def __repr__(self):
         return f"<Customer {self.full_name} ({self.email})>"
@@ -169,6 +175,9 @@ class ServicePlan(db.Model):
 
     # Relationships mapping the service plan to multiple customers
     customers = db.relationship('Customer', back_populates="service_plan")
+    # Relationships mapping the service plan to multiple isps
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    isp = db.relationship('ISP', back_populates='service_plans')
 
     def __repr__(self):
         return f"<ServicePlan {self.name} ({self.speed})>"
@@ -203,6 +212,9 @@ class Invoice(db.Model):
     discounts = db.relationship('InvoiceDiscount', back_populates="invoice", cascade='all, delete-orphan')
     # Relationships mapping the invoice to multiple revenue data
     revenue_data = db.relationship('RevenueData', back_populates="invoice")
+    # Relationships mapping the invoice to multiple isps
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    isp = db.relationship('ISP', back_populates='invoices')
 
     def __repr__(self):
         return f"<Invoice {self.invoice_number} ({self.amount})>"
@@ -298,6 +310,9 @@ class MikrotikDevice(db.Model):
     zone = db.relationship('NetworkZone', back_populates="mikrotik_devices")
     # Relationships mapping the mikrotik device to multiple radius sessions
     radius_sessions = db.relationship('RadiusSession', back_populates="mikrotik_device")
+    # Relationships mapping the mikrotik device to multiple isps
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    isp = db.relationship('ISP', back_populates='mikrotik_devices')
     
     def __repr__(self):
         return f"<MikrotikDevice {self.device_name} ({self.device_ip})>"
@@ -505,50 +520,44 @@ class RevenueData(db.Model):
 # =========================
 
 class RadiusSession(db.Model):
-    """ Radius session model for tracking radius sessions"""
+    """ RADIUS session model for tracking customer authentication sessions """
     __tablename__ = 'radius_sessions'
     
     id = db.Column(db.Integer, primary_key=True)
-    session_id = db.Column(db.String(50), nullable=False) # FreeRdius Acct-session-id
-
-    # Session details
-    username = db.Column(db.String(50), nullable=False) # FreeRadius user-name
-    nas_ip_address = db.Column(db.String(50), nullable=False) # FreeRadius NAS-IP-Address
-    framed_ip_address = db.Column(db.String(50), nullable=False)# CLIENT IP-ADDRESS
-    calling_station_id = db.Column(db.String(50), nullable=False) # CLIENT-MAC-ADDRESS
-    called_station_id = db.Column(db.String(50), nullable=False) # SSID or  Interface
-    
-    # Timing
-    acct_start_time = db.Column(db.DateTime, nullable=False) # FreeRadius Acct-Start-Time
-    acct_stop_time = db.Column(db.DateTime, nullable=False) # FreeRadius Acct-Stop-Time
-    acct_session_time = db.Column(db.Integer, nullable=False) # FreeRadius Acct-Session-Time
-
-    #Usage tracking
-    acct_input_octets = db.Column(db.BigInteger, default=0) # FreeRadius Acct-Input-Octets
-    acct_output_octets = db.Column(db.BigInteger, default=0) # FreeRadius Acct-Output-Octets
-    acct_input_packets = db.Column(db.BigInteger, default=0) # FreeRadius Acct-Input-Packets
-    acct_output_packets = db.Column(db.BigInteger, default=0) # FreeRadius Acct-Output-Packets
-
-
-    # Session status
-    acct_status_type = db.Column(db.String(50), nullable=False) # FreeRadius Acct-Status-Type
-    acct_terminate_cause = db.Column(db.String(50), nullable=False) # FreeRadius Acct-Terminate-Cause
-
-    # Timestamps
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False)
+    mikrotik_device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=False)
+    session_id = db.Column(db.String(100), unique=True, nullable=False)
+    username = db.Column(db.String(100), nullable=False)
+    ip_address = db.Column(db.String(45), nullable=False)
+    mac_address = db.Column(db.String(17), nullable=False)
+    session_start = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    session_end = db.Column(db.DateTime, nullable=True)
+    bytes_in = db.Column(db.BigInteger, default=0)
+    bytes_out = db.Column(db.BigInteger, default=0)
+    packets_in = db.Column(db.BigInteger, default=0)
+    packets_out = db.Column(db.BigInteger, default=0)
+    is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
-
-    # Foreign Key To store customer id
-    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
-    # Foreign Key To store mikrotik device id
-    mikrotik_device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=True)
-    # Relationship mapping the radius session to the related customer
-    customer = db.relationship('Customer', back_populates="radius_sessions")
-    # Relationship mapping the radius session to the related mikrotik device
-    mikrotik_device = db.relationship('MikrotikDevice')
-
+    
+    # Relationships
+    isp = db.relationship('ISP', back_populates='radius_sessions')
+    customer = db.relationship('Customer', back_populates='radius_sessions')
+    mikrotik_device = db.relationship('MikrotikDevice', back_populates='radius_sessions')
+    
     def __repr__(self):
-        return f"<RadiusSession {self.session_id} ({self.username})>"
+        return f"<RadiusSession {self.session_id} (Customer: {self.customer_id})>"
+    
+    def get_total_bytes(self):
+        """Get total bytes transferred"""
+        return self.bytes_in + self.bytes_out
+    
+    def get_session_duration(self):
+        """Get session duration in seconds"""
+        if self.session_end:
+            return (self.session_end - self.session_start).total_seconds()
+        return (db.func.current_timestamp() - self.session_start).total_seconds()
 
 
 # =========================
@@ -686,22 +695,25 @@ class NetworkInfrastructure(db.Model):
 # =========================
 
 class NetworkZone(db.Model):
-    """ Network zone model for tracking network zones/ares for geographical organization"""
+    """ Network zone model for organizing devices by location/network """
     __tablename__ = 'network_zones'
     
     id = db.Column(db.Integer, primary_key=True)
-    zone_name = db.Column(db.String(50), nullable=False)
-    zone_description = db.Column(db.String(255), nullable=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    network_range = db.Column(db.String(50), nullable=True)  # e.g., "192.168.1.0/24"
+    location = db.Column(db.String(200), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
-
-    # Relationships mapping the network zone to multiple mikrotik devices
-    mikrotik_devices = db.relationship('MikrotikDevice', back_populates="zone")
-    # Relationships mapping the network zone to multiple infrastructure devices
-    infrastructure_devices = db.relationship('NetworkInfrastructure', back_populates="zone")
-
+    
+    # Relationships
+    isp = db.relationship('ISP', back_populates='network_zones')
+    mikrotik_devices = db.relationship('MikrotikDevice', back_populates='zone')
+    
     def __repr__(self):
-        return f"<NetworkZone {self.zone_name} ({self.zone_description})>"
+        return f"<NetworkZone {self.name} (ISP: {self.isp_id})>"
 
 
 # =========================
@@ -949,3 +961,388 @@ class SystemSetting(db.Model):
     
     def __repr__(self):
         return f"<SystemSetting {self.key} ({self.value})>" 
+
+# =========================
+#   LDAP Server Model
+# =========================
+
+class LDAPServer(db.Model):
+    """ LDAP server configuration model for authentication"""
+    __tablename__ = 'ldap_servers'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    host = db.Column(db.String(255), nullable=False)
+    port = db.Column(db.Integer, default=389)
+    use_ssl = db.Column(db.Boolean, default=False)
+    use_tls = db.Column(db.Boolean, default=False)
+    bind_dn = db.Column(db.String(255), nullable=False)
+    bind_password = db.Column(db.String(255), nullable=False)
+    base_dn = db.Column(db.String(255), nullable=False)
+    user_search_base = db.Column(db.String(255), nullable=True)
+    user_search_filter = db.Column(db.String(255), default="(uid={})")
+    group_search_base = db.Column(db.String(255), nullable=True)
+    group_search_filter = db.Column(db.String(255), default="(member={})")
+    timeout = db.Column(db.Integer, default=10)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    def __repr__(self):
+        return f"<LDAPServer {self.name} ({self.host}:{self.port})>"
+
+# =========================
+#   RADIUS Client Model
+# =========================
+
+class RadiusClient(db.Model):
+    """ RADIUS client configuration model for FreeRADIUS integration"""
+    __tablename__ = 'radius_clients'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    host = db.Column(db.String(255), nullable=False)
+    secret = db.Column(db.String(255), nullable=False)
+    auth_port = db.Column(db.Integer, default=1812)
+    acct_port = db.Column(db.Integer, default=1813)
+    nas_type = db.Column(db.String(50), default="other")
+    shortname = db.Column(db.String(50), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    def __repr__(self):
+        return f"<RadiusClient {self.name} ({self.host})>"
+
+# =========================
+#   SNMP Device Model
+# =========================
+
+class SnmpDevice(db.Model):
+    """ SNMP device configuration model for network monitoring"""
+    __tablename__ = 'snmp_devices'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    host = db.Column(db.String(255), nullable=False)
+    port = db.Column(db.Integer, default=161)
+    snmp_version = db.Column(db.String(10), default="3")  # 1, 2c, 3
+    community = db.Column(db.String(255), nullable=True)  # For v1/v2c
+    username = db.Column(db.String(100), nullable=True)   # For v3
+    auth_protocol = db.Column(db.String(20), nullable=True)  # MD5, SHA, SHA224, SHA256, SHA384, SHA512
+    auth_key = db.Column(db.String(255), nullable=True)
+    priv_protocol = db.Column(db.String(20), nullable=True)  # DES, 3DES, AES, AES192, AES256
+    priv_key = db.Column(db.String(255), nullable=True)
+    context_name = db.Column(db.String(100), nullable=True)
+    timeout = db.Column(db.Integer, default=3)
+    retries = db.Column(db.Integer, default=3)
+    is_active = db.Column(db.Boolean, default=True)
+    last_poll = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    def __repr__(self):
+        return f"<SnmpDevice {self.name} ({self.host})>"
+
+# =========================
+#   VPN Configuration Model
+# =========================
+
+class VPNConfig(db.Model):
+    """ VPN configuration model for WireGuard, OpenVPN, and IPSec"""
+    __tablename__ = 'vpn_configs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    vpn_type = db.Column(db.String(20), nullable=False)  # wireguard, openvpn, ipsec
+    config_blob = db.Column(db.Text, nullable=False)
+    server_public_key = db.Column(db.String(255), nullable=True)  # For WireGuard
+    server_private_key = db.Column(db.String(255), nullable=True)  # For WireGuard
+    server_endpoint = db.Column(db.String(255), nullable=True)
+    server_port = db.Column(db.Integer, nullable=True)
+    allowed_ips = db.Column(db.String(255), nullable=True)  # For WireGuard
+    dns_servers = db.Column(db.String(255), nullable=True)
+    mtu = db.Column(db.Integer, default=1420)  # For WireGuard
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    def __repr__(self):
+        return f"<VPNConfig {self.name} ({self.vpn_type})>"
+
+# =========================
+#   VPN Client Model
+# =========================
+
+class VPNClient(db.Model):
+    """ VPN client configuration model for individual client configs"""
+    __tablename__ = 'vpn_clients'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    vpn_config_id = db.Column(db.Integer, db.ForeignKey('vpn_configs.id'), nullable=False)
+    client_public_key = db.Column(db.String(255), nullable=True)  # For WireGuard
+    client_private_key = db.Column(db.String(255), nullable=True)  # For WireGuard
+    client_ip = db.Column(db.String(50), nullable=True)
+    config_blob = db.Column(db.Text, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    last_connected = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationship mapping the VPN client to the related VPN config
+    vpn_config = db.relationship('VPNConfig')
+    
+    def __repr__(self):
+        return f"<VPNClient {self.name} ({self.vpn_config_id})>"
+
+# =========================
+#   EAP Profile Model
+# =========================
+
+class EapProfile(db.Model):
+    """ EAP profile model for RADIUS authentication methods"""
+    __tablename__ = 'eap_profiles'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    eap_method = db.Column(db.String(20), nullable=False)  # EAP-TLS, PEAP, EAP-TTLS, etc.
+    ca_cert_path = db.Column(db.String(255), nullable=True)
+    server_cert_path = db.Column(db.String(255), nullable=True)
+    server_key_path = db.Column(db.String(255), nullable=True)
+    client_cert_path = db.Column(db.String(255), nullable=True)
+    client_key_path = db.Column(db.String(255), nullable=True)
+    phase2_method = db.Column(db.String(20), nullable=True)  # MSCHAPv2, PAP, etc.
+    inner_identity = db.Column(db.String(255), nullable=True)
+    outer_identity = db.Column(db.String(255), nullable=True)
+    config_blob = db.Column(db.Text, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    def __repr__(self):
+        return f"<EapProfile {self.name} ({self.eap_method})>"
+
+# =========================
+#   SNMP Poll Result Model
+# =========================
+
+class SnmpPollResult(db.Model):
+    """ SNMP poll result model for storing SNMP query results"""
+    __tablename__ = 'snmp_poll_results'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    snmp_device_id = db.Column(db.Integer, db.ForeignKey('snmp_devices.id'), nullable=False)
+    oid = db.Column(db.String(255), nullable=False)
+    value = db.Column(db.Text, nullable=True)
+    data_type = db.Column(db.String(20), nullable=True)  # INTEGER, STRING, COUNTER, etc.
+    poll_time = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    response_time = db.Column(db.Float, nullable=True)  # Response time in seconds
+    status = db.Column(db.String(20), default="success")  # success, timeout, error
+    error_message = db.Column(db.Text, nullable=True)
+    
+    # Relationship mapping the SNMP poll result to the related SNMP device
+    snmp_device = db.relationship('SnmpDevice')
+    
+    def __repr__(self):
+        return f"<SnmpPollResult {self.oid} ({self.value})>" 
+
+# =========================
+#   FreeRADIUS SQL Models
+# =========================
+
+class RadCheck(db.Model):
+    """ FreeRADIUS radcheck table for user authentication """
+    __tablename__ = 'radcheck'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), nullable=False, index=True)
+    attribute = db.Column(db.String(64), nullable=False, default='Cleartext-Password')
+    op = db.Column(db.String(2), nullable=False, default='==')
+    value = db.Column(db.String(253), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    isp = db.relationship('ISP')
+    customer = db.relationship('Customer')
+    
+    def __repr__(self):
+        return f"<RadCheck {self.username} ({self.attribute})>"
+
+class RadReply(db.Model):
+    """ FreeRADIUS radreply table for user reply attributes """
+    __tablename__ = 'radreply'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), nullable=False, index=True)
+    attribute = db.Column(db.String(64), nullable=False)
+    op = db.Column(db.String(2), nullable=False, default='=')
+    value = db.Column(db.String(253), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    isp = db.relationship('ISP')
+    customer = db.relationship('Customer')
+    
+    def __repr__(self):
+        return f"<RadReply {self.username} ({self.attribute})>"
+
+class RadAcct(db.Model):
+    """ FreeRADIUS radacct table for accounting records """
+    __tablename__ = 'radacct'
+    
+    radacctid = db.Column(db.BigInteger, primary_key=True)
+    acctsessionid = db.Column(db.String(64), nullable=False, index=True)
+    acctuniqueid = db.Column(db.String(32), nullable=False, index=True)
+    username = db.Column(db.String(64), nullable=False, index=True)
+    groupname = db.Column(db.String(64), nullable=True)
+    realm = db.Column(db.String(64), nullable=True)
+    nasipaddress = db.Column(db.String(15), nullable=False, index=True)
+    nasportid = db.Column(db.String(15), nullable=True)
+    nasporttype = db.Column(db.String(32), nullable=True)
+    acctstarttime = db.Column(db.DateTime, nullable=True, index=True)
+    acctupdatetime = db.Column(db.DateTime, nullable=True)
+    acctstoptime = db.Column(db.DateTime, nullable=True, index=True)
+    acctinterval = db.Column(db.Integer, nullable=True)
+    acctsessiontime = db.Column(db.Integer, nullable=True, index=True)
+    acctauthentic = db.Column(db.String(32), nullable=True)
+    connectinfo_start = db.Column(db.String(50), nullable=True)
+    connectinfo_stop = db.Column(db.String(50), nullable=True)
+    acctinputoctets = db.Column(db.BigInteger, nullable=True)
+    acctoutputoctets = db.Column(db.BigInteger, nullable=True)
+    calledstationid = db.Column(db.String(50), nullable=True)
+    callingstationid = db.Column(db.String(50), nullable=True)
+    acctterminatecause = db.Column(db.String(32), nullable=True)
+    servicetype = db.Column(db.String(32), nullable=True)
+    framedprotocol = db.Column(db.String(32), nullable=True)
+    framedipaddress = db.Column(db.String(15), nullable=True, index=True)
+    framedipv6address = db.Column(db.String(45), nullable=True)
+    framedipv6prefix = db.Column(db.String(45), nullable=True)
+    framedinterfaceid = db.Column(db.String(44), nullable=True)
+    delegatedipv6prefix = db.Column(db.String(45), nullable=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    mikrotik_device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=True)
+    
+    # Relationships
+    isp = db.relationship('ISP')
+    customer = db.relationship('Customer')
+    mikrotik_device = db.relationship('MikrotikDevice')
+    
+    def __repr__(self):
+        return f"<RadAcct {self.username} ({self.acctsessionid})>"
+
+class RadGroupCheck(db.Model):
+    """ FreeRADIUS radgroupcheck table for group authentication """
+    __tablename__ = 'radgroupcheck'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    groupname = db.Column(db.String(64), nullable=False, index=True)
+    attribute = db.Column(db.String(64), nullable=False)
+    op = db.Column(db.String(2), nullable=False, default='==')
+    value = db.Column(db.String(253), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    isp = db.relationship('ISP')
+    
+    def __repr__(self):
+        return f"<RadGroupCheck {self.groupname} ({self.attribute})>"
+
+class RadGroupReply(db.Model):
+    """ FreeRADIUS radgroupreply table for group reply attributes """
+    __tablename__ = 'radgroupreply'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    groupname = db.Column(db.String(64), nullable=False, index=True)
+    attribute = db.Column(db.String(64), nullable=False)
+    op = db.Column(db.String(2), nullable=False, default='=')
+    value = db.Column(db.String(253), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    isp = db.relationship('ISP')
+    
+    def __repr__(self):
+        return f"<RadGroupReply {self.groupname} ({self.attribute})>"
+
+class RadUserGroup(db.Model):
+    """ FreeRADIUS radusergroup table for user-group associations """
+    __tablename__ = 'radusergroup'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), nullable=False, index=True)
+    groupname = db.Column(db.String(64), nullable=False, index=True)
+    priority = db.Column(db.Integer, nullable=False, default=1)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    isp = db.relationship('ISP')
+    customer = db.relationship('Customer')
+    
+    def __repr__(self):
+        return f"<RadUserGroup {self.username} -> {self.groupname}>"
+
+# =========================
+#   ISP Model (Multi-tenant)
+# =========================
+
+class ISP(db.Model):
+    """ ISP model for multi-tenant SaaS functionality """
+    __tablename__ = 'isps'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    company_name = db.Column(db.String(200), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    phone = db.Column(db.String(20), nullable=True)
+    address = db.Column(db.Text, nullable=True)
+    website = db.Column(db.String(200), nullable=True)
+    logo_url = db.Column(db.String(500), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    subscription_plan = db.Column(db.String(50), default='basic')  # basic, pro, enterprise
+    max_devices = db.Column(db.Integer, default=10)
+    max_customers = db.Column(db.Integer, default=100)
+    api_key = db.Column(db.String(100), unique=True, nullable=False)
+    radius_secret = db.Column(db.String(100), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    users = db.relationship('User', back_populates='isp')
+    mikrotik_devices = db.relationship('MikrotikDevice', back_populates='isp')
+    customers = db.relationship('Customer', back_populates='isp')
+    invoices = db.relationship('Invoice', back_populates='isp')
+    service_plans = db.relationship('ServicePlan', back_populates='isp')
+    
+    def __repr__(self):
+        return f"<ISP {self.name} ({self.company_name})>"
+    
+    def generate_api_key(self):
+        """Generate a unique API key for the ISP"""
+        import secrets
+        self.api_key = f"isp_{secrets.token_hex(16)}"
+    
+    def generate_radius_secret(self):
+        """Generate a RADIUS secret for the ISP"""
+        import secrets
+        self.radius_secret = secrets.token_hex(16) 

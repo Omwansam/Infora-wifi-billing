@@ -37,8 +37,8 @@ export default function CustomerForm() {
       const result = await customerService.createCustomer(formData);
       
       if (result.success) {
-        toast.success('Customer added successfully!');
-        navigate('/customers');
+      toast.success('Customer added successfully!');
+      navigate('/customers');
       } else {
         console.error('Failed to create customer:', result.error);
         toast.error(result.error || 'Failed to add customer');
@@ -114,16 +114,16 @@ export default function CustomerForm() {
                   </label>
                   <div className="relative">
                     <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                    <input
+                  <input
                       type="tel"
                       id="phone"
                       name="phone"
                       value={formData.phone}
-                      onChange={handleChange}
-                      required
+                    onChange={handleChange}
+                    required
                       className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                       placeholder="+254700123456"
-                    />
+                  />
                   </div>
                 </div>
                 <div>
@@ -153,18 +153,18 @@ export default function CustomerForm() {
                 <MapPin className="h-5 w-5 mr-2 text-blue-600" />
                 Address Information
               </h3>
-              <div>
-                <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
+                <div>
+                  <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
                   Address *
-                </label>
-                <input
-                  type="text"
-                  id="address"
-                  name="address"
-                  value={formData.address}
-                  onChange={handleChange}
-                  required
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  </label>
+                  <input
+                    type="text"
+                    id="address"
+                    name="address"
+                    value={formData.address}
+                    onChange={handleChange}
+                    required
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   placeholder="123 Main Street, Nairobi"
                 />
               </div>
@@ -212,23 +212,23 @@ export default function CustomerForm() {
                     <option value="suspended">Suspended</option>
                   </select>
                 </div>
-                <div>
+            <div>
                   <label htmlFor="device_count" className="block text-sm font-medium text-gray-700 mb-2">
                     Device Count
-                  </label>
+                </label>
                   <input
                     type="number"
                     id="device_count"
                     name="device_count"
                     value={formData.device_count}
-                    onChange={handleChange}
+                  onChange={handleChange}
                     min="1"
                     max="10"
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                     placeholder="1"
-                  />
-                </div>
+                />
               </div>
+            </div>
             </div>
 
 

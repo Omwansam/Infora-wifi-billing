@@ -1,0 +1,75 @@
+# LDIF file for sample users
+# This file will be imported into OpenLDAP for testing
+
+# Create organizational units
+dn: ou=users,dc=company,dc=com
+objectClass: organizationalUnit
+ou: users
+
+dn: ou=groups,dc=company,dc=com
+objectClass: organizationalUnit
+ou: groups
+
+# Create sample users
+dn: uid=testuser,ou=users,dc=company,dc=com
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: testuser
+sn: Test
+givenName: User
+cn: Test User
+displayName: Test User
+uidNumber: 1000
+gidNumber: 1000
+userPassword: {SSHA}testpass123
+homeDirectory: /home/testuser
+loginShell: /bin/bash
+mail: testuser@company.com
+
+dn: uid=testuser2,ou=users,dc=company,dc=com
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: testuser2
+sn: Test2
+givenName: User2
+cn: Test User2
+displayName: Test User2
+uidNumber: 1001
+gidNumber: 1000
+userPassword: {SSHA}testpass456
+homeDirectory: /home/testuser2
+loginShell: /bin/bash
+mail: testuser2@company.com
+
+dn: uid=admin,ou=users,dc=company,dc=com
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: admin
+sn: Admin
+givenName: User
+cn: Admin User
+displayName: Admin User
+uidNumber: 1002
+gidNumber: 1000
+userPassword: {SSHA}admin123
+homeDirectory: /home/admin
+loginShell: /bin/bash
+mail: admin@company.com
+
+# Create groups
+dn: cn=users,ou=groups,dc=company,dc=com
+objectClass: posixGroup
+cn: users
+gidNumber: 1000
+memberUid: testuser
+memberUid: testuser2
+memberUid: admin
+
+dn: cn=admins,ou=groups,dc=company,dc=com
+objectClass: posixGroup
+cn: admins
+gidNumber: 1001
+memberUid: admin

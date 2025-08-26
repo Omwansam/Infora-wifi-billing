@@ -11,6 +11,12 @@ flask-migrate = "*"
 flask-cors = "*"
 python-dotenv = "*"
 requests = "*"
+pyrad = "*"
+ldap3 = "*"
+pysnmp = "*"
+cryptography = "*"
+netaddr = "*"
+paramiko = "*"
 
 [dev-packages]
 
