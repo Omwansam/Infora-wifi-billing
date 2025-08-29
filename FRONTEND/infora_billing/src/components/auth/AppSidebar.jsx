@@ -24,7 +24,102 @@ import {
   ChevronDown,
   ChevronRight,
   User,
-  LogOut
+  LogOut,
+  Shield,
+  Network,
+  Database,
+  Router,
+  Wifi,
+  Lock,
+  Activity,
+  BarChart3,
+  FileSpreadsheet,
+  Calendar,
+  Zap,
+  Globe,
+  ShieldCheck,
+  Key,
+  Monitor,
+  HardDrive,
+  Cpu,
+  Smartphone,
+  Tablet,
+  Laptop,
+  Printer,
+  Camera,
+  Bell,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Star,
+  Award,
+  Target,
+  PieChart,
+  LineChart,
+  TrendingDown,
+  Wallet,
+  Download,
+  Upload,
+  RefreshCw,
+  Power,
+  PowerOff,
+  Play,
+  Pause,
+  Square,
+  SkipBack,
+  SkipForward,
+  Volume2,
+  VolumeX,
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  Image,
+  File,
+  Folder,
+  Archive,
+  Trash2,
+  Edit,
+  Plus,
+  Minus,
+  Search,
+  Filter,
+  SortAsc,
+  SortDesc,
+  MoreHorizontal,
+  MoreVertical,
+  ExternalLink,
+  Link as LinkIcon,
+  Unlink,
+  Copy,
+  Scissors,
+  Save,
+  Share,
+  Heart,
+  ThumbsUp,
+  ThumbsDown,
+  Flag,
+  Bookmark,
+  Tag,
+  Hash,
+  AtSign,
+  Percent,
+  Infinity,
+  X,
+  Check,
+  AlertCircle,
+  Info,
+  Lightbulb,
+  Moon,
+  Sun,
+  Cloud,
+  CloudRain,
+  CloudSnow,
+  Wind,
+  Thermometer,
+  Droplets,
+  Umbrella
 } from 'lucide-react';
 
 const AppSidebar = () => {
@@ -33,7 +128,11 @@ const AppSidebar = () => {
     billing: true,
     finance: true,
     communication: true,
-    devices: true
+    devices: true,
+    network: true,
+    security: true,
+    monitoring: true,
+    reports: true
   });
   const location = useLocation();
   const navigate = useNavigate();
@@ -62,7 +161,9 @@ const AppSidebar = () => {
         { title: "Payments", url: "/billing/payments", icon: CreditCard },
         { title: "Invoices", url: "/billing/invoices", icon: Receipt },
         { title: "Transaction History", url: "/billing/transactions", icon: History },
-        { title: "Vouchers", url: "/billing/vouchers", icon: Gift }
+        { title: "Vouchers", url: "/billing/vouchers", icon: Gift },
+        { title: "Subscriptions", url: "/billing/subscriptions", icon: RefreshCw },
+        { title: "Reports", url: "/billing/reports", icon: BarChart3 }
       ]
     },
     {
@@ -87,8 +188,52 @@ const AppSidebar = () => {
     ...(user?.is_admin ? [{
       title: "Device Management", icon: Server, section: "devices",
       items: [
-        { title: "Mikrotik Routers", url: "/devices/mikrotik", icon: Server },
-        { title: "Equipment", url: "/devices/equipment", icon: Wrench }
+        { title: "Mikrotik Routers", url: "/devices/mikrotik", icon: Router },
+        { title: "Equipment", url: "/devices/equipment", icon: Wrench },
+        { title: "Device Status", url: "/devices/status", icon: Activity },
+        { title: "Device Backup", url: "/devices/backup", icon: Download },
+        { title: "Firmware Updates", url: "/devices/firmware", icon: Upload }
+      ]
+    }] : []),
+    ...(user?.is_admin ? [{
+      title: "Network Management", icon: Network, section: "network",
+      items: [
+        { title: "ISPs", url: "/network/isps", icon: Globe },
+        { title: "RADIUS Clients", url: "/network/radius", icon: Shield },
+        { title: "LDAP Servers", url: "/network/ldap", icon: Database },
+        { title: "SNMP Devices", url: "/network/snmp", icon: Monitor },
+        { title: "VPN Configurations", url: "/network/vpn", icon: Lock },
+        { title: "EAP Profiles", url: "/network/eap", icon: Key }
+      ]
+    }] : []),
+    ...(user?.is_admin ? [{
+      title: "Security", icon: Shield, section: "security",
+      items: [
+        { title: "RADIUS Users", url: "/security/radius-users", icon: Users },
+        { title: "RADIUS Groups", url: "/security/radius-groups", icon: ShieldCheck },
+        { title: "RADIUS Accounting", url: "/security/radius-accounting", icon: Activity },
+        { title: "VPN Clients", url: "/security/vpn-clients", icon: Lock },
+        { title: "Access Control", url: "/security/access-control", icon: Key }
+      ]
+    }] : []),
+    ...(user?.is_admin ? [{
+      title: "Monitoring", icon: Activity, section: "monitoring",
+      items: [
+        { title: "SNMP Monitoring", url: "/monitoring/snmp", icon: Monitor },
+        { title: "Device Statistics", url: "/monitoring/device-stats", icon: BarChart3 },
+        { title: "Network Traffic", url: "/monitoring/traffic", icon: TrendingUp },
+        { title: "System Logs", url: "/monitoring/logs", icon: FileText },
+        { title: "Alerts", url: "/monitoring/alerts", icon: Bell }
+      ]
+    }] : []),
+    ...(user?.is_admin ? [{
+      title: "Reports & Analytics", icon: BarChart3, section: "reports",
+      items: [
+        { title: "Billing Reports", url: "/reports/billing", icon: Receipt },
+        { title: "Network Reports", url: "/reports/network", icon: Network },
+        { title: "Device Reports", url: "/reports/devices", icon: Server },
+        { title: "Customer Reports", url: "/reports/customers", icon: Users },
+        { title: "Performance Analytics", url: "/reports/analytics", icon: TrendingUp }
       ]
     }] : []),
     {

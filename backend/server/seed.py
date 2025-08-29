@@ -33,6 +33,7 @@ from models import (
     RadiusCheck, RadiusReply, RadiusGroup, RadiusUserGroup,
     NetworkInfrastructure, NetworkZone, BillingCycle, TaxRate,
     Discount, InvoiceDiscount, AuditLog, BackupSchedule, SystemSetting,
+    ISP,
     CustomerStatus, InvoiceStatus, PaymentStatus, VoucherStatus,
     DeviceStatus, InfrastructureStatus, TicketStatus, TicketPriority,
     CustomerNoteType, NotificationPriority
@@ -131,9 +132,65 @@ def seed_users():
     db.session.commit()
     print("✅ Users seeded successfully!")
 
+def seed_isps():
+    """Seed ISPs data"""
+    print("🌱 Seeding ISPs...")
+    
+    isps_data = [
+        {
+            'name': 'Default ISP',
+            'company_name': 'Infora WiFi Solutions',
+            'email': 'admin@infora.com',
+            'phone': '+254700000000',
+            'address': 'Nairobi, Kenya',
+            'website': 'https://infora.com',
+            'logo_url': 'https://infora.com/logo.png',
+            'is_active': True,
+            'subscription_plan': 'enterprise',
+            'max_devices': 100,
+            'max_customers': 1000,
+            'api_key': 'default_api_key_123',
+            'radius_secret': 'default_radius_secret_456'
+        }
+    ]
+    
+    for isp_data in isps_data:
+        existing_isp = ISP.query.filter_by(name=isp_data['name']).first()
+        if not existing_isp:
+            isp = ISP(
+                name=isp_data['name'],
+                company_name=isp_data['company_name'],
+                email=isp_data['email'],
+                phone=isp_data['phone'],
+                address=isp_data['address'],
+                website=isp_data['website'],
+                logo_url=isp_data['logo_url'],
+                is_active=isp_data['is_active'],
+                subscription_plan=isp_data['subscription_plan'],
+                max_devices=isp_data['max_devices'],
+                max_customers=isp_data['max_customers'],
+                api_key=isp_data['api_key'],
+                radius_secret=isp_data['radius_secret'],
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+            db.session.add(isp)
+            print(f"  ✓ Created ISP: {isp_data['name']}")
+        else:
+            print(f"  ℹ ISP already exists: {isp_data['name']}")
+    
+    db.session.commit()
+    print("✅ ISPs seeded successfully!")
+
 def seed_service_plans():
     """Seed service plans"""
     print("🌱 Seeding service plans...")
+    
+    # Get the default ISP
+    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    if not default_isp:
+        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        return
     
     service_plans = [
         {
@@ -151,7 +208,7 @@ def seed_service_plans():
             'is_active': True
         },
         {
-            'nameflask run: 'Premium 100Mbps',
+            'name': 'Premium 100Mbps',
             'speed': '100 Mbps',
             'price': 7999.00,
             'features': {
@@ -239,6 +296,7 @@ def seed_service_plans():
                 features=plan_data['features'],
                 popular=plan_data['popular'],
                 is_active=plan_data['is_active'],
+                isp_id=default_isp.id,
                 created_at=datetime.now(),
                 updated_at=datetime.now()
             )
@@ -253,6 +311,12 @@ def seed_service_plans():
 def seed_customers():
     """Seed customers"""
     print("🌱 Seeding customers...")
+    
+    # Get the default ISP
+    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    if not default_isp:
+        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        return
     
     # Get service plans for foreign key relationships
     basic_plan = ServicePlan.query.filter_by(name='Basic 50Mbps').first()
@@ -348,6 +412,7 @@ def seed_customers():
                 device_count=customer_data['device_count'],
                 last_payment_date=customer_data['last_payment_date'],
                 service_plan_id=customer_data['service_plan'].id if customer_data['service_plan'] else None,
+                isp_id=default_isp.id,
                 created_at=datetime.now(),
                 updated_at=datetime.now()
             )
@@ -362,6 +427,12 @@ def seed_customers():
 def seed_invoices():
     """Seed invoices and invoice items"""
     print("🌱 Seeding invoices...")
+    
+    # Get the default ISP
+    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    if not default_isp:
+        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        return
     
     # Get customers for foreign key relationships
     customers = Customer.query.all()
@@ -443,6 +514,7 @@ def seed_invoices():
                     paid_date=invoice_data['paid_date'],
                     notes=invoice_data['notes'],
                     customer_id=customer.id,
+                    isp_id=default_isp.id,
                     created_at=datetime.now(),
                     updated_at=datetime.now()
                 )
@@ -548,30 +620,37 @@ def seed_mikrotik_devices():
     """Seed Mikrotik devices"""
     print("🌱 Seeding Mikrotik devices...")
     
+    # Get the default ISP
+    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    if not default_isp:
+        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        return
+    
     # Create network zones first
     zones_data = [
-        {'zone_name': 'Zone A', 'zone_description': 'Downtown Area'},
-        {'zone_name': 'Zone B', 'zone_description': 'Suburban Area'},
-        {'zone_name': 'Zone C', 'zone_description': 'Industrial Area'}
+        {'name': 'Zone A', 'description': 'Downtown Area'},
+        {'name': 'Zone B', 'description': 'Suburban Area'},
+        {'name': 'Zone C', 'description': 'Industrial Area'}
     ]
     
     zones = {}
     for zone_data in zones_data:
-        existing_zone = NetworkZone.query.filter_by(zone_name=zone_data['zone_name']).first()
+        existing_zone = NetworkZone.query.filter_by(name=zone_data['name']).first()
         if not existing_zone:
             zone = NetworkZone(
-                zone_name=zone_data['zone_name'],
-                zone_description=zone_data['zone_description'],
+                name=zone_data['name'],
+                description=zone_data['description'],
+                isp_id=default_isp.id,
                 created_at=datetime.now(),
                 updated_at=datetime.now()
             )
             db.session.add(zone)
             db.session.flush()
-            zones[zone_data['zone_name']] = zone
-            print(f"  ✓ Created zone: {zone_data['zone_name']}")
+            zones[zone_data['name']] = zone
+            print(f"  ✓ Created zone: {zone_data['name']}")
         else:
-            zones[zone_data['zone_name']] = existing_zone
-            print(f"  ℹ Zone already exists: {zone_data['zone_name']}")
+            zones[zone_data['name']] = existing_zone
+            print(f"  ℹ Zone already exists: {zone_data['name']}")
     
     db.session.commit()
     
@@ -646,6 +725,7 @@ def seed_mikrotik_devices():
                 location=device_data['location'],
                 notes=device_data['notes'],
                 zone_id=zone.id if zone else None,
+                isp_id=default_isp.id,
                 is_active=True,
                 created_at=datetime.now(),
                 updated_at=datetime.now()
@@ -923,6 +1003,7 @@ def main():
 
             # Seed data in order of dependencies
             seed_users()
+            seed_isps()
             seed_service_plans()
             seed_customers()
             seed_invoices()

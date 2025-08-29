@@ -5,6 +5,9 @@ import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
  */
 export const apiCall = async (endpoint, options = {}) => {
   try {
+    console.log('Making API call to:', endpoint);
+    console.log('Options:', options);
+    
     const response = await fetch(endpoint, {
       ...options,
       headers: {
@@ -12,6 +15,9 @@ export const apiCall = async (endpoint, options = {}) => {
         ...options.headers,
       },
     });
+
+    console.log('Response status:', response.status);
+    console.log('Response headers:', response.headers);
 
     const data = await response.json();
 
@@ -22,6 +28,15 @@ export const apiCall = async (endpoint, options = {}) => {
     return { success: true, data };
   } catch (error) {
     console.error('API call failed:', error);
+    
+    // Provide more specific error messages
+    if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+      return { 
+        success: false, 
+        error: 'Cannot connect to server. Please ensure the backend is running on http://localhost:5000' 
+      };
+    }
+    
     return { 
       success: false, 
       error: error.message || 'Network error. Please check your connection.' 
@@ -87,5 +102,26 @@ export const authenticatedApiCallText = async (endpoint, token, options = {}) =>
  * Test API connection
  */
 export const testApiConnection = async () => {
-  return apiCall(API_ENDPOINTS.TEST);
+  console.log('Testing API connection...');
+  const result = await apiCall(API_ENDPOINTS.TEST);
+  console.log('API connection test result:', result);
+  return result;
+};
+
+/**
+ * Check if backend is reachable
+ */
+export const checkBackendStatus = async () => {
+  try {
+    const response = await fetch(API_ENDPOINTS.TEST, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    return response.ok;
+  } catch (error) {
+    console.error('Backend status check failed:', error);
+    return false;
+  }
 };

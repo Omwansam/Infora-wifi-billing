@@ -711,6 +711,7 @@ class NetworkZone(db.Model):
     # Relationships
     isp = db.relationship('ISP', back_populates='network_zones')
     mikrotik_devices = db.relationship('MikrotikDevice', back_populates='zone')
+    infrastructure_devices = db.relationship('NetworkInfrastructure', back_populates='zone')
     
     def __repr__(self):
         return f"<NetworkZone {self.name} (ISP: {self.isp_id})>"
@@ -1333,6 +1334,8 @@ class ISP(db.Model):
     customers = db.relationship('Customer', back_populates='isp')
     invoices = db.relationship('Invoice', back_populates='isp')
     service_plans = db.relationship('ServicePlan', back_populates='isp')
+    radius_sessions = db.relationship('RadiusSession', back_populates='isp')
+    network_zones = db.relationship('NetworkZone', back_populates='isp')
     
     def __repr__(self):
         return f"<ISP {self.name} ({self.company_name})>"
