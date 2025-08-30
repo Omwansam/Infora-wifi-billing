@@ -1,5 +1,8 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
 
+// Get API base URL from environment or config
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
 /**
  * Generic API call function with error handling
  */
@@ -19,13 +22,27 @@ export const apiCall = async (endpoint, options = {}) => {
     console.log('Response status:', response.status);
     console.log('Response headers:', response.headers);
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP error! status: ${response.status}`);
+    // Check if response is JSON
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      return { success: true, data };
+    } else {
+      // Handle non-JSON responses (like HTML error pages)
+      const text = await response.text();
+      console.error('Non-JSON response received:', text.substring(0, 200));
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}. Server returned: ${text.substring(0, 100)}`);
+      }
+      
+      throw new Error('Server returned non-JSON response. Please check if the backend server is running correctly.');
     }
-
-    return { success: true, data };
   } catch (error) {
     console.error('API call failed:', error);
     
@@ -125,3 +142,33 @@ export const checkBackendStatus = async () => {
     return false;
   }
 };
+
+// Create a default export for backward compatibility
+const api = {
+  get: async (endpoint, options = {}) => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    return apiCall(url, { ...options, method: 'GET' });
+  },
+  post: async (endpoint, data, options = {}) => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    return apiCall(url, { 
+      ...options, 
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+  put: async (endpoint, data, options = {}) => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    return apiCall(url, { 
+      ...options, 
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  },
+  delete: async (endpoint, options = {}) => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    return apiCall(url, { ...options, method: 'DELETE' });
+  }
+};
+
+export default api;

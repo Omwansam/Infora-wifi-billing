@@ -71,7 +71,21 @@ export const API_ENDPOINTS = {
   BILLING_PAYMENTS: `${API_BASE_URL}/api/billing/payments`,
   BILLING_TRANSACTIONS: `${API_BASE_URL}/api/billing/transactions`,
   BILLING_REPORTS: `${API_BASE_URL}/api/billing/reports`,
-  BILLING_VOUCHERS: `${API_BASE_URL}/api/billing/vouchers`,
+  
+  // Voucher endpoints
+  VOUCHERS: `${API_BASE_URL}/api/vouchers`,
+  VOUCHER_VALIDATE: `${API_BASE_URL}/api/vouchers/validate`,
+  VOUCHER_STATS: `${API_BASE_URL}/api/vouchers/stats`,
+  VOUCHER_BULK_GENERATE: `${API_BASE_URL}/api/vouchers/bulk-generate`,
+  
+  // Communication endpoints
+  EMAIL_PROVIDERS: `${API_BASE_URL}/api/communication/email-providers`,
+  SMS_PROVIDERS: `${API_BASE_URL}/api/communication/sms-providers`,
+  EMAIL_CAMPAIGNS: `${API_BASE_URL}/api/communication/email-campaigns`,
+  SMS_CAMPAIGNS: `${API_BASE_URL}/api/communication/sms-campaigns`,
+  EMAIL_TEMPLATES: `${API_BASE_URL}/api/communication/email-templates`,
+  SMS_TEMPLATES: `${API_BASE_URL}/api/communication/sms-templates`,
+  COMMUNICATION_STATS: `${API_BASE_URL}/api/communication/stats`,
   
   // Test endpoint
   TEST: `${API_BASE_URL}/api/test`,

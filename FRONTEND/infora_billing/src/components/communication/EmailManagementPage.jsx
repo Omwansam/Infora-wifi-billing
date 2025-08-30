@@ -1,365 +1,905 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Mail, Plus, Edit, Trash2, Search, Send, Users, CheckCircle, Eye, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import {
+  Mail,
+  Plus,
+  Settings,
+  FileText,
+  Send,
+  Edit,
+  Trash2,
+  Eye,
+  RefreshCw,
+  TestTube,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Users
+} from 'lucide-react';
+import communicationService from '../../services/communicationService';
+import toast from 'react-hot-toast';
 
 const EmailManagementPage = () => {
-  const [emailCampaigns, setEmailCampaigns] = useState([
-    {
-      id: 1,
-      name: 'Monthly Newsletter',
-      subject: 'Infora WiFi - January 2024 Newsletter',
-      status: 'Active',
-      recipients: 500,
-      sent: 485,
-      delivered: 470,
-      opened: 320,
-      clicked: 85,
-      failed: 15,
-      scheduledDate: '2024-01-15 09:00',
-      category: 'Newsletter'
-    },
-    {
-      id: 2,
-      name: 'Service Maintenance Alert',
-      subject: 'Scheduled Maintenance - Service Interruption Notice',
-      status: 'Completed',
-      recipients: 200,
-      sent: 200,
-      delivered: 195,
-      opened: 150,
-      clicked: 45,
-      failed: 5,
-      scheduledDate: '2024-01-10 14:00',
-      category: 'Maintenance'
-    }
-  ]);
+  const [activeTab, setActiveTab] = useState('providers');
+  const [emailProviders, setEmailProviders] = useState([]);
+  const [emailTemplates, setEmailTemplates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [showAddModal, setShowAddModal] = useState(false);
+  // Modal states
+  const [showProviderForm, setShowProviderForm] = useState(false);
+  const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [showTestModal, setShowTestModal] = useState(false);
 
-  const getStatusBadge = (status) => {
-    const config = {
-      Active: { color: 'bg-green-100 text-green-800', icon: CheckCircle },
-      Completed: { color: 'bg-blue-100 text-blue-800', icon: CheckCircle },
-      Scheduled: { color: 'bg-yellow-100 text-yellow-800' }
-    };
-    const configItem = config[status] || config.Active;
-    const Icon = configItem.icon;
-    return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${configItem.color}`}>
-        {Icon && <Icon className="h-3 w-3 mr-1" />}
-        {status}
-      </span>
-    );
-  };
+  // Edit states
+  const [editingProvider, setEditingProvider] = useState(null);
+  const [editingTemplate, setEditingTemplate] = useState(null);
+  const [testingProvider, setTestingProvider] = useState(null);
 
-  const getOpenRate = (opened, delivered) => {
-    if (delivered === 0) return 0;
-    return Math.round((opened / delivered) * 100);
-  };
-
-  const filteredCampaigns = emailCampaigns.filter(campaign => {
-    const matchesSearch = campaign.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || campaign.status === statusFilter;
-    return matchesSearch && matchesStatus;
+  // Form states
+  const [providerForm, setProviderForm] = useState({
+    name: '',
+    provider_type: 'smtp',
+    host: '',
+    port: 587,
+    username: '',
+    password: '',
+    api_key: '',
+    api_secret: '',
+    domain: '',
+    sender_email: '',
+    use_tls: true,
+    use_ssl: false,
+    is_default: false,
+    daily_limit: 1000
   });
 
-  const totalCampaigns = emailCampaigns.length;
-  const activeCampaigns = emailCampaigns.filter(c => c.status === 'Active').length;
-  const totalRecipients = emailCampaigns.reduce((sum, c) => sum + c.recipients, 0);
+  const [templateForm, setTemplateForm] = useState({
+    name: '',
+    subject: '',
+    content: '',
+    html_content: '',
+    template_type: 'custom'
+  });
+
+  const [sendForm, setSendForm] = useState({
+    template_id: '',
+    recipient_emails: '',
+    variables: {}
+  });
+
+  const [testForm, setTestForm] = useState({
+    test_email: '',
+    subject: 'Test Email from Infora WiFi',
+    content: 'This is a test email to verify your email provider configuration.'
+  });
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [providersData, templatesData] = await Promise.all([
+        communicationService.getEmailProviders(),
+        communicationService.getEmailTemplates()
+      ]);
+
+      setEmailProviders(providersData.data || providersData.providers || []);
+      setEmailTemplates(templatesData.data || templatesData.templates || []);
+    } catch (error) {
+      console.error('Error fetching email data:', error);
+      toast.error('Failed to fetch email data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchData();
+    setRefreshing(false);
+    toast.success('Data refreshed successfully');
+  };
+
+  // Provider CRUD operations
+  const handleProviderSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (editingProvider) {
+        await communicationService.updateEmailProvider(editingProvider.id, providerForm);
+        toast.success('Email provider updated successfully');
+      } else {
+        await communicationService.createEmailProvider(providerForm);
+        toast.success('Email provider created successfully');
+      }
+      setShowProviderForm(false);
+      setEditingProvider(null);
+      resetProviderForm();
+      fetchData();
+    } catch (error) {
+      console.error('Error saving provider:', error);
+      toast.error('Failed to save email provider');
+    }
+  };
+
+  const handleDeleteProvider = async (providerId) => {
+    if (window.confirm('Are you sure you want to delete this email provider?')) {
+      try {
+        await communicationService.deleteEmailProvider(providerId);
+        toast.success('Email provider deleted successfully');
+        fetchData();
+      } catch (error) {
+        console.error('Error deleting provider:', error);
+        toast.error('Failed to delete email provider');
+      }
+    }
+  };
+
+  const editProvider = (provider) => {
+    setEditingProvider(provider);
+    setProviderForm({
+      name: provider.name,
+      provider_type: provider.provider_type,
+      host: provider.host || '',
+      port: provider.port || 587,
+      username: provider.username || '',
+      password: '',
+      api_key: provider.api_key || '',
+      api_secret: provider.api_secret || '',
+      domain: provider.domain || '',
+      sender_email: provider.sender_email || '',
+      use_tls: provider.use_tls !== false,
+      use_ssl: provider.use_ssl === true,
+      is_default: provider.is_default === true,
+      daily_limit: provider.daily_limit || 1000
+    });
+    setShowProviderForm(true);
+  };
+
+  const testProvider = (provider) => {
+    setTestingProvider(provider);
+    setTestForm({
+      test_email: '',
+      subject: 'Test Email from Infora WiFi',
+      content: 'This is a test email to verify your email provider configuration.'
+    });
+    setShowTestModal(true);
+  };
+
+  // Template CRUD operations
+  const handleTemplateSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (editingTemplate) {
+        await communicationService.updateEmailTemplate(editingTemplate.id, templateForm);
+        toast.success('Email template updated successfully');
+      } else {
+        await communicationService.createEmailTemplate(templateForm);
+        toast.success('Email template created successfully');
+      }
+      setShowTemplateForm(false);
+      setEditingTemplate(null);
+      resetTemplateForm();
+      fetchData();
+    } catch (error) {
+      console.error('Error saving template:', error);
+      toast.error('Failed to save email template');
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId) => {
+    if (window.confirm('Are you sure you want to delete this email template?')) {
+      try {
+        await communicationService.deleteEmailTemplate(templateId);
+        toast.success('Email template deleted successfully');
+        fetchData();
+      } catch (error) {
+        console.error('Error deleting template:', error);
+        toast.error('Failed to delete email template');
+      }
+    }
+  };
+
+  const editTemplate = (template) => {
+    setEditingTemplate(template);
+    setTemplateForm({
+      name: template.name,
+      subject: template.subject,
+      content: template.content,
+      html_content: template.html_content || '',
+      template_type: template.template_type
+    });
+    setShowTemplateForm(true);
+  };
+
+  const viewTemplate = (template) => {
+    // Show template details in a modal
+    alert(`Template: ${template.name}\nSubject: ${template.subject}\nContent: ${template.content}`);
+  };
+
+  // Send email functionality
+  const handleSendEmail = async (e) => {
+    e.preventDefault();
+    try {
+      const emails = sendForm.recipient_emails.split(',').map(email => email.trim());
+
+      for (const email of emails) {
+        await communicationService.sendTestEmail(
+          sendForm.template_id,
+          email,
+          sendForm.subject || 'Email from Infora WiFi',
+          sendForm.content || 'This is an email from Infora WiFi billing system.'
+        );
+      }
+
+      toast.success(`Email sent successfully to ${emails.length} recipient(s)`);
+      setShowSendModal(false);
+      resetSendForm();
+    } catch (error) {
+      console.error('Error sending email:', error);
+      toast.error('Failed to send email');
+    }
+  };
+
+  const handleTestEmail = async (e) => {
+    e.preventDefault();
+    try {
+      await communicationService.sendTestEmail(
+        testingProvider.id,
+        testForm.test_email,
+        testForm.subject,
+        testForm.content
+      );
+      toast.success('Test email sent successfully');
+      setShowTestModal(false);
+      setTestingProvider(null);
+      resetTestForm();
+    } catch (error) {
+      console.error('Error testing provider:', error);
+      toast.error('Failed to send test email');
+    }
+  };
+
+  // Reset form functions
+  const resetProviderForm = () => {
+    setProviderForm({
+      name: '',
+      provider_type: 'smtp',
+      host: '',
+      port: 587,
+      username: '',
+      password: '',
+      api_key: '',
+      api_secret: '',
+      domain: '',
+      sender_email: '',
+      use_tls: true,
+      use_ssl: false,
+      is_default: false,
+      daily_limit: 1000
+    });
+  };
+
+  const resetTemplateForm = () => {
+    setTemplateForm({
+      name: '',
+      subject: '',
+      content: '',
+      html_content: '',
+      template_type: 'custom'
+    });
+  };
+
+  const resetSendForm = () => {
+    setSendForm({
+      template_id: '',
+      recipient_emails: '',
+      variables: {}
+    });
+  };
+
+  const resetTestForm = () => {
+    setTestForm({
+      test_email: '',
+      subject: 'Test Email from Infora WiFi',
+      content: 'This is a test email to verify your email provider configuration.'
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 rounded w-1/4 mb-6"></div>
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-20 bg-gray-200 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <Mail className="h-6 w-6 text-blue-600" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">Email Management</h1>
-                <p className="text-gray-600 mt-1">Manage email campaigns and templates</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+    <div className="p-6">
+      <div className="mb-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Email Management</h1>
+            <p className="text-gray-600">Manage email providers and templates</p>
+          </div>
+          <div className="flex space-x-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center space-x-2 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-50"
             >
-              <Plus className="h-4 w-4 mr-2" />
-              New Email Campaign
+              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+            <button
+              onClick={() => setShowSendModal(true)}
+              className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+            >
+              <Users size={16} />
+              <span>Send Email</span>
             </button>
           </div>
-        </motion.div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Campaigns</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{totalCampaigns}</p>
-              </div>
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <Mail className="h-6 w-6 text-blue-600" />
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Active Campaigns</p>
-                <p className="text-2xl font-bold text-green-600 mt-1">{activeCampaigns}</p>
-              </div>
-              <div className="p-3 bg-green-100 rounded-lg">
-                <Send className="h-6 w-6 text-green-600" />
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Recipients</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{totalRecipients}</p>
-              </div>
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <Users className="h-6 w-6 text-purple-600" />
-              </div>
-            </div>
-          </motion.div>
         </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6"
-        >
-          <div className="flex flex-col lg:flex-row gap-4">
-            <div className="flex-1">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search campaigns by name..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="all">All Status</option>
-              <option value="Active">Active</option>
-              <option value="Completed">Completed</option>
-              <option value="Scheduled">Scheduled</option>
-            </select>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"
-        >
-          {filteredCampaigns.length === 0 ? (
-            <div className="p-12 text-center">
-              <div className="mx-auto w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                <Mail className="h-12 w-12 text-gray-400" />
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No email campaigns found</h3>
-              <p className="text-gray-500 mb-6">
-                {emailCampaigns.length === 0 
-                  ? "You haven't created any email campaigns yet. Get started by creating your first campaign."
-                  : "No campaigns match your current filters."
-                }
-              </p>
-              <button 
-                onClick={() => setShowAddModal(true)}
-                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                New Email Campaign
-              </button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Campaign
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Recipients
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Open Rate
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Scheduled
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredCampaigns.map((campaign) => (
-                    <tr key={campaign.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                            <Mail className="h-5 w-5 text-blue-600" />
-                          </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{campaign.name}</div>
-                            <div className="text-sm text-gray-500 max-w-xs truncate">{campaign.subject}</div>
-                            <div className="text-xs text-gray-400">{campaign.category}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(campaign.status)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm">
-                          <div className="font-medium text-gray-900">{campaign.recipients}</div>
-                          <div className="text-gray-500">Sent: {campaign.sent}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm">
-                          <div className="font-medium text-green-600">
-                            {getOpenRate(campaign.opened, campaign.delivered)}%
-                          </div>
-                          <div className="text-gray-500">
-                            {campaign.opened} opened
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {campaign.scheduledDate}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex items-center space-x-2">
-                          <button className="text-blue-600 hover:text-blue-900">
-                            <Eye className="h-4 w-4" />
-                          </button>
-                          <button className="text-green-600 hover:text-green-900">
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          <button className="text-red-600 hover:text-red-900">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </motion.div>
       </div>
 
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900">New Email Campaign</h2>
+      {/* Tabs */}
+      <div className="border-b border-gray-200 mb-6">
+        <nav className="-mb-px flex space-x-8">
+          {[
+            { id: 'providers', label: 'Providers', icon: Settings },
+            { id: 'templates', label: 'Templates', icon: FileText }
+          ].map((tab) => {
+            const Icon = tab.icon;
+            return (
               <button
-                onClick={() => setShowAddModal(false)}
-                className="text-gray-400 hover:text-gray-600"
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center space-x-2 py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === tab.id
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
               >
-                <X className="h-6 w-6" />
+                <Icon size={16} />
+                <span>{tab.label}</span>
               </button>
-            </div>
-            
-            <div className="space-y-4">
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Email Providers Tab */}
+      {activeTab === 'providers' && (
+        <div>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Email Providers</h2>
+            <button
+              onClick={() => {
+                setShowProviderForm(true);
+                setEditingProvider(null);
+                resetProviderForm();
+              }}
+              className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            >
+              <Plus size={16} />
+              <span>Add Provider</span>
+            </button>
+          </div>
+
+          <div className="grid gap-4">
+            {emailProviders.map((provider) => (
+              <div key={provider.id} className="bg-white p-4 rounded-lg border border-gray-200">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <h3 className="font-semibold text-gray-900">{provider.name}</h3>
+                      {provider.is_default && (
+                        <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Default</span>
+                      )}
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        provider.provider_type === 'smtp'
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-purple-100 text-purple-800'
+                      }`}>
+                        {provider.provider_type.toUpperCase()}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-2">
+                      {provider.provider_type === 'smtp'
+                        ? `${provider.host}:${provider.port}`
+                        : 'API Provider'
+                      }
+                    </p>
+                    <div className="flex items-center space-x-4 text-sm text-gray-500">
+                      <span>Daily Limit: {provider.daily_limit}</span>
+                      <span>Sent Today: {provider.current_day_sent || 0}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => testProvider(provider)}
+                      className="p-2 text-blue-600 hover:bg-blue-50 rounded"
+                      title="Test Provider"
+                    >
+                      <TestTube size={16} />
+                    </button>
+                    <button
+                      onClick={() => editProvider(provider)}
+                      className="p-2 text-gray-600 hover:bg-gray-50 rounded"
+                      title="Edit Provider"
+                    >
+                      <Edit size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteProvider(provider.id)}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                      title="Delete Provider"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Email Templates Tab */}
+      {activeTab === 'templates' && (
+        <div>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Email Templates</h2>
+            <button
+              onClick={() => {
+                setShowTemplateForm(true);
+                setEditingTemplate(null);
+                resetTemplateForm();
+              }}
+              className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            >
+              <Plus size={16} />
+              <span>Add Template</span>
+            </button>
+          </div>
+
+          <div className="grid gap-4">
+            {emailTemplates.map((template) => (
+              <div key={template.id} className="bg-white p-4 rounded-lg border border-gray-200">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <h3 className="font-semibold text-gray-900">{template.name}</h3>
+                      <span className="bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
+                        {template.template_type}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-2">{template.subject}</p>
+                    <p className="text-sm text-gray-500 line-clamp-2">{template.content}</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => viewTemplate(template)}
+                      className="p-2 text-blue-600 hover:bg-blue-50 rounded"
+                      title="View Template"
+                    >
+                      <Eye size={16} />
+                    </button>
+                    <button
+                      onClick={() => editTemplate(template)}
+                      className="p-2 text-gray-600 hover:bg-gray-50 rounded"
+                      title="Edit Template"
+                    >
+                      <Edit size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTemplate(template.id)}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                      title="Delete Template"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Provider Form Modal */}
+      {showProviderForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold mb-4">
+              {editingProvider ? 'Edit Email Provider' : 'Add Email Provider'}
+            </h2>
+            <form onSubmit={handleProviderSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <input
+                    type="text"
+                    value={providerForm.name}
+                    onChange={(e) => setProviderForm({...providerForm, name: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Provider Type</label>
+                  <select
+                    value={providerForm.provider_type}
+                    onChange={(e) => setProviderForm({...providerForm, provider_type: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="smtp">SMTP</option>
+                    <option value="api">API</option>
+                  </select>
+                </div>
+              </div>
+
+              {providerForm.provider_type === 'smtp' && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Host</label>
+                      <input
+                        type="text"
+                        value={providerForm.host}
+                        onChange={(e) => setProviderForm({...providerForm, host: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                      <input
+                        type="number"
+                        value={providerForm.port}
+                        onChange={(e) => setProviderForm({...providerForm, port: parseInt(e.target.value)})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                      <input
+                        type="text"
+                        value={providerForm.username}
+                        onChange={(e) => setProviderForm({...providerForm, username: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                      <input
+                        type="password"
+                        value={providerForm.password}
+                        onChange={(e) => setProviderForm({...providerForm, password: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Sender Email</label>
+                      <input
+                        type="email"
+                        value={providerForm.sender_email}
+                        onChange={(e) => setProviderForm({...providerForm, sender_email: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Daily Limit</label>
+                      <input
+                        type="number"
+                        value={providerForm.daily_limit}
+                        onChange={(e) => setProviderForm({...providerForm, daily_limit: parseInt(e.target.value)})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-4">
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={providerForm.use_tls}
+                        onChange={(e) => setProviderForm({...providerForm, use_tls: e.target.checked})}
+                        className="mr-2"
+                      />
+                      <span className="text-sm text-gray-700">Use TLS</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={providerForm.use_ssl}
+                        onChange={(e) => setProviderForm({...providerForm, use_ssl: e.target.checked})}
+                        className="mr-2"
+                      />
+                      <span className="text-sm text-gray-700">Use SSL</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={providerForm.is_default}
+                        onChange={(e) => setProviderForm({...providerForm, is_default: e.target.checked})}
+                        className="mr-2"
+                      />
+                      <span className="text-sm text-gray-700">Default Provider</span>
+                    </label>
+                  </div>
+                </>
+              )}
+
+              {providerForm.provider_type === 'api' && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                      <input
+                        type="text"
+                        value={providerForm.api_key}
+                        onChange={(e) => setProviderForm({...providerForm, api_key: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">API Secret</label>
+                      <input
+                        type="password"
+                        value={providerForm.api_secret}
+                        onChange={(e) => setProviderForm({...providerForm, api_secret: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Domain (for Mailgun)</label>
+                    <input
+                      type="text"
+                      value={providerForm.domain}
+                      onChange={(e) => setProviderForm({...providerForm, domain: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="flex justify-end space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProviderForm(false);
+                    setEditingProvider(null);
+                    resetProviderForm();
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  {editingProvider ? 'Update' : 'Create'} Provider
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Template Form Modal */}
+      {showTemplateForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold mb-4">
+              {editingTemplate ? 'Edit Email Template' : 'Add Email Template'}
+            </h2>
+            <form onSubmit={handleTemplateSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <input
+                    type="text"
+                    value={templateForm.name}
+                    onChange={(e) => setTemplateForm({...templateForm, name: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Template Type</label>
+                  <select
+                    value={templateForm.template_type}
+                    onChange={(e) => setTemplateForm({...templateForm, template_type: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="custom">Custom</option>
+                    <option value="welcome">Welcome</option>
+                    <option value="reminder">Reminder</option>
+                    <option value="maintenance">Maintenance</option>
+                  </select>
+                </div>
+              </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Campaign Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
                 <input
                   type="text"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter campaign name"
+                  value={templateForm.subject}
+                  onChange={(e) => setTemplateForm({...templateForm, subject: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
-              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Subject Line</label>
-                <input
-                  type="text"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter email subject"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Content (Plain Text)</label>
+                <textarea
+                  value={templateForm.content}
+                  onChange={(e) => setTemplateForm({...templateForm, content: e.target.value})}
+                  rows={4}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
-              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                  <option value="">Select category</option>
-                  <option value="Newsletter">Newsletter</option>
-                  <option value="Maintenance">Maintenance</option>
-                  <option value="Welcome">Welcome</option>
-                  <option value="Promotional">Promotional</option>
+                <label className="block text-sm font-medium text-gray-700 mb-1">HTML Content (Optional)</label>
+                <textarea
+                  value={templateForm.html_content}
+                  onChange={(e) => setTemplateForm({...templateForm, html_content: e.target.value})}
+                  rows={6}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex justify-end space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTemplateForm(false);
+                    setEditingTemplate(null);
+                    resetTemplateForm();
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  {editingTemplate ? 'Update' : 'Create'} Template
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Send Email Modal */}
+      {showSendModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-semibold mb-4">Send Email to Users</h2>
+            <form onSubmit={handleSendEmail} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
+                <select
+                  value={sendForm.template_id}
+                  onChange={(e) => setSendForm({...sendForm, template_id: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  <option value="">Select Template</option>
+                  {emailTemplates.map(template => (
+                    <option key={template.id} value={template.id}>{template.name}</option>
+                  ))}
                 </select>
               </div>
-              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Schedule Date</label>
-                <input
-                  type="datetime-local"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Recipient Emails (comma-separated)</label>
+                <textarea
+                  value={sendForm.recipient_emails}
+                  onChange={(e) => setSendForm({...sendForm, recipient_emails: e.target.value})}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="user1@example.com, user2@example.com"
+                  required
                 />
               </div>
-            </div>
-            
-            <div className="flex justify-end space-x-3 mt-6">
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                Create Campaign
-              </button>
-            </div>
-          </motion.div>
+              <div className="flex justify-end space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSendModal(false);
+                    resetSendForm();
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                >
+                  Send Email
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Test Provider Modal */}
+      {showTestModal && testingProvider && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-semibold mb-4">Test Email Provider</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Send a test email to verify your {testingProvider.name} configuration.
+            </p>
+            <form onSubmit={handleTestEmail} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Test Email Address</label>
+                <input
+                  type="email"
+                  value={testForm.test_email}
+                  onChange={(e) => setTestForm({...testForm, test_email: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                <input
+                  type="text"
+                  value={testForm.subject}
+                  onChange={(e) => setTestForm({...testForm, subject: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Message</label>
+                <textarea
+                  value={testForm.content}
+                  onChange={(e) => setTestForm({...testForm, content: e.target.value})}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTestModal(false);
+                    setTestingProvider(null);
+                    resetTestForm();
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Send Test Email
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

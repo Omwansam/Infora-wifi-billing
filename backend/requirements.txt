@@ -9,3 +9,5 @@ paramiko==3.3.1
 cryptography==41.0.7
 requests==2.31.0
 ldap3==2.9.1
+twilio==8.10.0
+africastalking==1.2.8

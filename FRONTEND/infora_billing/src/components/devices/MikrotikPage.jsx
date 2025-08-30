@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Search,
@@ -19,16 +19,89 @@ import {
   HardDrive
 } from 'lucide-react';
 import { mikrotikDevices } from '../../data/mockData';
+import MikrotikConnectionWizard from './MikrotikConnectionWizard';
+import { mikrotikService } from '../../services/mikrotikService';
+import toast from 'react-hot-toast';
 
 export default function MikrotikPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [showWizard, setShowWizard] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const filteredDevices = mikrotikDevices.filter(device => {
-    const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         device.ip.includes(searchTerm) ||
-                         device.model.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || device.status === statusFilter;
+  // Fetch devices from backend
+  const fetchDevices = async () => {
+    try {
+      setLoading(true);
+      const response = await mikrotikService.getDevices();
+      setDevices(response.devices || response || []);
+    } catch (error) {
+      console.error('Error fetching devices:', error);
+      toast.error('Failed to fetch devices');
+      // Fallback to mock data if API fails
+      setDevices(mikrotikDevices);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Refresh devices
+  const refreshDevices = async () => {
+    try {
+      setRefreshing(true);
+      await fetchDevices();
+      toast.success('Devices refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing devices:', error);
+      toast.error('Failed to refresh devices');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Load devices on component mount
+  useEffect(() => {
+    fetchDevices();
+  }, []);
+
+  // Handle device deletion
+  const handleDeleteDevice = async (deviceId) => {
+    if (window.confirm('Are you sure you want to delete this device?')) {
+      try {
+        await mikrotikService.deleteDevice(deviceId);
+        toast.success('Device deleted successfully');
+        fetchDevices(); // Refresh the list
+      } catch (error) {
+        console.error('Error deleting device:', error);
+        toast.error('Failed to delete device');
+      }
+    }
+  };
+
+  // Handle device sync
+  const handleSyncDevice = async (deviceId) => {
+    try {
+      await mikrotikService.syncDevice(deviceId);
+      toast.success('Device synced successfully');
+      fetchDevices(); // Refresh the list
+    } catch (error) {
+      console.error('Error syncing device:', error);
+      toast.error('Failed to sync device');
+    }
+  };
+
+  const filteredDevices = devices.filter(device => {
+    const matchesSearch = device.device_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         device.device_ip?.includes(searchTerm) ||
+                         device.device_model?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         device.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         device.ip?.includes(searchTerm) ||
+                         device.model?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || 
+                         device.device_status === statusFilter || 
+                         device.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
@@ -58,21 +131,21 @@ export default function MikrotikPage() {
   const stats = [
     {
       title: 'Total Devices',
-      value: mikrotikDevices.length,
+      value: devices.length,
       change: '+2',
       icon: Wifi,
       color: 'bg-blue-500'
     },
     {
       title: 'Online Devices',
-      value: mikrotikDevices.filter(d => d.status === 'online').length,
+      value: devices.filter(d => d.device_status === 'online' || d.status === 'online').length,
       change: '+1',
       icon: CheckCircle,
       color: 'bg-green-500'
     },
     {
       title: 'Total Clients',
-      value: mikrotikDevices.reduce((sum, d) => sum + d.clients, 0),
+      value: devices.reduce((sum, d) => sum + (d.client_count || d.clients || 0), 0),
       change: '+15%',
       icon: Users,
       color: 'bg-purple-500'
@@ -102,11 +175,27 @@ export default function MikrotikPage() {
               <p className="text-gray-600 mt-2">Manage and monitor router devices</p>
             </div>
             <div className="flex space-x-3">
-              <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                             <button 
+                 onClick={refreshDevices}
+                 disabled={refreshing}
+                 className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+               >
+                 {refreshing ? (
+                   <>
+                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                     Refreshing...
+                   </>
+                 ) : (
+                   <>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
+                   </>
+                 )}
               </button>
-              <button className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+              <button 
+                onClick={() => setShowWizard(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+              >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Device
               </button>
@@ -178,6 +267,40 @@ export default function MikrotikPage() {
         </motion.div>
 
         {/* Devices Grid */}
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3, 4, 5, 6].map((index) => (
+              <div key={index} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 animate-pulse">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex-1">
+                    <div className="h-6 bg-gray-200 rounded mb-2"></div>
+                    <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+                  </div>
+                  <div className="h-6 w-16 bg-gray-200 rounded"></div>
+                </div>
+                <div className="space-y-4">
+                  {[1, 2, 3, 4].map((item) => (
+                    <div key={item} className="flex items-center justify-between">
+                      <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                      <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filteredDevices.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5 }}
+            className="text-center py-12"
+          >
+            <Wifi className="mx-auto h-12 w-12 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">No devices found</h3>
+            <p className="mt-1 text-sm text-gray-500">Try adjusting your search or filter criteria.</p>
+          </motion.div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredDevices.map((device, index) => (
             <motion.div
@@ -186,51 +309,59 @@ export default function MikrotikPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
               className={`bg-white rounded-xl shadow-sm border-2 transition-all duration-200 hover:shadow-md ${
-                device.status === 'online' ? 'border-green-200' : 'border-red-200'
+                  (device.device_status || device.status) === 'online' ? 'border-green-200' : 'border-red-200'
               }`}
             >
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900">{device.name}</h3>
-                    <p className="text-sm text-gray-500">{device.model}</p>
+                      <h3 className="text-lg font-bold text-gray-900">{device.device_name || device.name}</h3>
+                      <p className="text-sm text-gray-500">{device.device_model || device.model}</p>
                   </div>
-                  {getStatusBadge(device.status)}
+                    {getStatusBadge(device.device_status || device.status)}
                 </div>
                 
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-600">IP Address</span>
-                    <span className="text-sm font-mono text-gray-900">{device.ip}</span>
+                      <span className="text-sm font-mono text-gray-900">{device.device_ip || device.ip}</span>
                   </div>
                   
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-600">Uptime</span>
-                    <span className="text-sm text-gray-900">{device.uptime}</span>
+                      <span className="text-sm text-gray-900">{device.uptime || 'N/A'}</span>
                   </div>
                   
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-600">Active Clients</span>
-                    <span className="text-sm font-bold text-gray-900">{device.clients}</span>
+                      <span className="text-sm font-bold text-gray-900">{device.client_count || device.clients || 0}</span>
                   </div>
                   
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-600">Bandwidth</span>
-                    <span className={`text-sm font-bold ${getBandwidthColor(device.bandwidth)}`}>
-                      {device.bandwidth}
+                      <span className={`text-sm font-bold ${getBandwidthColor(device.bandwidth_usage || device.bandwidth || '0%')}`}>
+                        {device.bandwidth_usage || device.bandwidth || '0%'}
                     </span>
                   </div>
                 </div>
                 
                 <div className="flex items-center justify-between pt-4 mt-4 border-t border-gray-200">
                   <div className="flex items-center space-x-2">
-                    <button className="text-blue-600 hover:text-blue-900">
-                      <Eye className="h-4 w-4" />
+                      <button 
+                        onClick={() => handleSyncDevice(device.id)}
+                        className="text-blue-600 hover:text-blue-900"
+                        title="Sync Device"
+                      >
+                        <RefreshCw className="h-4 w-4" />
                     </button>
-                    <button className="text-gray-600 hover:text-gray-900">
+                      <button className="text-gray-600 hover:text-gray-900" title="Edit Device">
                       <Edit className="h-4 w-4" />
                     </button>
-                    <button className="text-red-600 hover:text-red-900">
+                      <button 
+                        onClick={() => handleDeleteDevice(device.id)}
+                        className="text-red-600 hover:text-red-900"
+                        title="Delete Device"
+                      >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
@@ -242,19 +373,6 @@ export default function MikrotikPage() {
             </motion.div>
           ))}
         </div>
-
-        {/* Empty State */}
-        {filteredDevices.length === 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5 }}
-            className="text-center py-12"
-          >
-            <Wifi className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No devices found</h3>
-            <p className="mt-1 text-sm text-gray-500">Try adjusting your search or filter criteria.</p>
-          </motion.div>
         )}
 
         {/* Quick Actions */}
@@ -266,7 +384,10 @@ export default function MikrotikPage() {
         >
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <button className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+            <button 
+              onClick={() => setShowWizard(true)}
+              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+            >
               <Plus className="h-4 w-4 mr-2" />
               Add Device
             </button>
@@ -285,6 +406,18 @@ export default function MikrotikPage() {
           </div>
         </motion.div>
       </div>
+
+             {/* Mikrotik Connection Wizard */}
+       <MikrotikConnectionWizard
+         isOpen={showWizard}
+         onClose={() => setShowWizard(false)}
+         onSuccess={(deviceData) => {
+           console.log('Device connected successfully:', deviceData);
+           // Refresh the device list after successful connection
+           fetchDevices();
+           setShowWizard(false);
+         }}
+       />
     </div>
   );
 }

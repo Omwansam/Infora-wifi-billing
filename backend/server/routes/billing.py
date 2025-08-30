@@ -13,18 +13,30 @@ billing_bp = Blueprint('billing', __name__, url_prefix='/api/billing')
 
 def get_current_user_isp():
     """Get current user and their ISP context"""
-    current_user = User.query.filter_by(email=get_jwt_identity()).first()
-    if not current_user:
+    try:
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
+        if not current_user:
+            return None, None
+        
+        if current_user.role == 'admin':
+            return current_user, None  # Admin can access all ISPs
+        
+        if not current_user.isp_id:
+            return current_user, None
+        
+        isp = ISP.query.get(current_user.isp_id)
+        return current_user, isp
+        
+    except Exception as e:
+        print(f"Error in get_current_user_isp: {e}")
         return None, None
-    
-    if current_user.role == 'admin':
-        return current_user, None  # Admin can access all ISPs
-    
-    if not current_user.isp_id:
-        return current_user, None
-    
-    isp = ISP.query.get(current_user.isp_id)
-    return current_user, isp
 
 def hash_password(password):
     """Hash password for RADIUS storage"""

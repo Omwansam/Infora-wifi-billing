@@ -62,7 +62,14 @@ def handle_stats_options():
 def get_isps():
     """Get all ISPs (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -104,7 +111,14 @@ def get_isps():
 def get_isp(isp_id):
     """Get specific ISP"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -123,7 +137,14 @@ def get_isp(isp_id):
 def create_isp():
     """Create a new ISP (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -174,7 +195,14 @@ def create_isp():
 def update_isp(isp_id):
     """Update ISP"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -230,7 +258,14 @@ def update_isp(isp_id):
 def delete_isp(isp_id):
     """Delete ISP (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -263,7 +298,14 @@ def delete_isp(isp_id):
 def regenerate_api_key(isp_id):
     """Regenerate ISP API key"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -291,7 +333,14 @@ def regenerate_api_key(isp_id):
 def regenerate_radius_secret(isp_id):
     """Regenerate ISP RADIUS secret"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -319,7 +368,14 @@ def regenerate_radius_secret(isp_id):
 def get_isp_stats(isp_id):
     """Get ISP statistics"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -365,7 +421,14 @@ def get_isp_stats(isp_id):
 def get_all_isp_stats():
     """Get overall ISP statistics (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         

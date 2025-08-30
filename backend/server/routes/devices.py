@@ -56,16 +56,111 @@ def handle_devices_options():
 def handle_device_options(device_id):
     return '', 200
 
+@devices_bp.route('/<int:device_id>/sync', methods=['OPTIONS'])
+def handle_sync_options(device_id):
+    return '', 200
+
+
+
 @devices_bp.route('/stats', methods=['OPTIONS'])
 def handle_stats_options():
     return '', 200
+
+@devices_bp.route('/test-connection', methods=['OPTIONS'])
+def handle_test_connection_options():
+    return '', 200
+
+@devices_bp.route('/test-connection', methods=['POST'])
+def test_connection():
+    """Test connection to a Mikrotik device"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['device_ip', 'username', 'password']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({'error': f'{field} is required'}), 400
+        
+        # Prepare connection config
+        from mikrotik_client import MikroTikConnectionConfig, ConnectionType
+        
+        connection_type = ConnectionType.API if data.get('connection_type') == 'api' else ConnectionType.SSH
+        port = data.get('port', 8729 if connection_type == ConnectionType.API else 22)
+        
+        config = MikroTikConnectionConfig(
+            host=data['device_ip'],
+            port=port,
+            username=data['username'],
+            password=data['password'],
+            api_key=data.get('api_key'),
+            connection_type=connection_type,
+            timeout=10,
+            verify_ssl=False
+        )
+        
+        # Test connection
+        from mikrotik_client import MikroTikClient
+        
+        with MikroTikClient(config) as client:
+            if client.connect():
+                # Get device info
+                try:
+                    device_info = client.get_device_info()
+                    return jsonify({
+                        'success': True,
+                        'message': 'Connection successful! Router is accessible and credentials are valid.',
+                        'details': {
+                            'uptime': device_info.uptime,
+                            'version': device_info.version,
+                            'clients': device_info.client_count,
+                            'cpu': f"{device_info.cpu_load:.1f}%",
+                            'memory': f"{device_info.memory_usage:.1f}%",
+                            'board_name': device_info.board_name
+                        }
+                    }), 200
+                except Exception as e:
+                    return jsonify({
+                        'success': True,
+                        'message': 'Connection successful! Router is accessible and credentials are valid.',
+                        'details': {
+                            'uptime': 'Unknown',
+                            'version': 'Unknown',
+                            'clients': 0,
+                            'cpu': '0%',
+                            'memory': '0%',
+                            'board_name': 'Unknown'
+                        }
+                    }), 200
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Connection failed. Please check your credentials and network connectivity.'
+                }), 400
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Connection test failed: {str(e)}'
+        }), 500
 
 @devices_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_devices():
     """Get all Mikrotik devices with pagination and filtering"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity and extract email
+        identity = get_jwt_identity()
+        
+        # Handle both dict and string identity
+        if isinstance(identity, dict):
+            email = identity.get('email')
+            if not email:
+                return jsonify({'error': 'Email not found in JWT identity'}), 400
+        else:
+            email = str(identity)  # Convert to string
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -132,9 +227,18 @@ def get_device(device_id):
 def create_device():
     """Create a new Mikrotik device"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
         
         # Multi-tenant: Determine ISP
         if current_user.role == 'admin':
@@ -151,10 +255,8 @@ def create_device():
                 return jsonify({'error': 'User not associated with any ISP'}), 403
             isp_id = current_user.isp_id
         
-        data = request.get_json()
-        
         # Validate required fields
-        required_fields = ['username', 'password', 'api_key', 'device_name', 'device_ip', 'device_model', 'location']
+        required_fields = ['username', 'password', 'device_name', 'device_ip', 'device_model']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field} is required'}), 400
@@ -169,14 +271,14 @@ def create_device():
         device = MikrotikDevice(
             username=data['username'],
             password=data['password'],
-            api_key=data['api_key'],
-            api_port=data.get('api_port', 8728),
+            api_key=data.get('api_key'),
+            api_port=data.get('api_port', 8729),
             device_name=data['device_name'],
             device_ip=data['device_ip'],
             device_model=data['device_model'],
             device_status=DeviceStatus.ONLINE,
-            location=data['location'],
-            notes=data.get('notes', ''),
+            location=data.get('location', ''),
+            notes=data.get('description', ''),
             is_active=data.get('is_active', True),
             zone_id=data.get('zone_id'),
             isp_id=isp_id
@@ -263,7 +365,14 @@ def delete_device(device_id):
 def test_device_connection(device_id):
     """Test connection to Mikrotik device"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -357,7 +466,14 @@ def test_device_connection(device_id):
 def sync_device(device_id):
     """Sync device data from Mikrotik"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         

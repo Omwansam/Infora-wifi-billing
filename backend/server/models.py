@@ -1349,3 +1349,228 @@ class ISP(db.Model):
         """Generate a RADIUS secret for the ISP"""
         import secrets
         self.radius_secret = secrets.token_hex(16) 
+
+# =========================
+#   Communication Models
+# =========================
+
+class EmailProvider(db.Model):
+    """ Email provider configuration for different vendors """
+    __tablename__ = 'email_providers'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)  # Gmail, SendGrid, Mailgun, etc.
+    provider_type = db.Column(db.String(50), nullable=False)  # smtp, api
+    host = db.Column(db.String(200), nullable=True)  # SMTP host
+    port = db.Column(db.Integer, nullable=True)  # SMTP port
+    username = db.Column(db.String(200), nullable=True)  # SMTP username or API key
+    password = db.Column(db.String(500), nullable=True)  # SMTP password or API secret
+    api_key = db.Column(db.String(500), nullable=True)  # API key for providers like SendGrid
+    api_secret = db.Column(db.String(500), nullable=True)  # API secret
+    domain = db.Column(db.String(200), nullable=True)  # Domain for Mailgun
+    sender_email = db.Column(db.String(200), nullable=True)  # Sender email address
+    use_tls = db.Column(db.Boolean, default=True)
+    use_ssl = db.Column(db.Boolean, default=False)
+    is_active = db.Column(db.Boolean, default=True)
+    is_default = db.Column(db.Boolean, default=False)
+    daily_limit = db.Column(db.Integer, default=1000)  # Daily sending limit
+    monthly_limit = db.Column(db.Integer, default=30000)  # Monthly sending limit
+    current_day_sent = db.Column(db.Integer, default=0)  # Current day sent count
+    current_month_sent = db.Column(db.Integer, default=0)  # Current month sent count
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    email_campaigns = db.relationship('EmailCampaign', back_populates='provider')
+    
+    def __repr__(self):
+        return f"<EmailProvider {self.name} ({self.provider_type})>"
+
+class SmsProvider(db.Model):
+    """ SMS provider configuration for different vendors """
+    __tablename__ = 'sms_providers'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)  # Twilio, AfricasTalking, etc.
+    provider_type = db.Column(db.String(50), nullable=False)  # api, smpp
+    api_key = db.Column(db.String(500), nullable=True)
+    api_secret = db.Column(db.String(500), nullable=True)
+    account_sid = db.Column(db.String(200), nullable=True)  # For Twilio
+    auth_token = db.Column(db.String(500), nullable=True)  # For Twilio
+    sender_id = db.Column(db.String(50), nullable=True)  # Sender ID or phone number
+    webhook_url = db.Column(db.String(500), nullable=True)  # Webhook for delivery reports
+    is_active = db.Column(db.Boolean, default=True)
+    is_default = db.Column(db.Boolean, default=False)
+    daily_limit = db.Column(db.Integer, default=1000)  # Daily sending limit
+    monthly_limit = db.Column(db.Integer, default=30000)  # Monthly sending limit
+    current_day_sent = db.Column(db.Integer, default=0)  # Current day sent count
+    current_month_sent = db.Column(db.Integer, default=0)  # Current month sent count
+    cost_per_sms = db.Column(db.Numeric(10, 4), default=0.0)  # Cost per SMS
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    sms_campaigns = db.relationship('SmsCampaign', back_populates='provider')
+    
+    def __repr__(self):
+        return f"<SmsProvider {self.name} ({self.provider_type})>"
+
+class EmailCampaign(db.Model):
+    """ Email campaign management """
+    __tablename__ = 'email_campaigns'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    subject = db.Column(db.String(500), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    html_content = db.Column(db.Text, nullable=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey('email_providers.id'), nullable=False)
+    status = db.Column(db.String(50), default='draft')  # draft, scheduled, active, completed, paused
+    campaign_type = db.Column(db.String(50), default='newsletter')  # newsletter, notification, marketing
+    scheduled_at = db.Column(db.DateTime, nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    total_recipients = db.Column(db.Integer, default=0)
+    sent_count = db.Column(db.Integer, default=0)
+    delivered_count = db.Column(db.Integer, default=0)
+    opened_count = db.Column(db.Integer, default=0)
+    clicked_count = db.Column(db.Integer, default=0)
+    failed_count = db.Column(db.Integer, default=0)
+    bounce_count = db.Column(db.Integer, default=0)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    provider = db.relationship('EmailProvider', back_populates='email_campaigns')
+    creator = db.relationship('User', foreign_keys=[created_by])
+    isp = db.relationship('ISP', foreign_keys=[isp_id])
+    recipients = db.relationship('EmailCampaignRecipient', back_populates='campaign')
+    
+    def __repr__(self):
+        return f"<EmailCampaign {self.name} ({self.status})>"
+
+class SmsCampaign(db.Model):
+    """ SMS campaign management """
+    __tablename__ = 'sms_campaigns'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    provider_id = db.Column(db.Integer, db.ForeignKey('sms_providers.id'), nullable=False)
+    status = db.Column(db.String(50), default='draft')  # draft, scheduled, active, completed, paused
+    campaign_type = db.Column(db.String(50), default='notification')  # notification, marketing, reminder
+    scheduled_at = db.Column(db.DateTime, nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    total_recipients = db.Column(db.Integer, default=0)
+    sent_count = db.Column(db.Integer, default=0)
+    delivered_count = db.Column(db.Integer, default=0)
+    failed_count = db.Column(db.Integer, default=0)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    provider = db.relationship('SmsProvider', back_populates='sms_campaigns')
+    creator = db.relationship('User', foreign_keys=[created_by])
+    isp = db.relationship('ISP', foreign_keys=[isp_id])
+    recipients = db.relationship('SmsCampaignRecipient', back_populates='campaign')
+    
+    def __repr__(self):
+        return f"<SmsCampaign {self.name} ({self.status})>"
+
+class EmailCampaignRecipient(db.Model):
+    """ Email campaign recipients and their status """
+    __tablename__ = 'email_campaign_recipients'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('email_campaigns.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    email = db.Column(db.String(200), nullable=False)
+    status = db.Column(db.String(50), default='pending')  # pending, sent, delivered, opened, clicked, failed, bounced
+    sent_at = db.Column(db.DateTime, nullable=True)
+    delivered_at = db.Column(db.DateTime, nullable=True)
+    opened_at = db.Column(db.DateTime, nullable=True)
+    clicked_at = db.Column(db.DateTime, nullable=True)
+    failed_at = db.Column(db.DateTime, nullable=True)
+    failure_reason = db.Column(db.Text, nullable=True)
+    provider_message_id = db.Column(db.String(200), nullable=True)  # Provider's message ID
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    
+    # Relationships
+    campaign = db.relationship('EmailCampaign', back_populates='recipients')
+    customer = db.relationship('Customer', foreign_keys=[customer_id])
+    
+    def __repr__(self):
+        return f"<EmailCampaignRecipient {self.email} ({self.status})>"
+
+class SmsCampaignRecipient(db.Model):
+    """ SMS campaign recipients and their status """
+    __tablename__ = 'sms_campaign_recipients'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('sms_campaigns.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    phone_number = db.Column(db.String(20), nullable=False)
+    status = db.Column(db.String(50), default='pending')  # pending, sent, delivered, failed
+    sent_at = db.Column(db.DateTime, nullable=True)
+    delivered_at = db.Column(db.DateTime, nullable=True)
+    failed_at = db.Column(db.DateTime, nullable=True)
+    failure_reason = db.Column(db.Text, nullable=True)
+    provider_message_id = db.Column(db.String(200), nullable=True)  # Provider's message ID
+    cost = db.Column(db.Numeric(10, 4), nullable=True)  # Cost of this SMS
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    
+    # Relationships
+    campaign = db.relationship('SmsCampaign', back_populates='recipients')
+    customer = db.relationship('Customer', foreign_keys=[customer_id])
+    
+    def __repr__(self):
+        return f"<SmsCampaignRecipient {self.phone_number} ({self.status})>"
+
+class EmailTemplate(db.Model):
+    """ Email templates for campaigns """
+    __tablename__ = 'email_templates'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    subject = db.Column(db.String(500), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    html_content = db.Column(db.Text, nullable=True)
+    template_type = db.Column(db.String(50), default='general')  # general, invoice, reminder, welcome
+    is_active = db.Column(db.Boolean, default=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    creator = db.relationship('User', foreign_keys=[created_by])
+    isp = db.relationship('ISP', foreign_keys=[isp_id])
+    
+    def __repr__(self):
+        return f"<EmailTemplate {self.name} ({self.template_type})>"
+
+class SmsTemplate(db.Model):
+    """ SMS templates for campaigns """
+    __tablename__ = 'sms_templates'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    template_type = db.Column(db.String(50), default='general')  # general, reminder, notification
+    is_active = db.Column(db.Boolean, default=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    
+    # Relationships
+    creator = db.relationship('User', foreign_keys=[created_by])
+    isp = db.relationship('ISP', foreign_keys=[isp_id])
+    
+    def __repr__(self):
+        return f"<SmsTemplate {self.name} ({self.template_type})>" 

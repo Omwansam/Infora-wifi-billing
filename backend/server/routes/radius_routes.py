@@ -46,7 +46,14 @@ def serialize_radius_session(session):
 def get_radius_sessions():
     """Get RADIUS sessions with pagination and filtering"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -108,7 +115,14 @@ def get_radius_sessions():
 def get_radius_session(session_id):
     """Get specific RADIUS session"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -135,7 +149,14 @@ def get_radius_session(session_id):
 def get_active_sessions():
     """Get active RADIUS sessions"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -176,7 +197,14 @@ def get_active_sessions():
 def terminate_session(session_id):
     """Terminate an active RADIUS session"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -219,7 +247,14 @@ def terminate_session(session_id):
 def get_radius_stats():
     """Get RADIUS statistics"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        # Get JWT identity (which is a dict) and extract email
+        identity = get_jwt_identity()
+        if isinstance(identity, dict):
+            email = identity.get('email')
+        else:
+            email = identity  # Fallback for string identity
+        
+        current_user = User.query.filter_by(email=email).first()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         

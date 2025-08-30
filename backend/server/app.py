@@ -17,6 +17,8 @@ from routes.billing import billing_bp
 from routes.snmp import snmp_bp
 from routes.vpn import vpn_bp
 from routes.eap import eap_bp
+from routes.vouchers import vouchers_bp
+from routes.communication import communication_bp
 import click
 from datetime import datetime
 
@@ -50,6 +52,8 @@ app.register_blueprint(billing_bp)
 app.register_blueprint(snmp_bp)
 app.register_blueprint(vpn_bp)
 app.register_blueprint(eap_bp)
+app.register_blueprint(vouchers_bp)
+app.register_blueprint(communication_bp)
 
 # Test route
 @app.route('/api/test')
@@ -171,6 +175,17 @@ def seed_network_command():
     with app.app_context():
         seed_sample_data()
         click.echo('Network management sample data seeded successfully.')
+
+@app.cli.command('seed-communication')
+def seed_communication_command():
+    """Seed the database with communication providers and templates."""
+    with app.app_context():
+        try:
+            # Import and run the seed script
+            from seed_communication import main
+            main()
+        except Exception as e:
+            click.echo(f'Error seeding communication data: {e}')
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000, host='0.0.0.0')
