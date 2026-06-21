@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Mail, Lock, User, Phone, Server } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, User, Phone } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
+import LumenLogo from '../brand/LumenLogo';
+import { BRAND } from '../../lib/brand';
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({
@@ -77,8 +79,12 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
-      <div className="max-w-md w-full">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -top-24 -left-24 h-96 w-96 rounded-full bg-amber-500/20 blur-3xl" />
+        <div className="absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-violet-600/25 blur-3xl" />
+      </div>
+      <div className="max-w-md w-full relative z-10">
         {/* Logo and Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -86,13 +92,11 @@ export default function SignupPage() {
           transition={{ duration: 0.5 }}
           className="text-center mb-8"
         >
-          <div className="flex justify-center mb-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-purple-600 shadow-lg">
-              <Server className="h-8 w-8 text-white" />
-            </div>
+          <div className="flex justify-center mb-5">
+            <LumenLogo size="xl" showText subtitle={BRAND.tagline} orientation="vertical" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Create Account</h1>
-          <p className="text-gray-600">Join Infora WiFi Billing System</p>
+          <h1 className="text-3xl font-bold text-white mb-2">Create account</h1>
+          <p className="text-slate-400">Join {BRAND.fullName}</p>
         </motion.div>
 
         {/* Signup Form */}
@@ -369,8 +373,8 @@ export default function SignupPage() {
           transition={{ duration: 0.5, delay: 0.3 }}
           className="text-center mt-8"
         >
-          <p className="text-xs text-gray-500">
-            © 2024 Infora WiFi Billing System. All rights reserved.
+          <p className="text-xs text-slate-500">
+            {BRAND.copyright()}
           </p>
         </motion.div>
       </div>

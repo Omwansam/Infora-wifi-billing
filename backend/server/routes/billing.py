@@ -1,19 +1,28 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 from models import (
-    User, Customer, ServicePlan, ISP, RadCheck, RadReply, RadAcct, 
+    User, Customer, CustomerStatus, ServicePlan, ISP, RadCheck, RadReply, RadAcct, 
     RadUserGroup, RadGroupCheck, RadGroupReply, MikrotikDevice
 )
 from datetime import datetime, timedelta
-import hashlib
 import secrets
+
+from auth_utils import get_current_user
+from services.plan_utils import get_plan_limits
+from services.radius_provisioning import (
+    provision_customer_radius,
+    deprovision_customer_radius,
+    set_customer_radius_password,
+    suspend_customer_access,
+    activate_customer_after_payment,
+)
 
 billing_bp = Blueprint('billing', __name__, url_prefix='/api/billing')
 
 def get_current_user_isp():
     """Get current user and their ISP context"""
-    current_user = User.query.filter_by(email=get_jwt_identity()).first()
+    current_user = get_current_user()
     if not current_user:
         return None, None
     
@@ -26,129 +35,6 @@ def get_current_user_isp():
     isp = ISP.query.get(current_user.isp_id)
     return current_user, isp
 
-def hash_password(password):
-    """Hash password for RADIUS storage"""
-    return hashlib.md5(password.encode()).hexdigest()
-
-def generate_radius_attributes(plan):
-    """Generate RADIUS attributes from service plan"""
-    attributes = []
-    
-    if plan.bandwidth_limit:
-        # MikroTik rate limit (bytes per second)
-        rate_limit = plan.bandwidth_limit * 1024 * 1024  # Convert MB to bytes
-        attributes.append({
-            'attribute': 'Mikrotik-Rate-Limit',
-            'op': '=',
-            'value': f'{rate_limit}/{rate_limit}'
-        })
-    
-    if plan.data_limit:
-        # Data usage limit
-        data_limit_bytes = plan.data_limit * 1024 * 1024 * 1024  # Convert GB to bytes
-        attributes.append({
-            'attribute': 'Mikrotik-Data-Limit',
-            'op': '=',
-            'value': str(data_limit_bytes)
-        })
-    
-    if plan.static_ip:
-        attributes.append({
-            'attribute': 'Framed-IP-Address',
-            'op': '=',
-            'value': plan.static_ip
-        })
-    
-    # Session timeout
-    if plan.session_timeout:
-        attributes.append({
-            'attribute': 'Session-Timeout',
-            'op': '=',
-            'value': str(plan.session_timeout * 60)  # Convert minutes to seconds
-        })
-    
-    # Idle timeout
-    if plan.idle_timeout:
-        attributes.append({
-            'attribute': 'Idle-Timeout',
-            'op': '=',
-            'value': str(plan.idle_timeout * 60)  # Convert minutes to seconds
-        })
-    
-    return attributes
-
-def provision_customer_radius(customer, plan, isp):
-    """Provision customer in FreeRADIUS tables"""
-    try:
-        # Create radcheck entry for authentication
-        radcheck = RadCheck(
-            username=customer.email,
-            attribute='Cleartext-Password',
-            op='==',
-            value=customer.password_hash,
-            isp_id=isp.id,
-            customer_id=customer.id,
-            is_active=True
-        )
-        db.session.add(radcheck)
-        
-        # Create radreply entries for plan attributes
-        radius_attributes = generate_radius_attributes(plan)
-        for attr in radius_attributes:
-            radreply = RadReply(
-                username=customer.email,
-                attribute=attr['attribute'],
-                op=attr['op'],
-                value=attr['value'],
-                isp_id=isp.id,
-                customer_id=customer.id,
-                is_active=True
-            )
-            db.session.add(radreply)
-        
-        # Create radusergroup entry
-        radusergroup = RadUserGroup(
-            username=customer.email,
-            groupname=f'plan_{plan.id}',
-            priority=1,
-            isp_id=isp.id,
-            customer_id=customer.id,
-            is_active=True
-        )
-        db.session.add(radusergroup)
-        
-        db.session.commit()
-        return True
-        
-    except Exception as e:
-        db.session.rollback()
-        raise e
-
-def deprovision_customer_radius(customer, isp):
-    """Remove customer from FreeRADIUS tables"""
-    try:
-        # Deactivate all RADIUS entries for this customer
-        RadCheck.query.filter_by(
-            username=customer.email,
-            isp_id=isp.id
-        ).update({'is_active': False})
-        
-        RadReply.query.filter_by(
-            username=customer.email,
-            isp_id=isp.id
-        ).update({'is_active': False})
-        
-        RadUserGroup.query.filter_by(
-            username=customer.email,
-            isp_id=isp.id
-        ).update({'is_active': False})
-        
-        db.session.commit()
-        return True
-        
-    except Exception as e:
-        db.session.rollback()
-        raise e
 
 @billing_bp.route('/customers', methods=['GET'])
 @jwt_required()
@@ -260,31 +146,35 @@ def create_customer():
                 'message': 'Service plan not found'
             }), 404
         
-        # Generate password if not provided
+        # Resolve ISP (admin may pass isp_id or use plan's ISP)
+        target_isp = isp
+        if not target_isp:
+            target_isp = ISP.query.get(plan.isp_id) if plan.isp_id else None
+        if not target_isp and current_user.role != 'admin':
+            return jsonify({'ok': False, 'message': 'ISP context required'}), 400
+
         password = data.get('password') or secrets.token_urlsafe(8)
-        password_hash = hash_password(password)
-        
-        # Create customer
+
         customer = Customer(
             full_name=data['full_name'],
-            email=data['email'],
+            email=data['email'].strip().lower(),
             phone=data['phone'],
             address=data.get('address'),
-            password_hash=password_hash,
-            status='active',
+            package=plan.name,
+            status=CustomerStatus.ACTIVE,
             service_plan_id=plan.id,
-            isp_id=isp.id if isp else None,
+            isp_id=target_isp.id if target_isp else plan.isp_id,
             subscription_start=datetime.utcnow(),
-            subscription_end=datetime.utcnow() + timedelta(days=30)  # Default 30 days
+            subscription_end=datetime.utcnow() + timedelta(days=30),
         )
-        
+        set_customer_radius_password(customer, password)
+
         db.session.add(customer)
-        db.session.flush()  # Get the customer ID
-        
-        # Provision in RADIUS
-        if isp:
-            provision_customer_radius(customer, plan, isp)
-        
+        db.session.flush()
+
+        if target_isp:
+            provision_customer_radius(customer, plan, target_isp, password=password)
+
         db.session.commit()
         
         return jsonify({
@@ -343,11 +233,10 @@ def update_customer(customer_id):
             customer.service_plan_id = new_plan.id
             
             # Update RADIUS attributes if ISP exists
-            if isp:
-                # Remove old RADIUS entries
-                deprovision_customer_radius(customer, isp)
-                # Add new RADIUS entries
-                provision_customer_radius(customer, new_plan, isp)
+            plan_isp = isp or ISP.query.get(customer.isp_id)
+            if plan_isp:
+                deprovision_customer_radius(customer, plan_isp)
+                provision_customer_radius(customer, new_plan, plan_isp)
         
         customer.updated_at = datetime.utcnow()
         db.session.commit()
@@ -385,20 +274,13 @@ def suspend_customer(customer_id):
         if current_user.role != 'admin' and customer.isp_id != isp.id:
             return jsonify({'error': 'Access denied'}), 403
         
-        if customer.status.value == 'suspended':
+        if customer.status == CustomerStatus.SUSPENDED:
             return jsonify({
                 'ok': False,
                 'message': 'Customer is already suspended'
             }), 400
         
-        # Suspend customer
-        customer.status = 'suspended'
-        customer.updated_at = datetime.utcnow()
-        
-        # Remove from RADIUS if ISP exists
-        if isp:
-            deprovision_customer_radius(customer, isp)
-        
+        suspend_customer_access(customer, isp or ISP.query.get(customer.isp_id))
         db.session.commit()
         
         return jsonify({
@@ -433,20 +315,19 @@ def activate_customer(customer_id):
         if current_user.role != 'admin' and customer.isp_id != isp.id:
             return jsonify({'error': 'Access denied'}), 403
         
-        if customer.status.value == 'active':
+        if customer.status == CustomerStatus.ACTIVE:
             return jsonify({
                 'ok': False,
                 'message': 'Customer is already active'
             }), 400
         
-        # Activate customer
-        customer.status = 'active'
-        customer.updated_at = datetime.utcnow()
-        
-        # Provision in RADIUS if ISP exists
-        if isp and customer.service_plan:
-            provision_customer_radius(customer, customer.service_plan, isp)
-        
+        plan_isp = isp or ISP.query.get(customer.isp_id)
+        if plan_isp and customer.service_plan:
+            activate_customer_after_payment(customer, plan_isp)
+        else:
+            customer.status = CustomerStatus.ACTIVE
+            customer.updated_at = datetime.utcnow()
+
         db.session.commit()
         
         return jsonify({
@@ -484,6 +365,8 @@ def delete_customer(customer_id):
         # Remove from RADIUS if ISP exists
         if isp:
             deprovision_customer_radius(customer, isp)
+        elif customer.isp_id:
+            deprovision_customer_radius(customer, ISP.query.get(customer.isp_id))
         
         # Delete customer
         db.session.delete(customer)
@@ -519,7 +402,7 @@ def get_plans():
             query = ServicePlan.query.filter_by(isp_id=isp.id)
         
         plans = query.filter_by(is_active=True).all()
-        
+
         return jsonify({
             'ok': True,
             'message': 'Service plans retrieved successfully',
@@ -527,12 +410,9 @@ def get_plans():
                 'id': plan.id,
                 'name': plan.name,
                 'description': plan.description,
-                'price': plan.price,
-                'bandwidth_limit': plan.bandwidth_limit,
-                'data_limit': plan.data_limit,
-                'static_ip': plan.static_ip,
-                'session_timeout': plan.session_timeout,
-                'idle_timeout': plan.idle_timeout,
+                'speed': plan.speed,
+                'price': float(plan.price),
+                **get_plan_limits(plan),
                 'is_active': plan.is_active
             } for plan in plans]
         }), 200
@@ -566,17 +446,18 @@ def create_plan():
                     'message': f'Missing required field: {field}'
                 }), 400
         
-        # Create plan
         plan = ServicePlan(
             name=data['name'],
             description=data.get('description'),
+            speed=data.get('speed', data['name']),
             price=data['price'],
+            features=data.get('features') or {},
             bandwidth_limit=data.get('bandwidth_limit'),
             data_limit=data.get('data_limit'),
             static_ip=data.get('static_ip'),
             session_timeout=data.get('session_timeout'),
             idle_timeout=data.get('idle_timeout'),
-            isp_id=isp.id if isp else None,
+            isp_id=isp.id if isp else data.get('isp_id'),
             is_active=True
         )
         
@@ -712,6 +593,8 @@ def get_radius_status():
             'ok': True,
             'message': 'RADIUS status retrieved successfully',
             'data': {
+                'auth_mode': 'freeradius_postgresql',
+                'fallback_api': '/api/radius-api/auth',
                 'total_users': total_users,
                 'total_sessions': total_sessions,
                 'active_sessions': active_sessions,
@@ -725,3 +608,275 @@ def get_radius_status():
             'ok': False,
             'message': f'Error retrieving RADIUS status: {str(e)}'
         }), 500
+
+
+def _format_payment_method(method):
+    labels = {
+        'credit_card': 'Credit Card',
+        'bank_transfer': 'Bank Transfer',
+        'paypal': 'PayPal',
+        'mpesa': 'M-Pesa',
+        'cash': 'Cash',
+        'mobile_money': 'Mobile Money',
+    }
+    if not method:
+        return 'Unknown'
+    return labels.get(str(method).lower(), str(method).replace('_', ' ').title())
+
+
+def _serialize_payment(payment):
+    return {
+        'id': payment.id,
+        'customerName': payment.customer.full_name if payment.customer else 'Unknown',
+        'customerId': payment.customer_id,
+        'reference': payment.transaction_id or f'PAY-{payment.id:05d}',
+        'amount': float(payment.amount),
+        'method': payment.payment_method,
+        'methodLabel': _format_payment_method(payment.payment_method),
+        'status': payment.payment_status.value if payment.payment_status else 'pending',
+        'date': payment.payment_date.isoformat() if payment.payment_date else None,
+        'invoiceId': payment.invoice_id,
+        'invoiceNumber': payment.invoice.invoice_number if payment.invoice else None,
+    }
+
+
+def _serialize_voucher(voucher):
+    return {
+        'id': voucher.id,
+        'code': voucher.voucher_code,
+        'type': voucher.voucher_type,
+        'value': float(voucher.voucher_value),
+        'status': voucher.voucher_status.value if voucher.voucher_status else 'active',
+        'usedBy': voucher.used_by,
+        'usedAt': voucher.used_at.isoformat() if voucher.used_at else None,
+        'expiresAt': voucher.expiry_date.isoformat() if voucher.expiry_date else None,
+        'maxUses': voucher.max_usage,
+        'usedCount': voucher.usage_count,
+        'isActive': voucher.is_active,
+    }
+
+
+def _serialize_transaction(transaction):
+    payment = transaction.payment
+    status = payment.payment_status.value if payment and payment.payment_status else 'completed'
+    method = payment.payment_method if payment else transaction.transaction_type
+    return {
+        'id': transaction.id,
+        'reference': transaction.transaction_number,
+        'type': transaction.transaction_type,
+        'typeLabel': transaction.transaction_type.replace('_', ' ').title(),
+        'amount': float(transaction.transaction_amount),
+        'customerName': transaction.customer.full_name if transaction.customer else 'Unknown',
+        'customerId': transaction.customer_id,
+        'method': method,
+        'methodLabel': _format_payment_method(method),
+        'status': status,
+        'date': transaction.created_at.isoformat() if transaction.created_at else None,
+        'paymentId': transaction.payment_id,
+    }
+
+
+def _serialize_subscription(customer):
+    plan = customer.service_plan
+    monthly = float(plan.price) if plan and plan.price else 0.0
+    return {
+        'id': customer.id,
+        'customerName': customer.full_name,
+        'customerEmail': customer.email,
+        'customerPhone': customer.phone,
+        'planName': plan.name if plan else customer.package,
+        'planSpeed': plan.speed if plan else None,
+        'monthlyAmount': monthly,
+        'status': customer.status.value if customer.status else 'active',
+        'startDate': customer.join_date.isoformat() if customer.join_date else None,
+        'lastPaymentDate': customer.last_payment_date.isoformat() if customer.last_payment_date else None,
+        'usagePercentage': customer.usage_percentage or 0,
+        'balance': float(customer.balance) if customer.balance else 0.0,
+    }
+
+
+@billing_bp.route('/subscriptions', methods=['GET'])
+@jwt_required()
+def list_subscriptions():
+    try:
+        from models import Customer, CustomerStatus
+        current_user, _ = get_current_user_isp()
+        if not current_user:
+            return jsonify({'ok': False, 'message': 'Unauthorized'}), 401
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        status = request.args.get('status')
+        search = request.args.get('search')
+
+        query = Customer.query.filter(Customer.service_plan_id.isnot(None))
+        if current_user.role != 'admin':
+            _, isp = get_current_user_isp()
+            if not isp:
+                return jsonify({'ok': False, 'message': 'User not associated with any ISP'}), 403
+            query = query.filter_by(isp_id=isp.id)
+
+        if status and status != 'all':
+            try:
+                query = query.filter(Customer.status == CustomerStatus(status.lower()))
+            except ValueError:
+                return jsonify({'ok': False, 'message': 'Invalid status'}), 400
+
+        if search:
+            term = f'%{search}%'
+            query = query.filter(
+                db.or_(
+                    Customer.full_name.ilike(term),
+                    Customer.email.ilike(term),
+                    Customer.package.ilike(term),
+                )
+            )
+
+        results = query.order_by(Customer.full_name.asc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+
+        subscriptions = [_serialize_subscription(c) for c in results.items]
+        active = sum(1 for s in subscriptions if s['status'] == 'active')
+        mrr = sum(s['monthlyAmount'] for s in subscriptions if s['status'] == 'active')
+
+        return jsonify({
+            'ok': True,
+            'subscriptions': subscriptions,
+            'total': results.total,
+            'pages': results.pages,
+            'current_page': page,
+            'stats': {
+                'active_subscriptions': active,
+                'monthly_recurring_revenue': mrr,
+                'total_subscriptions': results.total,
+            },
+        }), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
+
+
+@billing_bp.route('/payments', methods=['GET'])
+@jwt_required()
+def list_payments():
+    try:
+        from models import Payment, PaymentStatus, Customer
+        current_user, _ = get_current_user_isp()
+        if not current_user:
+            return jsonify({'ok': False, 'message': 'Unauthorized'}), 401
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        status = request.args.get('status')
+
+        query = Payment.query.join(Customer)
+        if current_user.role != 'admin':
+            _, isp = get_current_user_isp()
+            if not isp:
+                return jsonify({'ok': False, 'message': 'User not associated with any ISP'}), 403
+            query = query.filter(Customer.isp_id == isp.id)
+
+        if status and status != 'all':
+            try:
+                query = query.filter(Payment.payment_status == PaymentStatus(status))
+            except ValueError:
+                return jsonify({'ok': False, 'message': 'Invalid status'}), 400
+
+        payments = query.order_by(Payment.payment_date.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+
+        return jsonify({
+            'ok': True,
+            'payments': [_serialize_payment(p) for p in payments.items],
+            'total': payments.total,
+            'pages': payments.pages,
+            'current_page': page,
+        }), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
+
+
+@billing_bp.route('/payments/<int:payment_id>', methods=['GET'])
+@jwt_required()
+def get_payment(payment_id):
+    try:
+        from models import Payment
+        payment = Payment.query.get_or_404(payment_id)
+        return jsonify({'ok': True, 'data': _serialize_payment(payment)}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
+
+
+@billing_bp.route('/transactions', methods=['GET'])
+@jwt_required()
+def list_transactions():
+    try:
+        from models import Transaction
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+
+        query = Transaction.query.order_by(Transaction.created_at.desc())
+        transactions = query.paginate(page=page, per_page=per_page, error_out=False)
+
+        return jsonify({
+            'ok': True,
+            'transactions': [_serialize_transaction(t) for t in transactions.items],
+            'total': transactions.total,
+            'pages': transactions.pages,
+            'current_page': page,
+        }), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
+
+
+@billing_bp.route('/transactions/<int:transaction_id>', methods=['GET'])
+@jwt_required()
+def get_transaction(transaction_id):
+    try:
+        from models import Transaction
+        transaction = Transaction.query.get_or_404(transaction_id)
+        return jsonify({'ok': True, 'data': _serialize_transaction(transaction)}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
+
+
+@billing_bp.route('/vouchers', methods=['GET'])
+@jwt_required()
+def list_vouchers():
+    try:
+        from models import Voucher, VoucherStatus
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        status = request.args.get('status')
+
+        query = Voucher.query
+
+        if status and status != 'all':
+            try:
+                query = query.filter(Voucher.voucher_status == VoucherStatus(status))
+            except ValueError:
+                return jsonify({'ok': False, 'message': 'Invalid status'}), 400
+
+        vouchers = query.order_by(Voucher.created_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+
+        return jsonify({
+            'ok': True,
+            'vouchers': [_serialize_voucher(v) for v in vouchers.items],
+            'total': vouchers.total,
+            'pages': vouchers.pages,
+            'current_page': page,
+        }), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
+
+
+@billing_bp.route('/vouchers/<int:voucher_id>', methods=['GET'])
+@jwt_required()
+def get_voucher(voucher_id):
+    try:
+        from models import Voucher
+        voucher = Voucher.query.get_or_404(voucher_id)
+        return jsonify({'ok': True, 'data': _serialize_voucher(voucher)}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500

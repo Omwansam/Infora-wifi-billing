@@ -1,11 +1,21 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
-from models import Invoice, Customer, ServicePlan, User, InvoiceStatus
+from models import Invoice, Customer, ServicePlan, User, InvoiceStatus, InvoiceItem
 from datetime import datetime, timedelta
 import uuid
 
 invoices_bp = Blueprint('invoices', __name__, url_prefix='/api/invoices')
+
+def parse_invoice_status(status_value):
+    """Convert API status string to InvoiceStatus enum."""
+    if not status_value:
+        return None
+    try:
+        return InvoiceStatus(status_value.lower())
+    except ValueError:
+        valid = [s.value for s in InvoiceStatus]
+        raise ValueError(f'Invalid status. Valid values: {", ".join(valid)}')
 
 def serialize_invoice(invoice):
     """Serialize invoice object to dictionary"""
@@ -15,6 +25,9 @@ def serialize_invoice(invoice):
             'invoice_id': invoice.id,  # Keep actual ID for backend operations
             'customerId': invoice.customer_id,
             'customerName': invoice.customer.full_name if invoice.customer else 'Unknown Customer',
+            'customerEmail': invoice.customer.email if invoice.customer else None,
+            'customerPhone': invoice.customer.phone if invoice.customer else None,
+            'customerAddress': invoice.customer.address if invoice.customer and hasattr(invoice.customer, 'address') else None,
             'amount': float(invoice.amount),
             'status': invoice.status.value if hasattr(invoice.status, 'value') else str(invoice.status),
             'dueDate': invoice.due_date.strftime('%Y-%m-%d') if invoice.due_date else None,
@@ -24,6 +37,8 @@ def serialize_invoice(invoice):
             'items': [
                 {
                     'description': item.description,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
                     'amount': float(item.total_price)
                 }
                 for item in invoice.invoice_items
@@ -32,7 +47,6 @@ def serialize_invoice(invoice):
             'updated_at': invoice.updated_at.isoformat() if invoice.updated_at else None
         }
     except Exception as e:
-        print(f"Error serializing invoice {invoice.id}: {e}")
         return {
             'id': invoice.invoice_number,
             'invoice_id': invoice.id,
@@ -92,7 +106,10 @@ def get_invoices():
         
         # Filter by status
         if status:
-            query = query.filter_by(status=status)
+            try:
+                query = query.filter_by(status=parse_invoice_status(status))
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 400
         
         # Filter by customer
         if customer_id:
@@ -165,7 +182,7 @@ def create_invoice():
         data = request.get_json()
         
         # Validate required fields
-        required_fields = ['customer_id', 'service_plan_id', 'amount']
+        required_fields = ['customer_id', 'amount']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field} is required'}), 400
@@ -175,10 +192,11 @@ def create_invoice():
         if not customer:
             return jsonify({'error': 'Customer not found'}), 404
         
-        # Validate service plan exists
-        plan = ServicePlan.query.get(data['service_plan_id'])
-        if not plan:
-            return jsonify({'error': 'Service plan not found'}), 404
+        service_plan_id = data.get('service_plan_id') or customer.service_plan_id
+        if service_plan_id:
+            plan = ServicePlan.query.get(service_plan_id)
+            if not plan:
+                return jsonify({'error': 'Service plan not found'}), 404
         
         # Validate amount
         try:
@@ -198,13 +216,29 @@ def create_invoice():
         invoice = Invoice(
             invoice_number=invoice_number,
             customer_id=data['customer_id'],
+            isp_id=customer.isp_id,
             amount=amount,
-            status=InvoiceStatus.PENDING,  # Use enum
+            status=InvoiceStatus.PENDING,
             due_date=due_date,
             notes=data.get('notes', '')
         )
         
         db.session.add(invoice)
+        db.session.flush()
+
+        for item in data.get('items', []):
+            quantity = int(item.get('quantity', 1))
+            unit_price = float(item.get('unit_price', 0))
+            total_price = float(item.get('total_price', quantity * unit_price))
+            description = item.get('description', 'Invoice item')
+            db.session.add(InvoiceItem(
+                description=description,
+                quantity=quantity,
+                unit_price=unit_price,
+                total_price=total_price,
+                invoice_id=invoice.id
+            ))
+        
         db.session.commit()
         
         return jsonify({
@@ -266,17 +300,14 @@ def update_invoice(invoice_id):
 def delete_invoice(invoice_id):
     """Delete invoice"""
     try:
-        print(f"DELETE /api/invoices/{invoice_id} - Request received")
         
         invoice = Invoice.query.get_or_404(invoice_id)
-        print(f"Found invoice: {invoice.invoice_number}")
         
         # Check if invoice has payments (but don't block deletion for now)
         try:
             payment_count = len(invoice.payments) if hasattr(invoice, 'payments') else 0
         except:
             payment_count = 0
-        print(f"Invoice has {payment_count} payments")
         
         # For now, allow deletion even with payments (can be made stricter later)
         # if payment_count > 0:
@@ -285,13 +316,11 @@ def delete_invoice(invoice_id):
         try:
             db.session.delete(invoice)
             db.session.commit()
-            print(f"Invoice {invoice.invoice_number} deleted successfully")
             
             return jsonify({'message': 'Invoice deleted successfully'}), 200
             
         except Exception as delete_error:
             db.session.rollback()
-            print(f"Delete error: {delete_error}")
             
             if "foreign key constraint" in str(delete_error).lower():
                 return jsonify({'error': 'Cannot delete invoice with related data (payments, etc.)'}), 400
@@ -300,7 +329,6 @@ def delete_invoice(invoice_id):
         
     except Exception as e:
         db.session.rollback()
-        print(f"Delete invoice error: {type(e).__name__}: {e}")
         return jsonify({'error': f'Failed to delete invoice: {str(e)}'}), 500
 
 @invoices_bp.route('/<int:invoice_id>/status', methods=['PUT'])
@@ -560,10 +588,8 @@ def generate_bulk_invoices():
 def send_invoice_reminder(invoice_id):
     """Send reminder for an invoice"""
     try:
-        print(f"POST /api/invoices/{invoice_id}/send-reminder - Request received")
         
         invoice = Invoice.query.get_or_404(invoice_id)
-        print(f"Found invoice: {invoice.invoice_number}, status: {invoice.status}")
         
         # Check if invoice is pending or overdue (allow all statuses for now)
         # if invoice.status not in [InvoiceStatus.PENDING, InvoiceStatus.OVERDUE]:
@@ -575,7 +601,6 @@ def send_invoice_reminder(invoice_id):
         
         # TODO: Implement actual email/SMS sending logic here
         # For now, just simulate sending
-        print(f"Reminder sent for invoice {invoice.invoice_number}")
         
         return jsonify({
             'message': 'Invoice reminder sent successfully',
@@ -584,7 +609,6 @@ def send_invoice_reminder(invoice_id):
         
     except Exception as e:
         db.session.rollback()
-        print(f"Send reminder error: {type(e).__name__}: {e}")
         return jsonify({'error': f'Failed to send invoice reminder: {str(e)}'}), 500
 
 @invoices_bp.route('/<int:invoice_id>/download', methods=['GET'])
@@ -592,10 +616,8 @@ def send_invoice_reminder(invoice_id):
 def download_invoice(invoice_id):
     """Download invoice as PDF"""
     try:
-        print(f"GET /api/invoices/{invoice_id}/download - Request received")
         
         invoice = Invoice.query.get_or_404(invoice_id)
-        print(f"Found invoice: {invoice.invoice_number}")
         
         # For now, return a JSON response with invoice data
         # In a real implementation, you would generate a PDF here
@@ -608,12 +630,10 @@ def download_invoice(invoice_id):
             'message': 'Invoice data prepared for download'
         }
         
-        print(f"Invoice {invoice.invoice_number} prepared for download")
         
         return jsonify(download_data), 200
         
     except Exception as e:
-        print(f"Download invoice error: {type(e).__name__}: {e}")
         return jsonify({'error': f'Failed to download invoice: {str(e)}'}), 500
 
 @invoices_bp.route('/<int:invoice_id>/pdf', methods=['GET'])
@@ -621,170 +641,145 @@ def download_invoice(invoice_id):
 def generate_invoice_pdf(invoice_id):
     """Generate PDF for invoice"""
     try:
-        print(f"GET /api/invoices/{invoice_id}/pdf - Request received")
-        
         invoice = Invoice.query.get_or_404(invoice_id)
-        print(f"Found invoice: {invoice.invoice_number}")
-        
-        # Create a simple HTML template for the invoice
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>Invoice {invoice.invoice_number}</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 40px;
-                    color: #333;
-                }}
-                .header {{
-                    text-align: center;
-                    border-bottom: 2px solid #333;
-                    padding-bottom: 20px;
-                    margin-bottom: 30px;
-                }}
-                .invoice-title {{
-                    font-size: 24px;
-                    font-weight: bold;
-                    margin-bottom: 10px;
-                }}
-                .invoice-number {{
-                    font-size: 18px;
-                    color: #666;
-                }}
-                .section {{
-                    margin-bottom: 30px;
-                }}
-                .section-title {{
-                    font-size: 16px;
-                    font-weight: bold;
-                    margin-bottom: 10px;
-                    color: #333;
-                }}
-                .row {{
-                    display: flex;
-                    justify-content: space-between;
-                    margin-bottom: 8px;
-                }}
-                .label {{
-                    font-weight: bold;
-                    min-width: 120px;
-                }}
-                .value {{
-                    text-align: right;
-                }}
-                .amount {{
-                    font-size: 20px;
-                    font-weight: bold;
-                    color: #2c5aa0;
-                }}
-                .status {{
-                    padding: 4px 12px;
-                    border-radius: 4px;
-                    font-weight: bold;
-                    text-transform: uppercase;
-                }}
-                .status-pending {{
-                    background-color: #fff3cd;
-                    color: #856404;
-                }}
-                .status-paid {{
-                    background-color: #d4edda;
-                    color: #155724;
-                }}
-                .status-overdue {{
-                    background-color: #f8d7da;
-                    color: #721c24;
-                }}
-                .footer {{
-                    margin-top: 50px;
-                    text-align: center;
-                    color: #666;
-                    font-size: 12px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <div class="invoice-title">INVOICE</div>
-                <div class="invoice-number">{invoice.invoice_number}</div>
-            </div>
-            
-            <div class="section">
-                <div class="section-title">Invoice Details</div>
-                <div class="row">
-                    <span class="label">Invoice Number:</span>
-                    <span class="value">{invoice.invoice_number}</span>
+        status = invoice.status.value if hasattr(invoice.status, 'value') else str(invoice.status)
+        customer = invoice.customer
+        items = invoice.invoice_items or []
+
+        item_rows = ''
+        subtotal = 0
+        for item in items:
+            subtotal += float(item.total_price or 0)
+            item_rows += f'''
+                <tr>
+                    <td>{item.description}</td>
+                    <td class="num">{item.quantity}</td>
+                    <td class="num">KES {float(item.unit_price):,.2f}</td>
+                    <td class="num">KES {float(item.total_price):,.2f}</td>
+                </tr>'''
+
+        if not item_rows:
+            item_rows = f'''
+                <tr>
+                    <td>Service charge</td>
+                    <td class="num">1</td>
+                    <td class="num">KES {float(invoice.amount):,.2f}</td>
+                    <td class="num">KES {float(invoice.amount):,.2f}</td>
+                </tr>'''
+            subtotal = float(invoice.amount)
+
+        notes_block = ''
+        if invoice.notes:
+            notes_block = f'''
+            <div class="notes">
+                <div class="label">Notes</div>
+                <p>{invoice.notes}</p>
+            </div>'''
+
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Invoice {invoice.invoice_number}</title>
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 0; color: #0f172a; background: #f8fafc; }}
+        .page {{ max-width: 800px; margin: 32px auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; }}
+        .banner {{ background: linear-gradient(135deg, #0f172a, #312e81); color: #fff; padding: 32px 40px; }}
+        .brand {{ font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #a5b4fc; }}
+        .title {{ font-size: 32px; font-weight: 700; margin: 8px 0 4px; }}
+        .number {{ font-family: monospace; color: #cbd5e1; }}
+        .banner-row {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }}
+        .amount-box {{ text-align: right; }}
+        .amount-label {{ color: #cbd5e1; font-size: 13px; }}
+        .amount-value {{ font-size: 28px; font-weight: 700; margin-top: 4px; }}
+        .status {{ display: inline-block; margin-top: 8px; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; text-transform: uppercase; }}
+        .status-paid {{ background: #d1fae5; color: #065f46; }}
+        .status-pending {{ background: #fef3c7; color: #92400e; }}
+        .status-overdue {{ background: #ffe4e6; color: #9f1239; }}
+        .content {{ padding: 32px 40px; }}
+        .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 32px; }}
+        .label {{ font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }}
+        .name {{ font-size: 18px; font-weight: 700; }}
+        .meta {{ color: #64748b; font-size: 14px; line-height: 1.6; }}
+        .dates {{ text-align: right; }}
+        table {{ width: 100%; border-collapse: collapse; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }}
+        th {{ background: #f8fafc; text-align: left; padding: 12px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; }}
+        td {{ padding: 14px 16px; border-top: 1px solid #f1f5f9; font-size: 14px; }}
+        .num {{ text-align: right; }}
+        .totals {{ margin-top: 24px; display: flex; justify-content: flex-end; }}
+        .totals-box {{ width: 260px; }}
+        .total-row {{ display: flex; justify-content: space-between; padding: 8px 0; color: #64748b; font-size: 14px; }}
+        .grand {{ border-top: 2px solid #0f172a; margin-top: 8px; padding-top: 12px; font-size: 20px; font-weight: 700; color: #4338ca; }}
+        .notes {{ margin-top: 24px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }}
+        .notes p {{ margin: 0; color: #475569; font-size: 14px; white-space: pre-wrap; }}
+        .footer {{ text-align: center; padding: 24px; color: #94a3b8; font-size: 12px; border-top: 1px solid #f1f5f9; }}
+        @media print {{ body {{ background: #fff; }} .page {{ margin: 0; border: none; border-radius: 0; }} }}
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="banner">
+            <div class="banner-row">
+                <div>
+                    <div class="brand">Lumen WiFi Billing</div>
+                    <div class="title">Invoice</div>
+                    <div class="number">{invoice.invoice_number}</div>
                 </div>
-                <div class="row">
-                    <span class="label">Issue Date:</span>
-                    <span class="value">{invoice.created_at.strftime('%B %d, %Y') if invoice.created_at else 'Not set'}</span>
-                </div>
-                <div class="row">
-                    <span class="label">Due Date:</span>
-                    <span class="value">{invoice.due_date.strftime('%B %d, %Y') if invoice.due_date else 'Not set'}</span>
-                </div>
-                <div class="row">
-                    <span class="label">Status:</span>
-                    <span class="value">
-                        <span class="status status-{invoice.status.value if hasattr(invoice.status, 'value') else invoice.status}">
-                            {invoice.status.value if hasattr(invoice.status, 'value') else invoice.status}
-                        </span>
-                    </span>
+                <div class="amount-box">
+                    <div class="amount-label">Amount due</div>
+                    <div class="amount-value">KES {float(invoice.amount):,.2f}</div>
+                    <span class="status status-{status}">{status}</span>
                 </div>
             </div>
-            
-            <div class="section">
-                <div class="section-title">Customer Information</div>
-                <div class="row">
-                    <span class="label">Customer Name:</span>
-                    <span class="value">{invoice.customer.full_name if invoice.customer else 'Unknown Customer'}</span>
+        </div>
+        <div class="content">
+            <div class="grid">
+                <div>
+                    <div class="label">Bill to</div>
+                    <div class="name">{customer.full_name if customer else 'Unknown Customer'}</div>
+                    <div class="meta">
+                        {customer.email if customer else ''}<br>
+                        {customer.phone if customer else ''}
+                    </div>
                 </div>
-                <div class="row">
-                    <span class="label">Email:</span>
-                    <span class="value">{invoice.customer.email if invoice.customer else 'Not available'}</span>
-                </div>
-                <div class="row">
-                    <span class="label">Phone:</span>
-                    <span class="value">{invoice.customer.phone if invoice.customer else 'Not available'}</span>
-                </div>
-            </div>
-            
-            <div class="section">
-                <div class="section-title">Amount</div>
-                <div class="row">
-                    <span class="label">Total Amount:</span>
-                    <span class="value amount">${invoice.amount:,.2f}</span>
+                <div class="dates">
+                    <div class="label">Issue date</div>
+                    <div class="meta">{invoice.created_at.strftime('%b %d, %Y') if invoice.created_at else '—'}</div>
+                    <div class="label" style="margin-top:16px">Due date</div>
+                    <div class="meta">{invoice.due_date.strftime('%b %d, %Y') if invoice.due_date else '—'}</div>
                 </div>
             </div>
-            
-            {f'''
-            <div class="section">
-                <div class="section-title">Notes</div>
-                <div style="padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
-                    {invoice.notes or 'No additional notes'}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Description</th>
+                        <th class="num">Qty</th>
+                        <th class="num">Unit price</th>
+                        <th class="num">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>{item_rows}</tbody>
+            </table>
+            <div class="totals">
+                <div class="totals-box">
+                    <div class="total-row"><span>Subtotal</span><span>KES {subtotal:,.2f}</span></div>
+                    <div class="total-row grand"><span>Total</span><span>KES {float(invoice.amount):,.2f}</span></div>
                 </div>
             </div>
-            ''' if invoice.notes else ''}
-            
-            <div class="footer">
-                <p>Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
-                <p>Infora WiFi Billing System</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        print(f"PDF HTML generated for invoice {invoice.invoice_number}")
-        
-        # Return HTML that can be converted to PDF by the browser
+            {notes_block}
+        </div>
+        <div class="footer">
+            Generated {datetime.now().strftime('%b %d, %Y')} · Thank you for your business
+        </div>
+    </div>
+</body>
+</html>"""
+
         return html_content, 200, {
             'Content-Type': 'text/html',
             'Content-Disposition': f'attachment; filename="invoice_{invoice.invoice_number}.html"'
         }
-        
+
     except Exception as e:
-        print(f"Generate PDF error: {type(e).__name__}: {e}")
         return jsonify({'error': f'Failed to generate PDF: {str(e)}'}), 500

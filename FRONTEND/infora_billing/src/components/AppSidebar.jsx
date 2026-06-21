@@ -27,8 +27,8 @@ import {
   Moon,
   Sun
 } from "lucide-react";
-import { useAuth } from "../contexts/AuthContext";
-import { cn } from "../lib/utils";
+import LumenLogo from '../brand/LumenLogo';
+import { BRAND } from '../../lib/brand';
 
 function Badge({ children, className }) {
   return (
@@ -163,12 +163,10 @@ export default function AppSidebar() {
     >
       {/* Header */}
         <div className="border-b border-slate-700 p-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 shadow-lg">
-            <Server className="h-5 w-5 text-white" />
-        </div>
+          <LumenLogo size="sm" />
         <div className="flex-1 text-sm leading-tight text-white">
-            <div className="font-bold truncate text-lg">Infora WiFi</div>
-          <div className="text-xs text-slate-400 truncate">Billing System</div>
+            <div className="font-bold truncate text-lg">{BRAND.name}</div>
+          <div className="text-xs text-slate-400 truncate">{BRAND.tagline}</div>
         </div>
           <Badge className="border-green-600 text-green-400 bg-green-900/20">
             Online

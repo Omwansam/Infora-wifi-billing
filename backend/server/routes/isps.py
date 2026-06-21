@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
+from auth_utils import get_current_user
+from services.brand_constants import sanitize_brand_text, BRAND_COMPANY
 from models import ISP, User, MikrotikDevice, Customer, Invoice, ServicePlan
 from datetime import datetime, timedelta
 
@@ -11,8 +13,8 @@ def serialize_isp(isp):
     try:
         return {
             'id': isp.id,
-            'name': isp.name,
-            'company_name': isp.company_name,
+            'name': sanitize_brand_text(isp.name),
+            'company_name': sanitize_brand_text(isp.company_name, BRAND_COMPANY),
             'email': isp.email,
             'phone': isp.phone,
             'address': isp.address,
@@ -35,11 +37,10 @@ def serialize_isp(isp):
             }
         }
     except Exception as e:
-        print(f"Error serializing ISP {isp.id}: {e}")
         return {
             'id': isp.id,
-            'name': isp.name,
-            'company_name': isp.company_name,
+            'name': sanitize_brand_text(isp.name),
+            'company_name': sanitize_brand_text(isp.company_name, BRAND_COMPANY),
             'email': isp.email,
             'is_active': isp.is_active
         }
@@ -62,7 +63,7 @@ def handle_stats_options():
 def get_isps():
     """Get all ISPs (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -104,7 +105,7 @@ def get_isps():
 def get_isp(isp_id):
     """Get specific ISP"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -123,7 +124,7 @@ def get_isp(isp_id):
 def create_isp():
     """Create a new ISP (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -174,7 +175,7 @@ def create_isp():
 def update_isp(isp_id):
     """Update ISP"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -230,7 +231,7 @@ def update_isp(isp_id):
 def delete_isp(isp_id):
     """Delete ISP (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -263,7 +264,7 @@ def delete_isp(isp_id):
 def regenerate_api_key(isp_id):
     """Regenerate ISP API key"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -291,7 +292,7 @@ def regenerate_api_key(isp_id):
 def regenerate_radius_secret(isp_id):
     """Regenerate ISP RADIUS secret"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -319,7 +320,7 @@ def regenerate_radius_secret(isp_id):
 def get_isp_stats(isp_id):
     """Get ISP statistics"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -365,7 +366,7 @@ def get_isp_stats(isp_id):
 def get_all_isp_stats():
     """Get overall ISP statistics (admin only)"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         

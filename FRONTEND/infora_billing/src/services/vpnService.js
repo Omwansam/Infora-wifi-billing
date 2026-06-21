@@ -104,9 +104,9 @@ class VPNService {
   }
 
   // VPN Clients
-  async getVPNClients(token, configId) {
+  async getVPNClients(token) {
     try {
-      const response = await fetch(`${API_ENDPOINTS.VPN_CLIENTS}/${configId}`, {
+      const response = await fetch(API_ENDPOINTS.VPN_CLIENTS, {
         method: 'GET',
         headers: getAuthHeaders(token),
       });
@@ -123,9 +123,9 @@ class VPNService {
     }
   }
 
-  async createVPNClient(token, configId, clientData) {
+  async createVPNClient(token, clientData) {
     try {
-      const response = await fetch(`${API_ENDPOINTS.VPN_CLIENTS}/${configId}`, {
+      const response = await fetch(API_ENDPOINTS.VPN_CLIENTS, {
         method: 'POST',
         headers: getAuthHeaders(token),
         body: JSON.stringify(clientData),
@@ -143,9 +143,9 @@ class VPNService {
     }
   }
 
-  async deleteVPNClient(token, configId, clientId) {
+  async deleteVPNClient(token, clientId) {
     try {
-      const response = await fetch(`${API_ENDPOINTS.VPN_CLIENTS}/${configId}/${clientId}`, {
+      const response = await fetch(`${API_ENDPOINTS.VPN_CLIENTS}/${clientId}`, {
         method: 'DELETE',
         headers: getAuthHeaders(token),
       });

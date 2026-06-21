@@ -1,4 +1,4 @@
-// Mock data for the Infora WiFi Billing System
+// Mock data for the Lumen WiFi Billing System
 
 // Customer data
 export const customers = [

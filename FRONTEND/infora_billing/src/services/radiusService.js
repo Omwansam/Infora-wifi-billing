@@ -33,11 +33,11 @@ class RadiusService {
         body: JSON.stringify(clientData),
       });
 
+      const data = await response.json();
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(data.message || `HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
       return data;
     } catch (error) {
       console.error('Error creating RADIUS client:', error);
@@ -285,6 +285,85 @@ class RadiusService {
       return data;
     } catch (error) {
       console.error('Error creating RADIUS route:', error);
+      throw error;
+    }
+  }
+
+  async getRadiusSessions(token, params = {}) {
+    try {
+      const queryParams = new URLSearchParams(params).toString();
+      const url = queryParams
+        ? `${API_ENDPOINTS.RADIUS_ROUTES}/sessions?${queryParams}`
+        : `${API_ENDPOINTS.RADIUS_ROUTES}/sessions`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching RADIUS sessions:', error);
+      throw error;
+    }
+  }
+
+  async getRadiusStats(token) {
+    try {
+      const response = await fetch(`${API_ENDPOINTS.RADIUS_ROUTES}/stats`, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching RADIUS stats:', error);
+      throw error;
+    }
+  }
+
+  async terminateRadiusSession(token, sessionId) {
+    try {
+      const response = await fetch(`${API_ENDPOINTS.RADIUS_ROUTES}/sessions/terminate/${sessionId}`, {
+        method: 'POST',
+        headers: getAuthHeaders(token),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `HTTP error! status: ${response.status}`);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error terminating RADIUS session:', error);
+      throw error;
+    }
+  }
+
+  async testRadiusClient(token, clientId) {
+    try {
+      const response = await fetch(`${API_ENDPOINTS.RADIUS_TEST}/${clientId}`, {
+        method: 'POST',
+        headers: getAuthHeaders(token),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `HTTP error! status: ${response.status}`);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error testing RADIUS client:', error);
       throw error;
     }
   }

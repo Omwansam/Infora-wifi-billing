@@ -54,11 +54,11 @@ class ISPService {
         body: JSON.stringify(ispData),
       });
 
+      const data = await response.json();
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(data.error || `HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
       return data;
     } catch (error) {
       console.error('Error creating ISP:', error);
@@ -107,7 +107,7 @@ class ISPService {
 
   async getISPStats(token, ispId) {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ISP_STATS}/${ispId}`, {
+      const response = await fetch(`${this.baseURL}/${ispId}/stats`, {
         method: 'GET',
         headers: getAuthHeaders(token),
       });
@@ -120,6 +120,24 @@ class ISPService {
       return data;
     } catch (error) {
       console.error('Error fetching ISP stats:', error);
+      throw error;
+    }
+  }
+
+  async getAllISPStats(token) {
+    try {
+      const response = await fetch(API_ENDPOINTS.ISP_STATS, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching all ISP stats:', error);
       throw error;
     }
   }

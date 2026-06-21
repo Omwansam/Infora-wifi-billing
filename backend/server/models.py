@@ -8,6 +8,13 @@ class CustomerStatus(Enum):
     PENDING = 'pending'
 
 
+class KycStatus(Enum):
+    PENDING = 'pending'
+    UNDER_REVIEW = 'under_review'
+    VERIFIED = 'verified'
+    REJECTED = 'rejected'
+
+
 class InvoiceStatus(Enum):
     PENDING = 'pending'
     PAID = 'paid'
@@ -107,15 +114,27 @@ class Customer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    phone = db.Column(db.String(15), nullable=False)
+    phone = db.Column(db.String(20), nullable=False)
     address = db.Column(db.String(255), nullable=True)
     status = db.Column(db.Enum(CustomerStatus, name="customer_status"), default=CustomerStatus.ACTIVE, nullable=False)
+    connection_type = db.Column(db.String(20), default='pppoe', nullable=False)  # hotspot | pppoe
     join_date = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     balance = db.Column(db.Numeric(10, 2), default=0.00)
     package = db.Column(db.String(50), nullable=False)
     usage_percentage = db.Column(db.Integer, default=0)
     device_count = db.Column(db.Integer, default=0)
     last_payment_date = db.Column(db.DateTime, nullable=True)
+    radius_password_encrypted = db.Column(db.Text, nullable=True)
+    subscription_start = db.Column(db.DateTime, nullable=True)
+    subscription_end = db.Column(db.DateTime, nullable=True)
+    id_number = db.Column(db.String(50), nullable=True)
+    kyc_status = db.Column(
+        db.Enum(KycStatus, name='kyc_status', values_callable=lambda enum: [item.value for item in enum]),
+        default=KycStatus.PENDING,
+        nullable=False,
+    )
+    kyc_verified_at = db.Column(db.DateTime, nullable=True)
+    kyc_notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
 
@@ -165,9 +184,18 @@ class ServicePlan(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.String(255), nullable=True)
     speed = db.Column(db.String(50), nullable=False)
     price = db.Column(db.Numeric(10, 2), nullable=False)
     features = db.Column(db.JSON, nullable=False)
+    bandwidth_limit = db.Column(db.Integer, nullable=True)  # Mbps download cap for RADIUS
+    data_limit = db.Column(db.Integer, nullable=True)  # GB monthly data cap
+    static_ip = db.Column(db.String(45), nullable=True)
+    session_timeout = db.Column(db.Integer, nullable=True)  # minutes
+    idle_timeout = db.Column(db.Integer, nullable=True)  # minutes
+    plan_type = db.Column(db.String(20), default='pppoe', nullable=False)  # hotspot | pppoe
+    duration_hours = db.Column(db.Integer, nullable=True)  # hotspot access duration after payment
+    billing_cycle_days = db.Column(db.Integer, default=30, nullable=True)  # pppoe renewal period
     popular = db.Column(db.Boolean, default=False)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
@@ -257,6 +285,10 @@ class Payment(db.Model):
     payment_method = db.Column(db.String(50), nullable=False)
     payment_status = db.Column(db.Enum(PaymentStatus, name="payment_status"), default=PaymentStatus.PENDING, nullable=False)
     transaction_id = db.Column(db.String(50), nullable=True)
+    mpesa_checkout_request_id = db.Column(db.String(100), nullable=True)
+    mpesa_merchant_request_id = db.Column(db.String(100), nullable=True)
+    mpesa_receipt_number = db.Column(db.String(50), nullable=True)
+    phone_number = db.Column(db.String(20), nullable=True)
     payment_date = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
@@ -287,9 +319,12 @@ class MikrotikDevice(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), nullable=False)
-    password = db.Column(db.String(50), nullable=False)
-    api_key = db.Column(db.String(50), nullable=False)
+    password = db.Column(db.Text, nullable=False)  # Fernet-encrypted at rest
+    api_key = db.Column(db.String(255), nullable=True)
     api_port = db.Column(db.Integer, default=8728)
+    ssh_port = db.Column(db.Integer, default=22)
+    connection_type = db.Column(db.String(10), default='api')  # api or ssh
+    use_ssl = db.Column(db.Boolean, default=True)
     device_name = db.Column(db.String(50), nullable=False)
     device_ip = db.Column(db.String(50), nullable=False)
     device_model = db.Column(db.String(50), nullable=False)
@@ -852,6 +887,8 @@ class CustomerDocument(db.Model):
     original_file_name = db.Column(db.String(255), nullable=False)
     file_size = db.Column(db.Integer, nullable=False)
     file_path = db.Column(db.String(255), nullable=False)
+    verification_status = db.Column(db.String(20), default='pending', nullable=False)
+    notes = db.Column(db.Text, nullable=True)
     upload_date = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     expiry_date = db.Column(db.DateTime, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
@@ -1348,4 +1385,52 @@ class ISP(db.Model):
     def generate_radius_secret(self):
         """Generate a RADIUS secret for the ISP"""
         import secrets
-        self.radius_secret = secrets.token_hex(16) 
+        self.radius_secret = secrets.token_hex(16)
+
+
+# =========================
+#   Website / Marketing
+# =========================
+
+class WebsiteInquirySource(Enum):
+    CONTACT = 'contact'
+    AFFILIATE = 'affiliate'
+    TRIAL = 'trial'
+
+
+class WebsiteInquiryStatus(Enum):
+    NEW = 'new'
+    CONTACTED = 'contacted'
+    CLOSED = 'closed'
+
+
+class WebsiteInquiry(db.Model):
+    """Inbound leads and contact messages from the public marketing website."""
+    __tablename__ = 'website_inquiries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(120), nullable=False)
+    company = db.Column(db.String(200), nullable=True)
+    phone = db.Column(db.String(30), nullable=True)
+    inquiry_type = db.Column(db.String(50), nullable=True)
+    message = db.Column(db.Text, nullable=True)
+    source = db.Column(
+        db.Enum(WebsiteInquirySource, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=WebsiteInquirySource.CONTACT,
+    )
+    status = db.Column(
+        db.Enum(WebsiteInquiryStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=WebsiteInquiryStatus.NEW,
+    )
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    user = db.relationship('User', foreign_keys=[user_id])
+    isp = db.relationship('ISP', foreign_keys=[isp_id])
+
+    def __repr__(self):
+        return f'<WebsiteInquiry {self.email} ({self.source.value})>'

@@ -25,9 +25,9 @@ def reset_database():
         
         # Create default ISP
         default_isp = ISP(
-            name='Default ISP',
-            company_name='Default Company',
-            email='admin@default.com',
+            name='Lumen',
+            company_name='Lumen',
+            email='admin@lumen.app',
             api_key='default_api_key_12345',
             is_active=True
         )
@@ -36,7 +36,7 @@ def reset_database():
         
         # Create default admin user
         admin_user = User(
-            email='admin1@infora.com',
+            email='admin@lumen.app',
             password_hash=generate_password_hash('admin123'),
             first_name='Admin',
             last_name='User',

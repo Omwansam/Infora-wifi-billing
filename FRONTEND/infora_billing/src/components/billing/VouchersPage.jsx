@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Search,
@@ -16,75 +16,39 @@ import {
   Copy
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../lib/utils';
-
-// Mock voucher data
-const vouchers = [
-  {
-    id: 'VOUCHER-001',
-    code: 'WELCOME50',
-    type: 'discount',
-    value: 50,
-    currency: 'USD',
-    status: 'active',
-    usedBy: null,
-    usedAt: null,
-    expiresAt: '2024-12-31',
-    createdAt: '2024-01-15',
-    maxUses: 100,
-    usedCount: 23
-  },
-  {
-    id: 'VOUCHER-002',
-    code: 'SUMMER20',
-    type: 'percentage',
-    value: 20,
-    currency: 'USD',
-    status: 'active',
-    usedBy: null,
-    usedAt: null,
-    expiresAt: '2024-08-31',
-    createdAt: '2024-06-01',
-    maxUses: 50,
-    usedCount: 12
-  },
-  {
-    id: 'VOUCHER-003',
-    code: 'LOYALTY100',
-    type: 'fixed',
-    value: 100,
-    currency: 'USD',
-    status: 'used',
-    usedBy: 'John Smith',
-    usedAt: '2024-03-10',
-    expiresAt: '2024-12-31',
-    createdAt: '2024-01-01',
-    maxUses: 1,
-    usedCount: 1
-  },
-  {
-    id: 'VOUCHER-004',
-    code: 'EXPIRED25',
-    type: 'discount',
-    value: 25,
-    currency: 'USD',
-    status: 'expired',
-    usedBy: null,
-    usedAt: null,
-    expiresAt: '2024-02-29',
-    createdAt: '2024-01-01',
-    maxUses: 25,
-    usedCount: 0
-  }
-];
+import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
+import { getAccessToken } from '../../utils/authToken';
 
 export default function VouchersPage() {
+  const [vouchers, setVouchers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
 
+  useEffect(() => {
+    const loadVouchers = async () => {
+      try {
+        const token = getAccessToken();
+        const response = await fetch(`${API_ENDPOINTS.BILLING_VOUCHERS}?per_page=100`, {
+          headers: getAuthHeaders(token),
+        });
+        const data = await response.json();
+        if (response.ok) {
+          setVouchers(data.vouchers || []);
+        }
+      } catch {
+        setVouchers([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadVouchers();
+  }, []);
+
   const filteredVouchers = vouchers.filter(voucher => {
-    const matchesSearch = voucher.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         voucher.id.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (voucher.code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         String(voucher.id || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || voucher.status === statusFilter;
     const matchesType = typeFilter === 'all' || voucher.type === typeFilter;
     return matchesSearch && matchesStatus && matchesType;

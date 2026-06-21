@@ -7,7 +7,8 @@ load_dotenv()
 class Config:
     # App  Configuration
     SECRET_KEY = os.getenv('SECRET_KEY')
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///infora_billing.db')
+    ENCRYPTION_KEY = os.getenv('ENCRYPTION_KEY', SECRET_KEY)
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # JWT Configuration
@@ -21,7 +22,7 @@ class Config:
     
     # Email configuration 
     MAIL_SERVER = os.getenv('MAIL_SERVER')
-    MAIL_PORT = int(os.getenv('MAIL_PORT'))
+    MAIL_PORT = int(os.getenv('MAIL_PORT', '587'))
     MAIL_USE_TLS = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
     MAIL_USERNAME = os.getenv('MAIL_USERNAME')
     MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
@@ -32,7 +33,7 @@ class Config:
     MPESA_CONSUMER_SECRET = os.getenv('MPESA_CONSUMER_SECRET')
     MPESA_SHORTCODE = os.getenv('MPESA_SHORTCODE')
     MPESA_PASSKEY = os.getenv('MPESA_PASSKEY')
-    MPESA_CALLBACK_URL = os.getenv('MPESA_CALLBACK_URL')
+    MPESA_CALLBACK_URL = os.getenv('MPESA_CALLBACK_URL', 'http://localhost:5000/api/payments/mpesa/callback')
     MPESA_ENVIRONMENT = os.getenv('MPESA_ENVIRONMENT', 'sandbox')
     MPESA_TRANSACTION_TYPE = os.getenv('MPESA_TRANSACTION_TYPE', 'CustomerPayBillOnline')
 

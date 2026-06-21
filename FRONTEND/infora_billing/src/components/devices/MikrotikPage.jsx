@@ -1,290 +1,325 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Search,
   Plus,
-  Filter,
   Wifi,
   Activity,
-  TrendingUp,
   Users,
-  CheckCircle,
-  Clock,
-  XCircle,
-  Edit,
-  Trash2,
-  Eye,
   RefreshCw,
-  Signal,
-  HardDrive
+  Eye,
+  Trash2,
+  Router,
+  Zap,
 } from 'lucide-react';
-import { mikrotikDevices } from '../../data/mockData';
+import toast from 'react-hot-toast';
+import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
+import { getAccessToken } from '../../utils/authToken';
+import { bandwidthLabel, bandwidthTone } from '../../lib/deviceUtils';
+import { formatDate } from '../../lib/utils';
+import deviceService from '../../services/deviceService';
+import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
+import DevicesLayout from './DevicesLayout';
+import DeviceStatusBadge from './DeviceStatusBadge';
+import AddDeviceWizard from './AddDeviceWizard';
+
+const STATUS_TABS = [
+  { value: 'all', label: 'All' },
+  { value: 'online', label: 'Online' },
+  { value: 'offline', label: 'Offline' },
+  { value: 'maintenance', label: 'Maintenance' },
+];
 
 export default function MikrotikPage() {
+  const { devices, stats, loading, loadDevices } = useMikrotikDevices();
+  const [isps, setIsps] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [showWizard, setShowWizard] = useState(false);
+  const [actionId, setActionId] = useState(null);
 
-  const filteredDevices = mikrotikDevices.filter(device => {
-    const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         device.ip.includes(searchTerm) ||
-                         device.model.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || device.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  const getStatusBadge = (status) => {
-    const statusConfig = {
-      online: { color: 'bg-green-100 text-green-800', icon: CheckCircle },
-      offline: { color: 'bg-red-100 text-red-800', icon: XCircle },
-      maintenance: { color: 'bg-yellow-100 text-yellow-800', icon: Clock }
+  useEffect(() => {
+    const loadIsps = async () => {
+      try {
+        const token = getAccessToken();
+        const response = await fetch(`${API_ENDPOINTS.ISPS}?per_page=100`, {
+          headers: getAuthHeaders(token),
+        });
+        const data = await response.json();
+        if (response.ok) setIsps(data.isps || []);
+      } catch {
+        setIsps([]);
+      }
     };
-    const config = statusConfig[status] || statusConfig.offline;
-    const Icon = config.icon;
-    return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
-        <Icon className="h-3 w-3 mr-1" />
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </span>
-    );
-  };
+    loadIsps();
+  }, []);
 
-  const getBandwidthColor = (bandwidth) => {
-    const percentage = parseInt(bandwidth);
-    if (percentage > 80) return 'text-red-600';
-    if (percentage > 60) return 'text-yellow-600';
-    return 'text-green-600';
-  };
+  const filteredDevices = useMemo(
+    () =>
+      devices.filter((device) => {
+        const q = searchTerm.toLowerCase();
+        const matchesSearch =
+          device.name.toLowerCase().includes(q) ||
+          device.ip.includes(searchTerm) ||
+          (device.model || '').toLowerCase().includes(q);
+        const matchesStatus = statusFilter === 'all' || device.status === statusFilter;
+        return matchesSearch && matchesStatus;
+      }),
+    [devices, searchTerm, statusFilter]
+  );
 
-  const stats = [
-    {
-      title: 'Total Devices',
-      value: mikrotikDevices.length,
-      change: '+2',
-      icon: Wifi,
-      color: 'bg-blue-500'
-    },
-    {
-      title: 'Online Devices',
-      value: mikrotikDevices.filter(d => d.status === 'online').length,
-      change: '+1',
-      icon: CheckCircle,
-      color: 'bg-green-500'
-    },
-    {
-      title: 'Total Clients',
-      value: mikrotikDevices.reduce((sum, d) => sum + d.clients, 0),
-      change: '+15%',
-      icon: Users,
-      color: 'bg-purple-500'
-    },
-    {
-      title: 'Avg Uptime',
-      value: '12.5 days',
-      change: '+2.3 days',
-      icon: Activity,
-      color: 'bg-orange-500'
+  const statsCards = useMemo(
+    () => [
+      {
+        title: 'Total Routers',
+        value: stats.total_devices ?? devices.length,
+        subtitle: `${stats.active_devices ?? 0} active in inventory`,
+        icon: Router,
+        accent: 'from-orange-500 to-amber-600',
+      },
+      {
+        title: 'Online',
+        value: stats.online_devices ?? devices.filter((d) => d.status === 'online').length,
+        subtitle: `${stats.offline_devices ?? 0} offline`,
+        icon: Wifi,
+        accent: 'from-emerald-500 to-teal-600',
+      },
+      {
+        title: 'Connected Clients',
+        value: stats.total_clients ?? devices.reduce((sum, d) => sum + d.clients, 0),
+        subtitle: 'Across all Mikrotik nodes',
+        icon: Users,
+        accent: 'from-indigo-500 to-violet-600',
+      },
+      {
+        title: 'Bandwidth Load',
+        value: bandwidthLabel(stats.total_bandwidth_mb ?? 0),
+        subtitle: 'Aggregate usage snapshot',
+        icon: Activity,
+        accent: 'from-cyan-500 to-blue-600',
+      },
+    ],
+    [stats, devices]
+  );
+
+  const handleSync = async (deviceId) => {
+    try {
+      setActionId(deviceId);
+      const token = getAccessToken();
+      await deviceService.syncDevice(token, deviceId);
+      toast.success('Device synced');
+      loadDevices();
+    } catch (error) {
+      toast.error(error.message || 'Sync failed');
+    } finally {
+      setActionId(null);
     }
-  ];
+  };
+
+  const handleDelete = async (device) => {
+    if (!window.confirm(`Remove "${device.name}" from inventory?`)) return;
+    try {
+      setActionId(device.id);
+      const token = getAccessToken();
+      await deviceService.deleteDevice(token, device.id);
+      toast.success('Device removed');
+      loadDevices();
+    } catch (error) {
+      toast.error(error.message || 'Delete failed');
+    } finally {
+      setActionId(null);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-8"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Mikrotik Devices</h1>
-              <p className="text-gray-600 mt-2">Manage and monitor router devices</p>
-            </div>
-            <div className="flex space-x-3">
-              <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </button>
-              <button className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Device
-              </button>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {stats.map((stat, index) => (
-            <motion.div
-              key={stat.title}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: index * 0.1 }}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">{stat.title}</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
-                  <p className="text-sm text-green-600 mt-1">{stat.change} from last month</p>
-                </div>
-                <div className={`p-3 rounded-lg ${stat.color}`}>
-                  <stat.icon className="h-6 w-6 text-white" />
-                </div>
-              </div>
-            </motion.div>
-          ))}
+    <DevicesLayout
+      title="Mikrotik Routers"
+      subtitle="Link, monitor, and manage RouterOS devices"
+      action={
+        <div className="flex gap-3 self-start">
+          <button
+            onClick={loadDevices}
+            disabled={loading}
+            className="inline-flex items-center px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-medium bg-white hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <button
+            onClick={() => setShowWizard(true)}
+            className="inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Link Mikrotik
+          </button>
         </div>
-
-        {/* Filters and Search */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6"
-        >
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search devices by name, IP, or model..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                />
+      }
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+        {statsCards.map((stat, index) => (
+          <motion.div
+            key={stat.title}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.05 }}
+            className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 p-5 shadow-sm"
+          >
+            <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${stat.accent}`} />
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-500">{stat.title}</p>
+                <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
+                <p className="text-xs text-slate-500 mt-2">{stat.subtitle}</p>
+              </div>
+              <div className={`p-2.5 rounded-xl bg-gradient-to-br ${stat.accent} text-white`}>
+                <stat.icon className="h-5 w-5" />
               </div>
             </div>
-            <div className="flex gap-2">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-              >
-                <option value="all">All Status</option>
-                <option value="online">Online</option>
-                <option value="offline">Offline</option>
-                <option value="maintenance">Maintenance</option>
-              </select>
-              <button className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
-                <Filter className="h-4 w-4 mr-2" />
-                More Filters
-              </button>
-            </div>
-          </div>
-        </motion.div>
+          </motion.div>
+        ))}
+      </div>
 
-        {/* Devices Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by name, IP, or model..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {STATUS_TABS.map((tab) => (
+              <button
+                key={tab.value}
+                onClick={() => setStatusFilter(tab.value)}
+                className={`px-3.5 py-2 rounded-full text-sm font-medium ${
+                  statusFilter === tab.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-16">
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-orange-600 border-t-transparent mx-auto" />
+        </div>
+      ) : filteredDevices.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-2xl border border-slate-200">
+          <Router className="h-12 w-12 text-slate-300 mx-auto" />
+          <h3 className="mt-4 text-lg font-semibold text-slate-900">No Mikrotik devices found</h3>
+          <button
+            onClick={() => setShowWizard(true)}
+            className="mt-4 inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Link your first router
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
           {filteredDevices.map((device, index) => (
             <motion.div
               key={device.id}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: index * 0.1 }}
-              className={`bg-white rounded-xl shadow-sm border-2 transition-all duration-200 hover:shadow-md ${
-                device.status === 'online' ? 'border-green-200' : 'border-red-200'
+              transition={{ delay: index * 0.04 }}
+              className={`rounded-2xl border bg-white shadow-sm overflow-hidden ${
+                device.status === 'online' ? 'border-emerald-200' : 'border-slate-200'
               }`}
             >
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-900">{device.name}</h3>
-                    <p className="text-sm text-gray-500">{device.model}</p>
+              <div className={`h-1 ${device.status === 'online' ? 'bg-emerald-500' : device.status === 'maintenance' ? 'bg-amber-500' : 'bg-rose-400'}`} />
+              <div className="p-5">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="flex gap-3 min-w-0">
+                    <div className="p-2.5 rounded-xl bg-orange-50 text-orange-700 shrink-0">
+                      <Router className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-slate-900 truncate">{device.name}</h3>
+                      <p className="text-sm text-slate-500">{device.model}</p>
+                    </div>
                   </div>
-                  {getStatusBadge(device.status)}
+                  <DeviceStatusBadge status={device.status} />
                 </div>
-                
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">IP Address</span>
-                    <span className="text-sm font-mono text-gray-900">{device.ip}</span>
+
+                <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <dt className="text-slate-500 text-xs">IP Address</dt>
+                    <dd className="font-mono font-medium text-slate-900 mt-0.5">{device.ip}</dd>
                   </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">Uptime</span>
-                    <span className="text-sm text-gray-900">{device.uptime}</span>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <dt className="text-slate-500 text-xs">Clients</dt>
+                    <dd className="font-semibold text-slate-900 mt-0.5">{device.clients}</dd>
                   </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">Active Clients</span>
-                    <span className="text-sm font-bold text-gray-900">{device.clients}</span>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <dt className="text-slate-500 text-xs">Location</dt>
+                    <dd className="font-medium text-slate-900 mt-0.5 truncate">{device.location || '—'}</dd>
                   </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">Bandwidth</span>
-                    <span className={`text-sm font-bold ${getBandwidthColor(device.bandwidth)}`}>
-                      {device.bandwidth}
-                    </span>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <dt className="text-slate-500 text-xs">Bandwidth</dt>
+                    <dd className={`font-semibold mt-0.5 ${bandwidthTone(device.bandwidth)}`}>
+                      {bandwidthLabel(device.bandwidth)}
+                    </dd>
                   </div>
-                </div>
-                
-                <div className="flex items-center justify-between pt-4 mt-4 border-t border-gray-200">
-                  <div className="flex items-center space-x-2">
-                    <button className="text-blue-600 hover:text-blue-900">
+                </dl>
+
+                <p className="text-xs text-slate-400 mb-4">
+                  Last sync: {device.lastSynced ? formatDate(device.lastSynced) : 'Never'}
+                  {device.ispName ? ` · ${device.ispName}` : ''}
+                </p>
+
+                <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => handleSync(device.id)}
+                      disabled={actionId === device.id}
+                      className="p-2 rounded-lg text-slate-500 hover:text-orange-700 hover:bg-orange-50 disabled:opacity-50"
+                      title="Sync device"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${actionId === device.id ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100" title="View details">
                       <Eye className="h-4 w-4" />
                     </button>
-                    <button className="text-gray-600 hover:text-gray-900">
-                      <Edit className="h-4 w-4" />
-                    </button>
-                    <button className="text-red-600 hover:text-red-900">
+                    <button
+                      onClick={() => handleDelete(device)}
+                      disabled={actionId === device.id}
+                      className="p-2 rounded-lg text-slate-500 hover:text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                      title="Remove device"
+                    >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
-                  <button className="inline-flex items-center px-3 py-1 border border-transparent rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
-                    Manage
+                  <button
+                    onClick={() => handleSync(device.id)}
+                    disabled={actionId === device.id}
+                    className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
+                  >
+                    <Zap className="h-3.5 w-3.5 mr-1" />
+                    Sync
                   </button>
                 </div>
               </div>
             </motion.div>
           ))}
         </div>
+      )}
 
-        {/* Empty State */}
-        {filteredDevices.length === 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5 }}
-            className="text-center py-12"
-          >
-            <Wifi className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No devices found</h3>
-            <p className="mt-1 text-sm text-gray-500">Try adjusting your search or filter criteria.</p>
-          </motion.div>
-        )}
-
-        {/* Quick Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.4 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-8"
-        >
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <button className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Device
-            </button>
-            <button className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
-              <Activity className="h-4 w-4 mr-2" />
-              Monitor All
-            </button>
-            <button className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
-              <Signal className="h-4 w-4 mr-2" />
-              Network Map
-            </button>
-            <button className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
-              <HardDrive className="h-4 w-4 mr-2" />
-              Backup Config
-            </button>
-          </div>
-        </motion.div>
-      </div>
-    </div>
+      {showWizard && (
+        <AddDeviceWizard
+          isps={isps}
+          onClose={() => setShowWizard(false)}
+          onSuccess={loadDevices}
+        />
+      )}
+    </DevicesLayout>
   );
 }

@@ -1,0 +1,27 @@
+# Environment & secrets
+.env
+server/.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# Flask instance folder & local SQLite
+instance/
+*.db
+
+# Uploads & logs
+server/uploads/
+*.log
+
+# IDE
+.idea/
+.vscode/

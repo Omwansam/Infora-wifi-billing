@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database Seeder for Infora WiFi Billing System
+Database Seeder for Lumen WiFi Billing System
 This script populates the database with mock data for development and testing.
 
 Usage:
@@ -34,9 +34,10 @@ from models import (
     NetworkInfrastructure, NetworkZone, BillingCycle, TaxRate,
     Discount, InvoiceDiscount, AuditLog, BackupSchedule, SystemSetting,
     ISP,
+    LDAPServer, RadiusClient, SnmpDevice, VPNConfig, VPNClient, EapProfile,
     CustomerStatus, InvoiceStatus, PaymentStatus, VoucherStatus,
     DeviceStatus, InfrastructureStatus, TicketStatus, TicketPriority,
-    CustomerNoteType, NotificationPriority
+    CustomerNoteType, NotificationPriority, KycStatus
 )
 from werkzeug.security import generate_password_hash
 
@@ -62,7 +63,7 @@ def seed_users():
     # Admin users
     admin_users = [
         {
-            'email': 'admin1@infora.com',
+            'email': 'admin@lumen.app',
             'password': 'admin123',
             'first_name': 'System',
             'last_name': 'Administrator',
@@ -70,7 +71,7 @@ def seed_users():
             'is_active': True
         },
         {
-            'email': 'superadmin@infora.com',
+            'email': 'superadmin@lumen.app',
             'password': 'superadmin123',
             'first_name': 'Super',
             'last_name': 'Admin',
@@ -82,7 +83,7 @@ def seed_users():
     # Regular users
     regular_users = [
         {
-            'email': 'support@infora.com',
+            'email': 'support@lumen.app',
             'password': 'support123',
             'first_name': 'Support',
             'last_name': 'Team',
@@ -90,7 +91,7 @@ def seed_users():
             'is_active': True
         },
         {
-            'email': 'billing@infora.com',
+            'email': 'billing@lumen.app',
             'password': 'billing123',
             'first_name': 'Billing',
             'last_name': 'Team',
@@ -98,7 +99,7 @@ def seed_users():
             'is_active': True
         },
         {
-            'email': 'tech@infora.com',
+            'email': 'tech@lumen.app',
             'password': 'tech123',
             'first_name': 'Technical',
             'last_name': 'Team',
@@ -138,13 +139,13 @@ def seed_isps():
     
     isps_data = [
         {
-            'name': 'Default ISP',
-            'company_name': 'Infora WiFi Solutions',
-            'email': 'admin@infora.com',
+            'name': 'Lumen',
+            'company_name': 'Lumen',
+            'email': 'admin@lumen.app',
             'phone': '+254700000000',
             'address': 'Nairobi, Kenya',
-            'website': 'https://infora.com',
-            'logo_url': 'https://infora.com/logo.png',
+            'website': 'https://lumen.app',
+            'logo_url': 'https://lumen.app/logo.png',
             'is_active': True,
             'subscription_plan': 'enterprise',
             'max_devices': 100,
@@ -155,7 +156,9 @@ def seed_isps():
     ]
     
     for isp_data in isps_data:
-        existing_isp = ISP.query.filter_by(name=isp_data['name']).first()
+        existing_isp = ISP.query.filter(
+            db.or_(ISP.name == isp_data['name'], ISP.name == 'Default ISP')
+        ).first()
         if not existing_isp:
             isp = ISP(
                 name=isp_data['name'],
@@ -177,7 +180,13 @@ def seed_isps():
             db.session.add(isp)
             print(f"  ✓ Created ISP: {isp_data['name']}")
         else:
-            print(f"  ℹ ISP already exists: {isp_data['name']}")
+            existing_isp.name = isp_data['name']
+            existing_isp.company_name = isp_data['company_name']
+            existing_isp.email = isp_data['email']
+            existing_isp.website = isp_data['website']
+            existing_isp.logo_url = isp_data['logo_url']
+            existing_isp.updated_at = datetime.now()
+            print(f"  ✓ Updated ISP branding: {isp_data['name']}")
     
     db.session.commit()
     print("✅ ISPs seeded successfully!")
@@ -187,9 +196,11 @@ def seed_service_plans():
     print("🌱 Seeding service plans...")
     
     # Get the default ISP
-    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    default_isp = ISP.query.filter(
+        db.or_(ISP.name == 'Lumen', ISP.name == 'Default ISP')
+    ).first()
     if not default_isp:
-        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        print("❌ Error: Lumen ISP not found. Please seed ISPs first.")
         return
     
     service_plans = [
@@ -296,6 +307,11 @@ def seed_service_plans():
                 features=plan_data['features'],
                 popular=plan_data['popular'],
                 is_active=plan_data['is_active'],
+                plan_type=plan_data.get('plan_type', 'pppoe'),
+                billing_cycle_days=plan_data.get('billing_cycle_days', 30),
+                duration_hours=plan_data.get('duration_hours'),
+                bandwidth_limit=plan_data.get('bandwidth_limit'),
+                session_timeout=plan_data.get('session_timeout'),
                 isp_id=default_isp.id,
                 created_at=datetime.now(),
                 updated_at=datetime.now()
@@ -308,14 +324,175 @@ def seed_service_plans():
     db.session.commit()
     print("✅ Service plans seeded successfully!")
 
+
+def seed_hotspot_plans():
+    """Seed captive portal hotspot packages"""
+    print("🌱 Seeding hotspot portal packages...")
+
+    default_isp = ISP.query.filter(
+        db.or_(ISP.name == 'Lumen', ISP.name == 'Default ISP')
+    ).first()
+    if not default_isp:
+        print("❌ Error: Lumen ISP not found.")
+        return
+
+    hotspot_plans = [
+        {
+            'name': '1 Hour',
+            'speed': '2 Mbps',
+            'price': 10.00,
+            'description': 'Haraka — WhatsApp, email na social media',
+            'plan_type': 'hotspot',
+            'duration_hours': 1,
+            'bandwidth_limit': 2,
+            'session_timeout': 60,
+            'features': {
+                'download_speed': '2 Mbps',
+                'access_type': '1 hour',
+                'ideal_for': 'Quick browsing',
+            },
+            'popular': False,
+        },
+        {
+            'name': '3 Hours',
+            'speed': '3 Mbps',
+            'price': 20.00,
+            'description': 'Masaa matatu — browsing na video fupi',
+            'plan_type': 'hotspot',
+            'duration_hours': 3,
+            'bandwidth_limit': 3,
+            'session_timeout': 180,
+            'features': {
+                'download_speed': '3 Mbps',
+                'access_type': '3 hours',
+                'ideal_for': 'Afternoon session',
+            },
+            'popular': False,
+        },
+        {
+            'name': '12 Hours',
+            'speed': '5 Mbps',
+            'price': 30.00,
+            'description': 'Usiku hadi asubuhi — streaming na kazi',
+            'plan_type': 'hotspot',
+            'duration_hours': 12,
+            'bandwidth_limit': 5,
+            'session_timeout': 720,
+            'features': {
+                'download_speed': '5 Mbps',
+                'access_type': '12 hours',
+                'ideal_for': 'Evening bundle',
+            },
+            'popular': False,
+        },
+        {
+            'name': '24 Hours (Siku)',
+            'speed': '5 Mbps',
+            'price': 50.00,
+            'description': 'Siku nzima — bei bora kwa matumizi ya kila siku',
+            'plan_type': 'hotspot',
+            'duration_hours': 24,
+            'bandwidth_limit': 5,
+            'session_timeout': 1440,
+            'features': {
+                'download_speed': '5 Mbps',
+                'access_type': '24 hours',
+                'ideal_for': 'Full day access',
+            },
+            'popular': True,
+        },
+        {
+            'name': '7 Days (Wiki)',
+            'speed': '8 Mbps',
+            'price': 200.00,
+            'description': 'Wiki moja — kwa wageni na wafanyakazi wa muda',
+            'plan_type': 'hotspot',
+            'duration_hours': 168,
+            'bandwidth_limit': 8,
+            'session_timeout': 10080,
+            'features': {
+                'download_speed': '8 Mbps',
+                'access_type': '7 days',
+                'ideal_for': 'Weekly visitors',
+            },
+            'popular': False,
+        },
+        {
+            'name': '30 Days (Mwezi)',
+            'speed': '10 Mbps',
+            'price': 500.00,
+            'description': 'Mwezi mzima — bei nafuu kwa matumizi ya mara kwa mara',
+            'plan_type': 'hotspot',
+            'duration_hours': 720,
+            'bandwidth_limit': 10,
+            'session_timeout': 43200,
+            'features': {
+                'download_speed': '10 Mbps',
+                'access_type': '30 days',
+                'ideal_for': 'Regular hotspot users',
+            },
+            'popular': False,
+        },
+    ]
+
+    legacy_names = ['Hotspot 1 Hour', 'Hotspot 24 Hours', 'Hotspot 7 Days']
+    for legacy_name in legacy_names:
+        legacy = ServicePlan.query.filter_by(name=legacy_name, isp_id=default_isp.id).first()
+        if legacy:
+            db.session.delete(legacy)
+            print(f"  ✓ Removed legacy hotspot plan: {legacy_name}")
+
+    for plan_data in hotspot_plans:
+        existing = ServicePlan.query.filter_by(
+            name=plan_data['name'],
+            isp_id=default_isp.id,
+        ).first()
+        if existing:
+            existing.speed = plan_data['speed']
+            existing.price = plan_data['price']
+            existing.description = plan_data['description']
+            existing.features = plan_data['features']
+            existing.popular = plan_data['popular']
+            existing.is_active = True
+            existing.plan_type = 'hotspot'
+            existing.duration_hours = plan_data['duration_hours']
+            existing.bandwidth_limit = plan_data['bandwidth_limit']
+            existing.session_timeout = plan_data['session_timeout']
+            existing.updated_at = datetime.now()
+            print(f"  ✓ Updated hotspot plan: {plan_data['name']} — KES {plan_data['price']:.0f}")
+        else:
+            plan = ServicePlan(
+                name=plan_data['name'],
+                speed=plan_data['speed'],
+                price=plan_data['price'],
+                description=plan_data['description'],
+                features=plan_data['features'],
+                popular=plan_data['popular'],
+                is_active=True,
+                plan_type='hotspot',
+                duration_hours=plan_data['duration_hours'],
+                bandwidth_limit=plan_data['bandwidth_limit'],
+                session_timeout=plan_data['session_timeout'],
+                isp_id=default_isp.id,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+            )
+            db.session.add(plan)
+            print(f"  ✓ Created hotspot plan: {plan_data['name']} — KES {plan_data['price']:.0f}")
+
+    db.session.commit()
+    print("✅ Hotspot portal packages seeded successfully!")
+
 def seed_customers():
     """Seed customers"""
     print("🌱 Seeding customers...")
     
     # Get the default ISP
-    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    default_isp = ISP.query.filter(
+        db.or_(ISP.name == 'Lumen', ISP.name == 'Default ISP')
+    ).first()
     if not default_isp:
-        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        print("❌ Error: Lumen ISP not found. Please seed ISPs first.")
         return
     
     # Get service plans for foreign key relationships
@@ -327,7 +504,7 @@ def seed_customers():
         {
             'full_name': 'John Smith',
             'email': 'john.smith@email.com',
-            'phone': '+1 (555) 123-4567',
+            'phone': '+254712345678',
             'address': '123 Main St, City, State 12345',
             'status': CustomerStatus.ACTIVE,
             'join_date': datetime(2024, 1, 15),
@@ -341,7 +518,7 @@ def seed_customers():
         {
             'full_name': 'Sarah Johnson',
             'email': 'sarah.j@email.com',
-            'phone': '+1 (555) 234-5678',
+            'phone': '+254723456789',
             'address': '456 Oak Ave, City, State 12345',
             'status': CustomerStatus.ACTIVE,
             'join_date': datetime(2024, 2, 10),
@@ -355,7 +532,7 @@ def seed_customers():
         {
             'full_name': 'Mike Wilson',
             'email': 'mike.w@email.com',
-            'phone': '+1 (555) 345-6789',
+            'phone': '+254734567890',
             'address': '789 Pine Rd, City, State 12345',
             'status': CustomerStatus.SUSPENDED,
             'join_date': datetime(2023, 11, 20),
@@ -369,7 +546,7 @@ def seed_customers():
         {
             'full_name': 'Emily Davis',
             'email': 'emily.d@email.com',
-            'phone': '+1 (555) 456-7890',
+            'phone': '+254745678901',
             'address': '321 Elm St, City, State 12345',
             'status': CustomerStatus.ACTIVE,
             'join_date': datetime(2023, 9, 5),
@@ -383,7 +560,7 @@ def seed_customers():
         {
             'full_name': 'David Brown',
             'email': 'david.b@email.com',
-            'phone': '+1 (555) 567-8901',
+            'phone': '+254756789012',
             'address': '654 Maple Dr, City, State 12345',
             'status': CustomerStatus.ACTIVE,
             'join_date': datetime(2024, 1, 30),
@@ -429,9 +606,11 @@ def seed_invoices():
     print("🌱 Seeding invoices...")
     
     # Get the default ISP
-    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    default_isp = ISP.query.filter(
+        db.or_(ISP.name == 'Lumen', ISP.name == 'Default ISP')
+    ).first()
     if not default_isp:
-        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        print("❌ Error: Lumen ISP not found. Please seed ISPs first.")
         return
     
     # Get customers for foreign key relationships
@@ -616,14 +795,42 @@ def seed_payments():
     db.session.commit()
     print("✅ Payments seeded successfully!")
 
+
+def seed_transactions():
+    """Seed transactions from payments"""
+    print("🌱 Seeding transactions...")
+    payments = Payment.query.all()
+    created = 0
+    for payment in payments:
+        ref = payment.transaction_id or f'TXN-{payment.id:05d}'
+        existing = Transaction.query.filter_by(transaction_number=ref).first()
+        if not existing:
+            txn = Transaction(
+                transaction_number=ref,
+                transaction_type='payment',
+                transaction_amount=payment.amount,
+                reference_id=str(payment.invoice_id) if payment.invoice_id else None,
+                reference_type='invoice' if payment.invoice_id else 'payment',
+                customer_id=payment.customer_id,
+                payment_id=payment.id,
+                created_at=payment.payment_date or datetime.now(),
+            )
+            db.session.add(txn)
+            created += 1
+            print(f"  ✓ Created transaction: {ref}")
+    db.session.commit()
+    print(f"✅ Transactions seeded successfully! ({created} new)")
+
 def seed_mikrotik_devices():
     """Seed Mikrotik devices"""
     print("🌱 Seeding Mikrotik devices...")
     
     # Get the default ISP
-    default_isp = ISP.query.filter_by(name='Default ISP').first()
+    default_isp = ISP.query.filter(
+        db.or_(ISP.name == 'Lumen', ISP.name == 'Default ISP')
+    ).first()
     if not default_isp:
-        print("❌ Error: Default ISP not found. Please seed ISPs first.")
+        print("❌ Error: Lumen ISP not found. Please seed ISPs first.")
         return
     
     # Create network zones first
@@ -852,21 +1059,21 @@ def seed_system_settings():
     settings_data = [
         {
             'key': 'company_name',
-            'value': 'Infora WiFi',
+            'value': 'Lumen',
             'description': 'Company name for the billing system',
             'category': 'general',
             'is_public': True
         },
         {
             'key': 'company_email',
-            'value': 'support@infora.com',
+            'value': 'support@lumen.app',
             'description': 'Primary support email address',
             'category': 'contact',
             'is_public': True
         },
         {
             'key': 'company_phone',
-            'value': '+1 (555) 123-4567',
+            'value': '+254700000000',
             'description': 'Primary support phone number',
             'category': 'contact',
             'is_public': True
@@ -898,7 +1105,35 @@ def seed_system_settings():
             'description': 'Enable maintenance mode',
             'category': 'system',
             'is_public': False
-        }
+        },
+        {
+            'key': 'portal_tagline',
+            'value': 'Fast, reliable internet for home and business',
+            'description': 'Captive portal headline',
+            'category': 'portal',
+            'is_public': True
+        },
+        {
+            'key': 'portal_about',
+            'value': 'Lumen connects homes and businesses across Kenya with affordable broadband. Pay with M-Pesa and get online in seconds.',
+            'description': 'About text on captive portal',
+            'category': 'portal',
+            'is_public': True
+        },
+        {
+            'key': 'portal_support_phone',
+            'value': '+254700000000',
+            'description': 'Support phone shown on portal',
+            'category': 'portal',
+            'is_public': True
+        },
+        {
+            'key': 'portal_support_email',
+            'value': 'support@lumen.app',
+            'description': 'Support email shown on portal',
+            'category': 'portal',
+            'is_public': True
+        },
     ]
     
     for setting_data in settings_data:
@@ -916,7 +1151,9 @@ def seed_system_settings():
             db.session.add(setting)
             print(f"  ✓ Created setting: {setting_data['key']}")
         else:
-            print(f"  ℹ Setting already exists: {setting_data['key']}")
+            existing_setting.value = setting_data['value']
+            existing_setting.updated_at = datetime.now()
+            print(f"  ✓ Updated setting: {setting_data['key']}")
     
     db.session.commit()
     print("✅ System settings seeded successfully!")
@@ -985,6 +1222,399 @@ def seed_vouchers():
     db.session.commit()
     print("✅ Vouchers seeded successfully!")
 
+
+def seed_finance_data():
+    """Seed finance leads and operating expenses"""
+    print("🌱 Seeding finance data...")
+
+    default_isp = ISP.query.filter(
+        db.or_(ISP.name == 'Lumen', ISP.name == 'Default ISP')
+    ).first()
+    basic_plan = ServicePlan.query.filter_by(name='Basic 50Mbps').first()
+    premium_plan = ServicePlan.query.filter_by(name='Premium 100Mbps').first()
+
+    if not default_isp:
+        print("  ℹ Skipping finance seed — default ISP not found")
+        return
+
+    leads_data = [
+        {
+            'full_name': 'Grace Wanjiku',
+            'email': 'grace.wanjiku@email.com',
+            'phone': '+254711223344',
+            'address': 'Westlands, Nairobi',
+            'status': CustomerStatus.PENDING,
+            'join_date': datetime.now() - timedelta(days=3),
+            'balance': 0.00,
+            'package': 'Premium 100Mbps',
+            'usage_percentage': 0,
+            'device_count': 0,
+            'service_plan': premium_plan,
+        },
+        {
+            'full_name': 'Peter Otieno',
+            'email': 'peter.otieno@email.com',
+            'phone': '+254722334455',
+            'address': 'Kilimani, Nairobi',
+            'status': CustomerStatus.PENDING,
+            'join_date': datetime.now() - timedelta(days=10),
+            'balance': 0.00,
+            'package': 'Basic 50Mbps',
+            'usage_percentage': 0,
+            'device_count': 0,
+            'service_plan': basic_plan,
+        },
+        {
+            'full_name': 'Amina Hassan',
+            'email': 'amina.hassan@email.com',
+            'phone': '+254733445566',
+            'address': 'Parklands, Nairobi',
+            'status': CustomerStatus.PENDING,
+            'join_date': datetime.now() - timedelta(days=1),
+            'balance': 0.00,
+            'package': 'Basic 50Mbps',
+            'usage_percentage': 0,
+            'device_count': 0,
+            'service_plan': basic_plan,
+        },
+    ]
+
+    for lead_data in leads_data:
+        existing = Customer.query.filter_by(email=lead_data['email']).first()
+        if existing:
+            continue
+        customer = Customer(
+            full_name=lead_data['full_name'],
+            email=lead_data['email'],
+            phone=lead_data['phone'],
+            address=lead_data['address'],
+            status=lead_data['status'],
+            join_date=lead_data['join_date'],
+            balance=lead_data['balance'],
+            package=lead_data['package'],
+            usage_percentage=lead_data['usage_percentage'],
+            device_count=lead_data['device_count'],
+            service_plan_id=lead_data['service_plan'].id if lead_data['service_plan'] else None,
+            isp_id=default_isp.id,
+            created_at=lead_data['join_date'],
+            updated_at=datetime.now(),
+        )
+        db.session.add(customer)
+        print(f"  ✓ Created lead: {lead_data['full_name']}")
+
+    expenses_data = [
+        {'amount': 45000.00, 'category': 'operating_expense', 'days_ago': 5},
+        {'amount': 125000.00, 'category': 'bandwidth_expense', 'days_ago': 12},
+        {'amount': 28000.00, 'category': 'equipment_expense', 'days_ago': 20},
+        {'amount': 18500.00, 'category': 'operating_expense', 'days_ago': 2},
+        {'amount': 62000.00, 'category': 'staff_expense', 'days_ago': 28},
+    ]
+
+    for expense_data in expenses_data:
+        expense_date = datetime.now() - timedelta(days=expense_data['days_ago'])
+        existing = RevenueData.query.filter_by(
+            revenue_type=expense_data['category'],
+            revenue_date=expense_date,
+        ).first()
+        if existing:
+            continue
+        expense = RevenueData(
+            revenue_amount=expense_data['amount'],
+            revenue_type=expense_data['category'],
+            revenue_date=expense_date,
+            created_at=expense_date,
+            updated_at=expense_date,
+        )
+        db.session.add(expense)
+        print(f"  ✓ Created expense: {expense_data['category']} — KES {expense_data['amount']:,.0f}")
+
+    db.session.commit()
+    print("✅ Finance data seeded successfully!")
+
+
+def seed_kyc_data():
+    """Seed KYC statuses and verification documents"""
+    print("🌱 Seeding KYC data...")
+
+    customers = Customer.query.all()
+    if not customers:
+        print("  ℹ Skipping KYC seed — no customers found")
+        return
+
+    kyc_assignments = [
+        ('john.smith@email.com', KycStatus.VERIFIED, '12345678', 'verified'),
+        ('sarah.j@email.com', KycStatus.UNDER_REVIEW, '23456789', 'under_review'),
+        ('mike.w@email.com', KycStatus.REJECTED, '34567890', 'rejected'),
+        ('emily.d@email.com', KycStatus.VERIFIED, '45678901', 'verified'),
+        ('david.b@email.com', KycStatus.PENDING, None, 'pending'),
+    ]
+
+    document_templates = [
+        ('national_id', 'national_id_front.pdf', 'ID Front.pdf', 245000, 'approved'),
+        ('proof_of_address', 'utility_bill.pdf', 'Utility Bill.pdf', 180000, 'approved'),
+        ('selfie', 'selfie_photo.jpg', 'Selfie.jpg', 92000, 'pending'),
+    ]
+
+    for email, kyc_status, id_number, doc_status in kyc_assignments:
+        customer = Customer.query.filter_by(email=email).first()
+        if not customer:
+            continue
+
+        customer.id_number = id_number
+        customer.kyc_status = kyc_status
+        customer.kyc_notes = {
+            KycStatus.VERIFIED: 'All required documents approved',
+            KycStatus.UNDER_REVIEW: 'Awaiting selfie verification',
+            KycStatus.REJECTED: 'ID document expired — resubmit required',
+            KycStatus.PENDING: 'Customer has not submitted documents',
+        }.get(kyc_status)
+        if kyc_status == KycStatus.VERIFIED:
+            customer.kyc_verified_at = datetime.now() - timedelta(days=14)
+
+        existing_docs = CustomerDocument.query.filter_by(customer_id=customer.id).count()
+        if existing_docs:
+            continue
+
+        for index, (doc_type, file_name, original_name, file_size, verification_status) in enumerate(document_templates):
+            if kyc_status == KycStatus.PENDING and index > 0:
+                break
+            if kyc_status == KycStatus.REJECTED and doc_type == 'national_id':
+                verification_status = 'rejected'
+            if kyc_status == KycStatus.UNDER_REVIEW and doc_type == 'selfie':
+                verification_status = 'pending'
+            elif kyc_status in (KycStatus.VERIFIED, KycStatus.UNDER_REVIEW) and doc_type in ('national_id', 'proof_of_address'):
+                verification_status = 'approved'
+
+            document = CustomerDocument(
+                customer_id=customer.id,
+                document_type=doc_type,
+                file_name=file_name,
+                original_file_name=original_name,
+                file_size=file_size,
+                file_path=f'uploads/kyc/{customer.id}/{file_name}',
+                verification_status=verification_status,
+                upload_date=datetime.now() - timedelta(days=10 - index),
+                created_at=datetime.now() - timedelta(days=10 - index),
+                updated_at=datetime.now(),
+            )
+            db.session.add(document)
+
+        print(f"  ✓ Seeded KYC for {customer.full_name} ({kyc_status.value})")
+
+    db.session.commit()
+    print("✅ KYC data seeded successfully!")
+
+
+def seed_network_data():
+    """Seed network infrastructure: RADIUS, LDAP, SNMP, VPN, EAP"""
+    print("🌱 Seeding network configuration...")
+
+    if RadiusClient.query.first():
+        print("  ℹ Network data already exists, skipping")
+        return
+
+    radius_clients = [
+        RadiusClient(name='Main NAS', host='192.168.88.1', secret='radius_secret_123', nas_type='mikrotik', shortname='main-nas'),
+        RadiusClient(name='Branch NAS', host='192.168.89.1', secret='radius_secret_456', nas_type='mikrotik', shortname='branch-nas'),
+    ]
+    for client in radius_clients:
+        db.session.add(client)
+
+    ldap_servers = [
+        LDAPServer(
+            name='Corporate LDAP',
+            host='ldap.lumen.local',
+            port=389,
+            use_tls=True,
+            bind_dn='cn=admin,dc=lumen,dc=local',
+            bind_password='ldap_bind_pass',
+            base_dn='dc=lumen,dc=local',
+        ),
+    ]
+    for server in ldap_servers:
+        db.session.add(server)
+
+    snmp_devices = [
+        SnmpDevice(name='Core Switch', host='192.168.88.2', snmp_version='2c', community='public'),
+        SnmpDevice(name='Edge Router', host='192.168.88.1', snmp_version='2c', community='public'),
+    ]
+    for device in snmp_devices:
+        db.session.add(device)
+
+    vpn_config = VPNConfig(
+        name='Staff WireGuard',
+        vpn_type='wireguard',
+        config_blob='[Interface]\nAddress = 10.8.0.1/24',
+        server_endpoint='vpn.lumen.app',
+        server_port=51820,
+        allowed_ips='10.8.0.0/24',
+        dns_servers='8.8.8.8,8.8.4.4',
+        server_public_key='demo_server_public_key',
+        server_private_key='demo_server_private_key',
+    )
+    db.session.add(vpn_config)
+    db.session.flush()
+
+    db.session.add(VPNClient(
+        name='Field Tech Laptop',
+        vpn_config_id=vpn_config.id,
+        client_ip='10.8.0.2',
+        config_blob='[Interface]\nAddress = 10.8.0.2/32',
+        client_public_key='demo_client_public_key',
+        client_private_key='demo_client_private_key',
+    ))
+
+    eap_profiles = [
+        EapProfile(name='Enterprise WiFi', eap_method='PEAP', phase2_method='MSCHAPv2', notes='Default office SSID auth'),
+        EapProfile(name='Guest Portal', eap_method='EAP-TTLS', phase2_method='PAP', notes='Guest network fallback'),
+    ]
+    for profile in eap_profiles:
+        db.session.add(profile)
+
+    default_isp = ISP.query.filter(
+        db.or_(ISP.name == 'Lumen', ISP.name == 'Default ISP')
+    ).first()
+    customers = Customer.query.limit(3).all()
+    devices = MikrotikDevice.query.limit(2).all()
+
+    if default_isp and customers and devices:
+        for index, customer in enumerate(customers):
+            session = RadiusSession(
+                session_id=f'sess-demo-{index + 1}',
+                username=customer.email.split('@')[0],
+                ip_address=f'10.10.0.{10 + index}',
+                mac_address=f'AA:BB:CC:DD:EE:0{index}',
+                session_start=datetime.utcnow() - timedelta(hours=2 - index),
+                bytes_in=1024 * 1024 * (50 + index * 20),
+                bytes_out=1024 * 1024 * (10 + index * 5),
+                is_active=index < 2,
+                isp_id=default_isp.id,
+                customer_id=customer.id,
+                mikrotik_device_id=devices[index % len(devices)].id,
+            )
+            db.session.add(session)
+
+    db.session.commit()
+    print("✅ Network data seeded successfully!")
+
+
+def apply_lumen_branding():
+    """Normalize legacy Infora naming in ISP and portal settings."""
+    from services.brand_constants import (
+        BRAND_COMPANY,
+        BRAND_NAME,
+        BRAND_PORTAL_ABOUT,
+        BRAND_PORTAL_TAGLINE,
+        BRAND_SUPPORT_EMAIL,
+        BRAND_WEBSITE,
+        sanitize_brand_text,
+    )
+
+    print("🎨 Applying Lumen branding across database records...")
+
+    for isp in ISP.query.all():
+        isp.company_name = sanitize_brand_text(isp.company_name, BRAND_COMPANY)
+        if isp.name in ('Default ISP', 'Infora WiFi', 'Infora', 'Default Company'):
+            isp.name = BRAND_NAME
+        if isp.email and 'infora' in isp.email.lower():
+            isp.email = isp.email.lower().replace('@infora.com', '@lumen.app')
+        if isp.website and 'infora' in isp.website.lower():
+            isp.website = BRAND_WEBSITE
+        if isp.logo_url and 'infora' in isp.logo_url.lower():
+            isp.logo_url = f'{BRAND_WEBSITE}/logo.png'
+
+    portal_defaults = {
+        'company_name': BRAND_COMPANY,
+        'portal_tagline': BRAND_PORTAL_TAGLINE,
+        'portal_about': BRAND_PORTAL_ABOUT,
+        'portal_support_email': BRAND_SUPPORT_EMAIL,
+    }
+
+    for key, value in portal_defaults.items():
+        setting = SystemSetting.query.filter_by(key=key).first()
+        if setting:
+            setting.value = value
+            setting.updated_at = datetime.now()
+        else:
+            db.session.add(SystemSetting(
+                key=key,
+                value=value,
+                description=f'Lumen branding — {key}',
+                category='portal' if key.startswith('portal_') else 'general',
+                is_public=True,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+            ))
+
+    for setting in SystemSetting.query.all():
+        if setting.value and isinstance(setting.value, str) and 'infora' in setting.value.lower():
+            setting.value = sanitize_brand_text(setting.value, setting.value)
+            setting.updated_at = datetime.now()
+
+    db.session.commit()
+    print("✅ Lumen branding applied!")
+
+
+def seed_website_settings():
+    """Public settings consumed by the Lumen marketing website."""
+    import json
+
+    print("🌱 Seeding website settings...")
+    changelog = json.dumps([
+        {
+            'version': 'v2.4.0',
+            'date': 'Jun 2026',
+            'tag': 'Latest',
+            'title': 'Customer KYC & verification workflow',
+            'items': [
+                'Document upload and admin review for subscriber onboarding',
+                'KYC status badges across customer list and detail views',
+                'Automated service hold until verification is complete',
+            ],
+        },
+        {
+            'version': 'v2.3.0',
+            'date': 'May 2026',
+            'tag': 'Feature',
+            'title': 'M-Pesa STK Push & payment reconciliation',
+            'items': [
+                'Real-time M-Pesa payment callbacks with instant activation',
+                'Payment status tracking and failed transaction retry',
+                'Unified payments ledger across hotspot and PPPoE',
+            ],
+        },
+    ])
+
+    website_settings = [
+        ('website_sales_email', 'sales@lumen.app', 'Sales email for marketing site', 'website'),
+        ('website_support_email', 'support@lumen.app', 'Support email for marketing site', 'website'),
+        ('website_whatsapp', '+254700000000', 'WhatsApp number for marketing site', 'website'),
+        ('website_trial_days', '14', 'Free trial length in days', 'website'),
+        ('website_tagline', 'Connect. Bill. Grow.', 'Marketing site hero tagline', 'website'),
+        ('website_changelog', changelog, 'Public product changelog JSON', 'website'),
+    ]
+
+    for key, value, description, category in website_settings:
+        existing = SystemSetting.query.filter_by(key=key).first()
+        if existing:
+            existing.value = value
+            existing.is_public = True
+            existing.updated_at = datetime.now()
+        else:
+            db.session.add(SystemSetting(
+                key=key,
+                value=value,
+                description=description,
+                category=category,
+                is_public=True,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+            ))
+
+    db.session.commit()
+    print("✅ Website settings seeded successfully!")
+
+
 def main():
     """Main seeding function"""
     print("🚀 Starting database seeding...")
@@ -1005,22 +1635,29 @@ def main():
             seed_users()
             seed_isps()
             seed_service_plans()
+            seed_hotspot_plans()
             seed_customers()
             seed_invoices()
             seed_payments()
+            seed_transactions()
             seed_mikrotik_devices()
             seed_tickets()
             seed_vouchers()
+            seed_finance_data()
+            seed_kyc_data()
+            seed_network_data()
             seed_system_settings()
+            apply_lumen_branding()
+            seed_website_settings()
             
             print("=" * 50)
             print("✅ Database seeding completed successfully!")
             print("\n📋 Login Credentials:")
-            print("  Admin: admin@infora.com / admin123")
-            print("  Super Admin: superadmin@infora.com / superadmin123")
-            print("  Support: support@infora.com / support123")
-            print("  Billing: billing@infora.com / billing123")
-            print("  Technical: tech@infora.com / tech123")
+            print("  Admin: admin@lumen.app / admin123")
+            print("  Super Admin: superadmin@lumen.app / superadmin123")
+            print("  Support: support@lumen.app / support123")
+            print("  Billing: billing@lumen.app / billing123")
+            print("  Technical: tech@lumen.app / tech123")
             
         except Exception as e:
             print(f"❌ Error during seeding: {str(e)}")
@@ -1028,9 +1665,18 @@ def main():
             raise
 
 if __name__ == "__main__":
+    import sys
+
     try:
-        main()
+        if len(sys.argv) > 1 and sys.argv[1] == '--brand-only':
+            app = create_app()
+            with app.app_context():
+                apply_lumen_branding()
+                print("Done. Restart Flask if it is running.")
+        else:
+            main()
     except Exception as e:
         print(f"❌ Error running seeder: {str(e)}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)

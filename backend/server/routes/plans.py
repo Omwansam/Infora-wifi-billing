@@ -11,15 +11,11 @@ def serialize_plan(plan):
     try:
         # Handle features - convert object to array if needed
         features = plan.features if plan.features else []
-        print(f"DEBUG: Plan {plan.name} - Raw features: {features}")
-        print(f"DEBUG: Plan {plan.name} - Features type: {type(features)}")
         
         if isinstance(features, dict):
-            print(f"DEBUG: Plan {plan.name} - Converting dict to array")
             # Convert dict features to array format for frontend with specific naming for icons
             features_list = []
             for key, value in features.items():
-                print(f"DEBUG: Processing {key} = {value}")
                 if isinstance(value, bool):
                     if value:
                         if key == 'static_ip':
@@ -55,14 +51,17 @@ def serialize_plan(plan):
                 else:
                     features_list.append(f"{key.replace('_', ' ').title()}: {value}")
             features = features_list
-            print(f"DEBUG: Plan {plan.name} - Converted features: {features}")
-        else:
-            print(f"DEBUG: Plan {plan.name} - Features is not a dict, type: {type(features)}")
         
         result = {
             'id': plan.id,
             'name': plan.name,
             'speed': plan.speed,
+            'description': getattr(plan, 'description', None),
+            'bandwidth_limit': getattr(plan, 'bandwidth_limit', None),
+            'data_limit': getattr(plan, 'data_limit', None),
+            'static_ip': getattr(plan, 'static_ip', None),
+            'session_timeout': getattr(plan, 'session_timeout', None),
+            'idle_timeout': getattr(plan, 'idle_timeout', None),
             'price': float(plan.price) if plan.price else 0.0,
             'features': features,
             'popular': plan.popular,
@@ -71,10 +70,8 @@ def serialize_plan(plan):
             'updated_at': plan.updated_at.isoformat() if plan.updated_at else None,
             'customers_count': len(plan.customers) if hasattr(plan, 'customers') else 0
         }
-        print(f"DEBUG: Plan {plan.name} - Final features: {result['features']}")
         return result
     except Exception as e:
-        print(f"Error serializing plan {plan.id}: {e}")
         return {
             'id': plan.id,
             'name': plan.name,
@@ -251,14 +248,11 @@ def update_plan(plan_id):
 def delete_plan(plan_id):
     """Delete service plan"""
     try:
-        print(f"DELETE /api/plans/{plan_id} - Request received")
         
         plan = ServicePlan.query.get_or_404(plan_id)
-        print(f"Found plan: {plan.name}")
         
         # Check if plan has related customers
         customer_count = len(plan.customers) if hasattr(plan, 'customers') else 0
-        print(f"Plan has {customer_count} customers")
         
         if customer_count > 0:
             return jsonify({'error': 'Cannot delete plan with existing customers'}), 400
@@ -266,13 +260,11 @@ def delete_plan(plan_id):
         try:
             db.session.delete(plan)
             db.session.commit()
-            print(f"Plan {plan.name} deleted successfully")
             
             return jsonify({'message': 'Service plan deleted successfully'}), 200
             
         except Exception as delete_error:
             db.session.rollback()
-            print(f"Delete error: {delete_error}")
             
             if "foreign key constraint" in str(delete_error).lower():
                 return jsonify({'error': 'Cannot delete plan with related data (customers, etc.)'}), 400
@@ -281,7 +273,6 @@ def delete_plan(plan_id):
         
     except Exception as e:
         db.session.rollback()
-        print(f"Delete plan error: {type(e).__name__}: {e}")
         return jsonify({'error': f'Failed to delete plan: {str(e)}'}), 500
 
 @plans_bp.route('/<int:plan_id>/toggle-active', methods=['PUT'])

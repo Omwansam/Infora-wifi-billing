@@ -1,357 +1,248 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { MessageSquare, Plus, Edit, Trash2, Search, Send, Users, CheckCircle, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Plus, Search, Send, Users, MessageSquare, X } from 'lucide-react';
+import toast from 'react-hot-toast';
+import CommunicationLayout from './CommunicationLayout';
+import CampaignStatusBadge from './CampaignStatusBadge';
 
-const SmsManagementPage = () => {
-  const [smsCampaigns, setSmsCampaigns] = useState([
-    {
-      id: 1,
-      name: 'Payment Reminder',
-      message: 'Dear customer, your payment of $50 is due on 15th Jan.',
-      status: 'Active',
-      recipients: 150,
-      sent: 145,
-      delivered: 140,
-      failed: 5,
-      scheduledDate: '2024-01-15 10:00',
-      category: 'Billing'
-    },
-    {
-      id: 2,
-      name: 'Welcome Message',
-      message: 'Welcome to Infora WiFi! Your account has been activated.',
-      status: 'Completed',
-      recipients: 25,
-      sent: 25,
-      delivered: 23,
-      failed: 2,
-      scheduledDate: '2024-01-12 09:00',
-      category: 'Welcome'
-    }
-  ]);
+const INITIAL_CAMPAIGNS = [
+  {
+    id: 1,
+    name: 'Payment Reminder',
+    message: 'Dear customer, your payment of KES 2,999 is due on the 15th.',
+    status: 'Active',
+    recipients: 150,
+    sent: 145,
+    delivered: 140,
+    failed: 5,
+    scheduledDate: '2024-01-15 10:00',
+    category: 'Billing',
+  },
+  {
+    id: 2,
+    name: 'Welcome Message',
+    message: 'Welcome to Lumen! Your account has been activated.',
+    status: 'Completed',
+    recipients: 25,
+    sent: 25,
+    delivered: 23,
+    failed: 2,
+    scheduledDate: '2024-01-12 09:00',
+    category: 'Welcome',
+  },
+];
 
+const STATUS_TABS = [
+  { value: 'all', label: 'All' },
+  { value: 'Active', label: 'Active' },
+  { value: 'Completed', label: 'Completed' },
+  { value: 'Scheduled', label: 'Scheduled' },
+];
+
+export default function SmsManagementPage() {
+  const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
-  const getStatusBadge = (status) => {
-    const config = {
-      Active: { color: 'bg-green-100 text-green-800', icon: CheckCircle },
-      Completed: { color: 'bg-blue-100 text-blue-800', icon: CheckCircle },
-      Scheduled: { color: 'bg-yellow-100 text-yellow-800' }
-    };
-    const configItem = config[status] || config.Active;
-    const Icon = configItem.icon;
-    return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${configItem.color}`}>
-        {Icon && <Icon className="h-3 w-3 mr-1" />}
-        {status}
-      </span>
-    );
+  const filtered = useMemo(
+    () =>
+      campaigns.filter((campaign) => {
+        const matchesSearch = campaign.name.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesStatus = statusFilter === 'all' || campaign.status === statusFilter;
+        return matchesSearch && matchesStatus;
+      }),
+    [campaigns, searchTerm, statusFilter]
+  );
+
+  const stats = useMemo(
+    () => ({
+      total: campaigns.length,
+      active: campaigns.filter((c) => c.status === 'Active').length,
+      recipients: campaigns.reduce((sum, c) => sum + c.recipients, 0),
+    }),
+    [campaigns]
+  );
+
+  const handleCreate = (e) => {
+    e.preventDefault();
+    toast.success('SMS campaign created');
+    setShowForm(false);
   };
 
-  const filteredCampaigns = smsCampaigns.filter(campaign => {
-    const matchesSearch = campaign.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || campaign.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  const totalCampaigns = smsCampaigns.length;
-  const activeCampaigns = smsCampaigns.filter(c => c.status === 'Active').length;
-  const totalRecipients = smsCampaigns.reduce((sum, c) => sum + c.recipients, 0);
-
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
+    <CommunicationLayout
+      title="SMS"
+      subtitle="Transactional and bulk SMS campaigns"
+      action={
+        <button
+          onClick={() => setShowForm(true)}
+          className="inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 self-start"
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <MessageSquare className="h-6 w-6 text-blue-600" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">SMS Management</h1>
-                <p className="text-gray-600 mt-1">Manage SMS campaigns and messaging</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              New SMS Campaign
-            </button>
-          </div>
-        </motion.div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <Plus className="h-4 w-4 mr-2" />
+          New SMS Campaign
+        </button>
+      }
+    >
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {[
+          { title: 'Campaigns', value: stats.total, icon: MessageSquare, accent: 'from-emerald-500 to-teal-600' },
+          { title: 'Active', value: stats.active, icon: Send, accent: 'from-cyan-500 to-blue-600' },
+          { title: 'Recipients', value: stats.recipients, icon: Users, accent: 'from-violet-500 to-purple-600' },
+        ].map((stat, index) => (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            key={stat.title}
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
+            transition={{ delay: index * 0.05 }}
+            className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm"
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Total Campaigns</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{totalCampaigns}</p>
+                <p className="text-sm text-slate-500">{stat.title}</p>
+                <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
               </div>
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <MessageSquare className="h-6 w-6 text-blue-600" />
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Active Campaigns</p>
-                <p className="text-2xl font-bold text-green-600 mt-1">{activeCampaigns}</p>
-              </div>
-              <div className="p-3 bg-green-100 rounded-lg">
-                <Send className="h-6 w-6 text-green-600" />
+              <div className={`p-2.5 rounded-xl bg-gradient-to-br ${stat.accent} text-white`}>
+                <stat.icon className="h-5 w-5" />
               </div>
             </div>
           </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Recipients</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{totalRecipients}</p>
-              </div>
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <Users className="h-6 w-6 text-purple-600" />
-              </div>
-            </div>
-          </motion.div>
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6"
-        >
-          <div className="flex flex-col lg:flex-row gap-4">
-            <div className="flex-1">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search campaigns by name..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="all">All Status</option>
-              <option value="Active">Active</option>
-              <option value="Completed">Completed</option>
-              <option value="Scheduled">Scheduled</option>
-            </select>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"
-        >
-          {filteredCampaigns.length === 0 ? (
-            <div className="p-12 text-center">
-              <div className="mx-auto w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                <MessageSquare className="h-12 w-12 text-gray-400" />
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No SMS campaigns found</h3>
-              <p className="text-gray-500 mb-6">
-                {smsCampaigns.length === 0 
-                  ? "You haven't created any SMS campaigns yet. Get started by creating your first campaign."
-                  : "No campaigns match your current filters."
-                }
-              </p>
-              <button 
-                onClick={() => setShowAddModal(true)}
-                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                New SMS Campaign
-              </button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Campaign
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Recipients
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Delivery Rate
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Scheduled
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredCampaigns.map((campaign) => (
-                    <tr key={campaign.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                            <MessageSquare className="h-5 w-5 text-blue-600" />
-                          </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{campaign.name}</div>
-                            <div className="text-sm text-gray-500 max-w-xs truncate">{campaign.message}</div>
-                            <div className="text-xs text-gray-400">{campaign.category}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(campaign.status)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm">
-                          <div className="font-medium text-gray-900">{campaign.recipients}</div>
-                          <div className="text-gray-500">Sent: {campaign.sent}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm">
-                          <div className="font-medium text-green-600">
-                            {campaign.sent > 0 ? Math.round((campaign.delivered / campaign.sent) * 100) : 0}%
-                          </div>
-                          <div className="text-gray-500">
-                            {campaign.delivered} delivered, {campaign.failed} failed
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {campaign.scheduledDate}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex items-center space-x-2">
-                          <button className="text-green-600 hover:text-green-900">
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          <button className="text-red-600 hover:text-red-900">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </motion.div>
+        ))}
       </div>
 
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900">New SMS Campaign</h2>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search SMS campaigns..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {STATUS_TABS.map((tab) => (
               <button
-                onClick={() => setShowAddModal(false)}
-                className="text-gray-400 hover:text-gray-600"
+                key={tab.value}
+                onClick={() => setStatusFilter(tab.value)}
+                className={`px-3.5 py-2 rounded-full text-sm font-medium ${
+                  statusFilter === tab.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
               >
-                <X className="h-6 w-6" />
+                {tab.label}
               </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Campaign Name</label>
-                <input
-                  type="text"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter campaign name"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Message</label>
-                <textarea
-                  rows={4}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter your SMS message"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                  <option value="">Select category</option>
-                  <option value="Billing">Billing</option>
-                  <option value="Welcome">Welcome</option>
-                  <option value="Maintenance">Maintenance</option>
-                  <option value="Promotional">Promotional</option>
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Schedule Date</label>
-                <input
-                  type="datetime-local"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
-            
-            <div className="flex justify-end space-x-3 mt-6">
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                Create Campaign
-              </button>
-            </div>
-          </motion.div>
+            ))}
+          </div>
         </div>
-      )}
-    </div>
-  );
-};
+      </div>
 
-export default SmsManagementPage;
+      <div className="space-y-4">
+        {filtered.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-2xl border border-slate-200">
+            <MessageSquare className="h-12 w-12 text-slate-300 mx-auto" />
+            <h3 className="mt-4 text-lg font-semibold text-slate-900">No SMS campaigns</h3>
+            <button onClick={() => setShowForm(true)} className="mt-4 inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700">
+              <Plus className="h-4 w-4 mr-2" />
+              Create campaign
+            </button>
+          </div>
+        ) : (
+          filtered.map((campaign, index) => {
+            const deliveryRate = campaign.sent > 0 ? Math.round((campaign.delivered / campaign.sent) * 100) : 0;
+            return (
+              <motion.div
+                key={campaign.id}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.04 }}
+                className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow"
+              >
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                  <div className="flex gap-4 min-w-0">
+                    <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 shrink-0">
+                      <MessageSquare className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-semibold text-slate-900">{campaign.name}</h3>
+                        <CampaignStatusBadge status={campaign.status} />
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                          {campaign.category}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-600 mt-2 line-clamp-2">{campaign.message}</p>
+                      <p className="text-xs text-slate-400 mt-2">Scheduled {campaign.scheduledDate}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 lg:gap-6 shrink-0">
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-slate-900">{campaign.recipients}</p>
+                      <p className="text-xs text-slate-500">Recipients</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-emerald-600">{deliveryRate}%</p>
+                      <p className="text-xs text-slate-500">Delivered</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-rose-600">{campaign.failed}</p>
+                      <p className="text-xs text-slate-500">Failed</p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })
+        )}
+      </div>
+
+      <AnimatePresence>
+        {showForm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setShowForm(false)}
+          >
+            <motion.form
+              initial={{ scale: 0.96 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.96 }}
+              onSubmit={handleCreate}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-slate-900">New SMS Campaign</h2>
+                <button type="button" onClick={() => setShowForm(false)} className="p-2 rounded-lg hover:bg-slate-100">
+                  <X className="h-5 w-5 text-slate-500" />
+                </button>
+              </div>
+              <div className="space-y-4">
+                <input required placeholder="Campaign name" className="w-full px-3 py-2.5 border border-slate-200 rounded-xl" />
+                <textarea required rows={4} placeholder="SMS message..." className="w-full px-3 py-2.5 border border-slate-200 rounded-xl" />
+                <select className="w-full px-3 py-2.5 border border-slate-200 rounded-xl">
+                  <option>Billing</option>
+                  <option>Welcome</option>
+                  <option>Maintenance</option>
+                  <option>Promotional</option>
+                </select>
+                <input type="datetime-local" className="w-full px-3 py-2.5 border border-slate-200 rounded-xl" />
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button type="button" onClick={() => setShowForm(false)} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-medium">
+                  Cancel
+                </button>
+                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700">
+                  Create Campaign
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </CommunicationLayout>
+  );
+}

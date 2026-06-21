@@ -17,6 +17,7 @@ pysnmp = "*"
 cryptography = "*"
 netaddr = "*"
 paramiko = "*"
+psycopg2-binary = "*"
 
 [dev-packages]
 

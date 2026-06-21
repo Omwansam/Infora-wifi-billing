@@ -14,7 +14,6 @@ try:
     PYRAD_AVAILABLE = True
 except ImportError:
     PYRAD_AVAILABLE = False
-    print("Warning: pyrad module not available. RADIUS functionality will be limited.")
 
 radius_bp = Blueprint('radius', __name__, url_prefix='/api/radius')
 

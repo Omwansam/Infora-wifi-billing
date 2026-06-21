@@ -16,7 +16,6 @@ try:
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
-    print("Warning: cryptography module not available. VPN functionality will be limited.")
 
 vpn_bp = Blueprint('vpn', __name__, url_prefix='/api/vpn')
 

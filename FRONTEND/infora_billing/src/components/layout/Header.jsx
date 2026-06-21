@@ -17,6 +17,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { BRAND } from '../../lib/brand';
 import { cn } from '../../lib/utils';
 
 const Header = () => {
@@ -138,7 +139,7 @@ const Header = () => {
                     {user ? `${user.first_name} ${user.last_name}` : 'Admin User'}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {user?.email || 'admin@infora.com'}
+                    {user?.email || BRAND.adminEmail}
                   </p>
                 </div>
                 <ChevronDown className={cn(
@@ -162,7 +163,7 @@ const Header = () => {
                         {user ? `${user.first_name} ${user.last_name}` : 'Admin User'}
                       </p>
                       <p className="text-sm text-gray-500">
-                        {user?.email || 'admin@infora.com'}
+                        {user?.email || BRAND.adminEmail}
                       </p>
                       <p className="text-xs text-gray-400 mt-1">
                         {user?.role || 'admin'}
@@ -254,7 +255,7 @@ const Header = () => {
                      <div className="p-3 border-t border-gray-100 bg-gray-50 rounded-b-xl">
                        <div className="text-center">
                          <p className="text-xs text-gray-500">
-                           Infora WiFi Billing System
+                           {BRAND.fullName}
                          </p>
                          <p className="text-xs text-gray-400 mt-1">
                            Version 1.0.0

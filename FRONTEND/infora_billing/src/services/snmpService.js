@@ -234,7 +234,7 @@ class SNMPService {
   // SNMP Test Connection
   async testSNMPConnection(token, deviceId) {
     try {
-      const response = await fetch(`${this.baseURL}/${deviceId}/test`, {
+      const response = await fetch(`${API_ENDPOINTS.SNMP_TEST}/${deviceId}`, {
         method: 'POST',
         headers: getAuthHeaders(token),
       });

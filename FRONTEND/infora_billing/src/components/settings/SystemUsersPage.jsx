@@ -4,9 +4,9 @@ import { Users, Plus, Edit, Trash2, Shield, UserCheck } from 'lucide-react';
 
 const SystemUsersPage = () => {
   const [users] = useState([
-    { id: 1, name: 'Admin User', email: 'admin@infora.com', role: 'Admin', status: 'Active', lastLogin: '2024-01-15' },
-    { id: 2, name: 'John Doe', email: 'john@infora.com', role: 'Manager', status: 'Active', lastLogin: '2024-01-14' },
-    { id: 3, name: 'Jane Smith', email: 'jane@infora.com', role: 'Support', status: 'Inactive', lastLogin: '2024-01-10' }
+    { id: 1, name: 'Admin User', email: 'admin@lumen.app', role: 'Admin', status: 'Active', lastLogin: '2024-01-15' },
+    { id: 2, name: 'John Doe', email: 'john@lumen.app', role: 'Manager', status: 'Active', lastLogin: '2024-01-14' },
+    { id: 3, name: 'Jane Smith', email: 'jane@lumen.app', role: 'Support', status: 'Inactive', lastLogin: '2024-01-10' }
   ]);
 
   const getRoleBadge = (role) => {

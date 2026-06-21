@@ -11,7 +11,6 @@ try:
     LDAP3_AVAILABLE = True
 except ImportError:
     LDAP3_AVAILABLE = False
-    print("Warning: ldap3 module not available. LDAP functionality will be limited.")
 
 ldap_bp = Blueprint('ldap', __name__, url_prefix='/api/ldap')
 

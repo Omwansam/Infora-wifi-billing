@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Search,
@@ -16,18 +16,27 @@ import {
   Reply,
   Star
 } from 'lucide-react';
-import { tickets } from '../../data/mockData';
+import { ticketService } from '../../services/ticketService';
 import { formatDate } from '../../lib/utils';
 
 export default function TicketsPage() {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
 
+  useEffect(() => {
+    ticketService.getTickets({ per_page: 100 })
+      .then((data) => setTickets(data.tickets || []))
+      .catch(() => setTickets([]))
+      .finally(() => setLoading(false));
+  }, []);
+
   const filteredTickets = tickets.filter(ticket => {
-    const matchesSearch = ticket.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         ticket.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         ticket.id.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (ticket.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         (ticket.subject || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         String(ticket.id || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
     const matchesPriority = priorityFilter === 'all' || ticket.priority === priorityFilter;
     return matchesSearch && matchesStatus && matchesPriority;

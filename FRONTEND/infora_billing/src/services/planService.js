@@ -1,14 +1,10 @@
-import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { API_ENDPOINTS } from '../config/api';
 import { authenticatedApiCall } from '../utils/api';
-
-// Helper function to get auth token
-const getToken = () => {
-  return localStorage.getItem('token');
-};
+import { getAccessToken } from '../utils/authToken';
 
 // Get all plans with pagination and filtering
 export const getPlans = async (params = {}) => {
-  const token = getToken();
+  const token = getAccessToken();
   const queryParams = new URLSearchParams();
   
   if (params.page) queryParams.append('page', params.page);
@@ -26,13 +22,13 @@ export const getPlans = async (params = {}) => {
 
 // Get specific plan by ID
 export const getPlan = async (planId) => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/${planId}`, token, { method: 'GET' });
 };
 
 // Create new plan
 export const createPlan = async (planData) => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(API_ENDPOINTS.PLANS, token, { 
     method: 'POST', 
     body: JSON.stringify(planData) 
@@ -41,7 +37,7 @@ export const createPlan = async (planData) => {
 
 // Update plan
 export const updatePlan = async (planId, planData) => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/${planId}`, token, { 
     method: 'PUT', 
     body: JSON.stringify(planData) 
@@ -50,43 +46,43 @@ export const updatePlan = async (planId, planData) => {
 
 // Delete plan
 export const deletePlan = async (planId) => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/${planId}`, token, { method: 'DELETE' });
 };
 
 // Toggle plan active status
 export const togglePlanActive = async (planId) => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/${planId}/toggle-active`, token, { method: 'PUT' });
 };
 
 // Toggle plan popular status
 export const togglePlanPopular = async (planId) => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/${planId}/toggle-popular`, token, { method: 'PUT' });
 };
 
 // Get active plans only
 export const getActivePlans = async () => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/active`, token, { method: 'GET' });
 };
 
 // Get popular plans only
 export const getPopularPlans = async () => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/popular`, token, { method: 'GET' });
 };
 
 // Get plan statistics
 export const getPlanStats = async () => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/stats`, token, { method: 'GET' });
 };
 
 // Get customers using a specific plan
 export const getPlanCustomers = async (planId, params = {}) => {
-  const token = getToken();
+  const token = getAccessToken();
   const queryParams = new URLSearchParams();
   
   if (params.page) queryParams.append('page', params.page);
@@ -101,7 +97,7 @@ export const getPlanCustomers = async (planId, params = {}) => {
 
 // Bulk update plans
 export const bulkUpdatePlans = async (planIds, updates) => {
-  const token = getToken();
+  const token = getAccessToken();
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/bulk-update`, token, { 
     method: 'PUT', 
     body: JSON.stringify({

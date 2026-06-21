@@ -19,10 +19,27 @@ export const apiCall = async (endpoint, options = {}) => {
     console.log('Response status:', response.status);
     console.log('Response headers:', response.headers);
 
-    const data = await response.json();
+    const contentType = response.headers.get('content-type') || '';
+    let data = null;
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      const text = await response.text();
+      if (!response.ok) {
+        const hint = response.status === 404
+          ? ' API endpoint not found — restart the backend server after pulling latest code.'
+          : '';
+        throw new Error(`Server returned ${response.status}.${hint}`);
+      }
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error('Server returned an unexpected response format.');
+      }
+    }
 
     if (!response.ok) {
-      throw new Error(data.error || `HTTP error! status: ${response.status}`);
+      throw new Error(data?.message || data?.error || `HTTP error! status: ${response.status}`);
     }
 
     return { success: true, data };

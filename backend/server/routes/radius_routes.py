@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
+from auth_utils import get_current_user
 from models import User, ISP, RadiusSession
 from datetime import datetime, timedelta
 
@@ -32,7 +33,6 @@ def serialize_radius_session(session):
             'updated_at': session.updated_at.isoformat() if session.updated_at else None
         }
     except Exception as e:
-        print(f"Error serializing radius session {session.id}: {e}")
         return {
             'id': session.id,
             'session_id': session.session_id,
@@ -46,7 +46,7 @@ def serialize_radius_session(session):
 def get_radius_sessions():
     """Get RADIUS sessions with pagination and filtering"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -108,7 +108,7 @@ def get_radius_sessions():
 def get_radius_session(session_id):
     """Get specific RADIUS session"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -135,7 +135,7 @@ def get_radius_session(session_id):
 def get_active_sessions():
     """Get active RADIUS sessions"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -176,7 +176,7 @@ def get_active_sessions():
 def terminate_session(session_id):
     """Terminate an active RADIUS session"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -219,7 +219,7 @@ def terminate_session(session_id):
 def get_radius_stats():
     """Get RADIUS statistics"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         

@@ -12,7 +12,6 @@ try:
     PYSNMP_AVAILABLE = True
 except ImportError:
     PYSNMP_AVAILABLE = False
-    print("Warning: pysnmp module not available. SNMP functionality will be limited.")
 
 snmp_bp = Blueprint('snmp', __name__, url_prefix='/api/snmp')
 

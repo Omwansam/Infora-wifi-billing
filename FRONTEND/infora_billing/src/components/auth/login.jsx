@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Mail, Lock, Server } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import ConnectionTest from './ConnectionTest';
+import LumenLogo from '../brand/LumenLogo';
+import { BRAND } from '../../lib/brand';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -54,14 +56,19 @@ export default function LoginPage() {
   };
 
   const handleDemoLogin = () => {
-    setEmail('admin@infora.com');
+    setEmail(BRAND.adminEmail);
     setPassword('admin123');
     toast.success('Demo credentials loaded! Click Sign In to login.');
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
-      <div className="max-w-md w-full">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -top-24 -left-24 h-96 w-96 rounded-full bg-amber-500/20 blur-3xl" />
+        <div className="absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-violet-600/25 blur-3xl" />
+        <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
+      </div>
+      <div className="max-w-md w-full relative z-10">
         {/* Logo and Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -69,13 +76,11 @@ export default function LoginPage() {
           transition={{ duration: 0.5 }}
           className="text-center mb-8"
         >
-          <div className="flex justify-center mb-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-purple-600 shadow-lg">
-              <Server className="h-8 w-8 text-white" />
-            </div>
+          <div className="flex justify-center mb-5">
+            <LumenLogo size="xl" showText subtitle={BRAND.tagline} orientation="vertical" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h1>
-          <p className="text-gray-600">Sign in to your Infora WiFi Billing account</p>
+          <h1 className="text-3xl font-bold text-white mb-2">Welcome back</h1>
+          <p className="text-slate-400">Sign in to your {BRAND.fullName} account</p>
         </motion.div>
 
         {/* Login Form */}
@@ -167,7 +172,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-amber-500 via-orange-500 to-violet-600 hover:from-amber-600 hover:to-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
             >
               {loading ? (
                 <div className="flex items-center">
@@ -204,10 +209,10 @@ export default function LoginPage() {
           </div>
 
           {/* Test Credentials Info */}
-          <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-            <p className="text-xs text-blue-700">
-              <strong>Test Credentials:</strong><br />
-              Email: admin@infora.com<br />
+          <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+            <p className="text-xs text-amber-100/90">
+              <strong>Demo credentials:</strong><br />
+              Email: {BRAND.adminEmail}<br />
               Password: admin123
             </p>
           </div>
@@ -225,9 +230,9 @@ export default function LoginPage() {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="text-center mt-6"
         >
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-slate-400">
             Don't have an account?{' '}
-            <Link to="/signup" className="font-medium text-blue-600 hover:text-blue-500">
+            <Link to="/signup" className="font-medium text-amber-300 hover:text-amber-200">
               Sign up here
             </Link>
           </p>
@@ -240,8 +245,8 @@ export default function LoginPage() {
           transition={{ duration: 0.5, delay: 0.3 }}
           className="text-center mt-8"
         >
-          <p className="text-xs text-gray-500">
-            © 2024 Infora WiFi Billing System. All rights reserved.
+          <p className="text-xs text-slate-500">
+            {BRAND.copyright()}
           </p>
         </motion.div>
       </div>

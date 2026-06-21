@@ -1,24 +1,6 @@
-import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
-import { apiCall, authenticatedApiCall } from '../utils/api';
-
-// Helper function to get token from localStorage
-const getToken = () => {
-  const userData = localStorage.getItem('infora_user');
-  console.log('User data from localStorage:', userData);
-  if (userData) {
-    try {
-      const user = JSON.parse(userData);
-      console.log('Parsed user data:', user);
-      console.log('Access token:', user.access_token);
-      return user.access_token;
-    } catch (error) {
-      console.error('Error parsing user data:', error);
-      return null;
-    }
-  }
-  console.log('No user data found in localStorage');
-  return null;
-};
+import { API_ENDPOINTS } from '../config/api';
+import { authenticatedApiCall } from '../utils/api';
+import { getAccessToken } from '../utils/authToken';
 
 export const customerService = {
   // Get all customers with pagination and filtering
@@ -33,13 +15,13 @@ export const customerService = {
     if (params.sort_order) queryParams.append('sort_order', params.sort_order);
     
     const url = `${API_ENDPOINTS.CUSTOMERS}?${queryParams.toString()}`;
-    return authenticatedApiCall(url, getToken());
+    return authenticatedApiCall(url, getAccessToken());
   },
 
   // Get a specific customer by ID
   async getCustomer(customerId) {
     const url = `${API_ENDPOINTS.CUSTOMERS}/${customerId}`;
-    return authenticatedApiCall(url, getToken());
+    return authenticatedApiCall(url, getAccessToken());
   },
 
   // Create a new customer
@@ -97,7 +79,7 @@ export const customerService = {
   // Get customer statistics
   async getCustomerStats() {
     const url = `${API_ENDPOINTS.CUSTOMERS}/stats`;
-    return authenticatedApiCall(url, getToken());
+    return authenticatedApiCall(url, getAccessToken());
   },
 
   // Get customer invoices
@@ -109,7 +91,7 @@ export const customerService = {
     if (params.status) queryParams.append('status', params.status);
     
     const url = `${API_ENDPOINTS.CUSTOMERS}/${customerId}/invoices?${queryParams.toString()}`;
-    return authenticatedApiCall(url, getToken());
+    return authenticatedApiCall(url, getAccessToken());
   },
 
   // Get customer payments
@@ -121,7 +103,7 @@ export const customerService = {
     if (params.status) queryParams.append('status', params.status);
     
     const url = `${API_ENDPOINTS.CUSTOMERS}/${customerId}/payments?${queryParams.toString()}`;
-    return authenticatedApiCall(url, getToken());
+    return authenticatedApiCall(url, getAccessToken());
   },
 
   // Get customer tickets
@@ -133,6 +115,6 @@ export const customerService = {
     if (params.status) queryParams.append('status', params.status);
     
     const url = `${API_ENDPOINTS.CUSTOMERS}/${customerId}/tickets?${queryParams.toString()}`;
-    return authenticatedApiCall(url, getToken());
+    return authenticatedApiCall(url, getAccessToken());
   }
 };

@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request
 from config import Config
 from flask_cors import CORS
 from extensions import db, migrate, jwt
@@ -17,8 +17,24 @@ from routes.billing import billing_bp
 from routes.snmp import snmp_bp
 from routes.vpn import vpn_bp
 from routes.eap import eap_bp
+from routes.tickets import tickets_bp
+from routes.dashboard import dashboard_bp
+from routes.finance import finance_bp
+from routes.kyc import kyc_bp
+from routes.payments import payments_bp
+from routes.portal import portal_bp
+from routes.website import website_bp
 import click
+import logging
+import warnings
 from datetime import datetime
+
+# Only show standard Werkzeug HTTP access logs in the terminal
+logging.basicConfig(level=logging.WARNING, format='%(message)s')
+logging.getLogger('werkzeug').setLevel(logging.INFO)
+for _logger_name in ('flask.app', 'sqlalchemy.engine', 'alembic'):
+    logging.getLogger(_logger_name).setLevel(logging.WARNING)
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='jwt')
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -26,7 +42,12 @@ app.url_map.strict_slashes = False
 
 # Initialize extensions with more permissive CORS
 CORS(app,
-     origins=['http://localhost:5173', 'http://127.0.0.1:5173'],
+     origins=[
+         'http://localhost:5173',
+         'http://127.0.0.1:5173',
+         'http://localhost:5174',
+         'http://127.0.0.1:5174',
+     ],
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
      allow_headers=['Content-Type', 'Authorization'])
@@ -50,6 +71,20 @@ app.register_blueprint(billing_bp)
 app.register_blueprint(snmp_bp)
 app.register_blueprint(vpn_bp)
 app.register_blueprint(eap_bp)
+app.register_blueprint(tickets_bp)
+app.register_blueprint(dashboard_bp)
+app.register_blueprint(finance_bp)
+app.register_blueprint(kyc_bp)
+app.register_blueprint(payments_bp)
+app.register_blueprint(portal_bp)
+app.register_blueprint(website_bp)
+
+
+@app.before_request
+def handle_api_preflight():
+    """Return 200 for CORS preflight on all API routes."""
+    if request.method == 'OPTIONS' and request.path.startswith('/api/'):
+        return '', 200
 
 # Test route
 @app.route('/api/test')
@@ -62,15 +97,6 @@ def test_customers():
     from models import Customer
     count = Customer.query.count()
     return {'message': f'Database has {count} customers'}
-
-# Global CORS handler
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
 
 # CLI Commands
 @app.cli.command('initdb')

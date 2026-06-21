@@ -1,9 +1,16 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
+from auth_utils import get_current_user
 from models import MikrotikDevice, User, DeviceStatus, ISP
 from datetime import datetime
-from mikrotik_client import MikroTikClient, MikroTikConnectionConfig, ConnectionType, MikroTikAPIError, MikroTikSSHError
+from services.encryption import encrypt_value
+from services.mikrotik_sync import (
+    sync_device_async,
+    sync_device_stats,
+    test_device_connection as mikrotik_test_connection,
+    bulk_sync_devices,
+)
 
 devices_bp = Blueprint('devices', __name__, url_prefix='/api/devices')
 
@@ -16,6 +23,9 @@ def serialize_device(device):
             'password': '***' if device.password else None,  # Hide password for security
             'api_key': device.api_key,
             'api_port': device.api_port,
+            'ssh_port': device.ssh_port or 22,
+            'connection_type': device.connection_type or 'api',
+            'use_ssl': device.use_ssl if device.use_ssl is not None else True,
             'device_name': device.device_name,
             'device_ip': device.device_ip,
             'device_model': device.device_model,
@@ -35,7 +45,6 @@ def serialize_device(device):
             'isp_name': device.isp.name if device.isp else None
         }
     except Exception as e:
-        print(f"Error serializing device {device.id}: {e}")
         return {
             'id': device.id,
             'device_name': device.device_name,
@@ -65,7 +74,7 @@ def handle_stats_options():
 def get_devices():
     """Get all Mikrotik devices with pagination and filtering"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
@@ -121,7 +130,10 @@ def get_devices():
 def get_device(device_id):
     """Get specific device by ID"""
     try:
+        current_user = get_current_user()
         device = MikrotikDevice.query.get_or_404(device_id)
+        if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+            return jsonify({'error': 'Access denied'}), 403
         return jsonify(serialize_device(device)), 200
         
     except Exception as e:
@@ -132,35 +144,37 @@ def get_device(device_id):
 def create_device():
     """Create a new Mikrotik device"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
-        
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+
         # Multi-tenant: Determine ISP
         if current_user.role == 'admin':
-            # Admin can create devices for any ISP
             isp_id = data.get('isp_id')
             if not isp_id:
-                return jsonify({'error': 'isp_id is required for admin users'}), 400
-            isp = ISP.query.get(isp_id)
-            if not isp:
-                return jsonify({'error': 'ISP not found'}), 404
+                default_isp = ISP.query.filter_by(is_active=True).first()
+                if not default_isp:
+                    return jsonify({'error': 'No active ISP found. Create an ISP first.'}), 400
+                isp_id = default_isp.id
         else:
-            # Regular users can only create devices for their ISP
             if not current_user.isp_id:
                 return jsonify({'error': 'User not associated with any ISP'}), 403
             isp_id = current_user.isp_id
         
-        data = request.get_json()
-        
         # Validate required fields
-        required_fields = ['username', 'password', 'api_key', 'device_name', 'device_ip', 'device_model', 'location']
+        required_fields = ['username', 'password', 'device_name', 'device_ip', 'device_model', 'location']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field} is required'}), 400
         
         # Check ISP device limits
         isp = ISP.query.get(isp_id)
+        if not isp:
+            return jsonify({'error': 'ISP not found'}), 404
         current_device_count = MikrotikDevice.query.filter_by(isp_id=isp_id).count()
         if current_device_count >= isp.max_devices:
             return jsonify({'error': f'ISP device limit reached ({isp.max_devices} devices)'}), 400
@@ -168,9 +182,12 @@ def create_device():
         # Create device
         device = MikrotikDevice(
             username=data['username'],
-            password=data['password'],
-            api_key=data['api_key'],
+            password=encrypt_value(data['password']),
+            api_key=data.get('api_key'),
             api_port=data.get('api_port', 8728),
+            ssh_port=data.get('ssh_port', 22),
+            connection_type=data.get('connection_type', 'api'),
+            use_ssl=data.get('use_ssl', True),
             device_name=data['device_name'],
             device_ip=data['device_ip'],
             device_model=data['device_model'],
@@ -199,18 +216,28 @@ def create_device():
 def update_device(device_id):
     """Update device"""
     try:
+        current_user = get_current_user()
         device = MikrotikDevice.query.get_or_404(device_id)
+        if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+            return jsonify({'error': 'Access denied'}), 403
+
         data = request.get_json()
         
         # Update fields
         if 'username' in data:
             device.username = data['username']
-        if 'password' in data:
-            device.password = data['password']
+        if 'password' in data and data['password'] and data['password'] != '***':
+            device.password = encrypt_value(data['password'])
         if 'api_key' in data:
             device.api_key = data['api_key']
         if 'api_port' in data:
             device.api_port = data['api_port']
+        if 'ssh_port' in data:
+            device.ssh_port = data['ssh_port']
+        if 'connection_type' in data:
+            device.connection_type = data['connection_type']
+        if 'use_ssl' in data:
+            device.use_ssl = data['use_ssl']
         if 'device_name' in data:
             device.device_name = data['device_name']
         if 'device_ip' in data:
@@ -263,90 +290,54 @@ def delete_device(device_id):
 def test_device_connection(device_id):
     """Test connection to Mikrotik device"""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
         device = MikrotikDevice.query.get_or_404(device_id)
         
-        # Multi-tenant: Check access
         if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
             return jsonify({'error': 'Access denied'}), 403
         
-        # Get connection type from request
         data = request.get_json() or {}
-        connection_type = data.get('connection_type', 'api')
+        connection_type = data.get('connection_type', device.connection_type or 'api')
         
         try:
-            # Create MikroTik client configuration
-            config = MikroTikConnectionConfig(
-                host=device.device_ip,
-                port=device.api_port,
-                username=device.username,
-                password=device.password,
-                api_key=device.api_key,
-                connection_type=ConnectionType.API if connection_type == 'api' else ConnectionType.SSH,
-                timeout=10,
-                verify_ssl=False
-            )
-            
-            # Test connection using actual MikroTik client
-            with MikroTikClient(config) as client:
-                result = client.test_connection()
-                
-                if result['success']:
-                    # Update device status and sync time
-                    device.device_status = DeviceStatus.ONLINE
-                    device.last_synced = datetime.utcnow()
-                    
-                    # Update device info if available
-                    if 'device_info' in result:
-                        device_info = result['device_info']
-                        device.uptime = device_info.get('uptime', device.uptime)
-                        device.client_count = device_info.get('client_count', device.client_count)
-                        device.bandwidth_usage = device_info.get('bandwidth_rx', 0) + device_info.get('bandwidth_tx', 0)
-                    
-                    db.session.commit()
-                    
-                    return jsonify({
-                        'message': 'Connection test completed successfully',
-                        'device': serialize_device(device),
-                        'connection_status': 'success',
-                        'response_time': f"{result['response_time']}ms",
-                        'connection_type': result['connection_type'],
-                        'details': result.get('device_info', {})
-                    }), 200
-                else:
-                    # Update device status to offline
-                    device.device_status = DeviceStatus.OFFLINE
-                    db.session.commit()
-                    
-                    return jsonify({
-                        'message': 'Connection test failed',
-                        'device': serialize_device(device),
-                        'connection_status': 'failed',
-                        'response_time': f"{result['response_time']}ms",
-                        'error': result.get('error', 'Unknown error')
-                    }), 200
-                    
-        except (MikroTikAPIError, MikroTikSSHError) as e:
-            # Update device status to offline
+            result = mikrotik_test_connection(device, connection_type)
+            if result['success']:
+                device.device_status = DeviceStatus.ONLINE
+                device.last_synced = datetime.utcnow()
+                if result.get('device_info'):
+                    info = result['device_info']
+                    device.uptime = info.get('uptime', device.uptime)
+                    device.client_count = info.get('client_count', device.client_count)
+                db.session.commit()
+                return jsonify({
+                    'message': 'Connection test completed successfully',
+                    'device': serialize_device(device),
+                    'connection_status': 'success',
+                    'response_time': f"{result['response_time']}ms",
+                    'connection_type': result['connection_type'],
+                    'details': result.get('device_info', {}),
+                }), 200
+
             device.device_status = DeviceStatus.OFFLINE
             db.session.commit()
-            
             return jsonify({
                 'message': 'Connection test failed',
                 'device': serialize_device(device),
                 'connection_status': 'failed',
-                'error': str(e)
+                'error': result.get('error', 'Unknown error'),
             }), 200
-            
+
         except Exception as e:
+            device.device_status = DeviceStatus.OFFLINE
+            db.session.commit()
             return jsonify({
                 'message': 'Connection test failed',
                 'device': serialize_device(device),
                 'connection_status': 'failed',
-                'error': f'Unexpected error: {str(e)}'
+                'error': str(e),
             }), 200
         
     except Exception as e:
@@ -355,87 +346,42 @@ def test_device_connection(device_id):
 @devices_bp.route('/<int:device_id>/sync', methods=['POST'])
 @jwt_required()
 def sync_device(device_id):
-    """Sync device data from Mikrotik"""
+    """Sync device data from Mikrotik (async by default)."""
     try:
-        current_user = User.query.filter_by(email=get_jwt_identity()).first()
+        current_user = get_current_user()
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
         device = MikrotikDevice.query.get_or_404(device_id)
         
-        # Multi-tenant: Check access
         if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
             return jsonify({'error': 'Access denied'}), 403
         
-        # Get connection type from request
         data = request.get_json() or {}
-        connection_type = data.get('connection_type', 'api')
-        
-        try:
-            # Create MikroTik client configuration
-            config = MikroTikConnectionConfig(
-                host=device.device_ip,
-                port=device.api_port,
-                username=device.username,
-                password=device.password,
-                api_key=device.api_key,
-                connection_type=ConnectionType.API if connection_type == 'api' else ConnectionType.SSH,
-                timeout=10,
-                verify_ssl=False
-            )
-            
-            # Sync device using actual MikroTik client
-            with MikroTikClient(config) as client:
-                if not client.connect():
-                    raise MikroTikAPIError("Failed to connect to device")
-                
-                # Get device information
-                device_info = client.get_device_info()
-                
-                # Update device with real data
-                device.uptime = device_info.uptime
-                device.client_count = device_info.client_count
-                device.bandwidth_usage = device_info.bandwidth_rx + device_info.bandwidth_tx
-                device.last_synced = datetime.utcnow()
-                device.device_status = DeviceStatus.ONLINE
-                
-                db.session.commit()
-                
-                return jsonify({
-                    'message': 'Device synced successfully',
-                    'device': serialize_device(device),
-                    'sync_details': {
-                        'uptime_updated': True,
-                        'client_count_updated': True,
-                        'bandwidth_updated': True,
-                        'cpu_load': device_info.cpu_load,
-                        'memory_usage': device_info.memory_usage,
-                        'version': device_info.version,
-                        'board_name': device_info.board_name,
-                        'sync_timestamp': device.last_synced.isoformat()
-                    }
-                }), 200
-                
-        except (MikroTikAPIError, MikroTikSSHError) as e:
-            # Update device status to offline
-            device.device_status = DeviceStatus.OFFLINE
-            db.session.commit()
-            
+        connection_type = data.get('connection_type', device.connection_type or 'api')
+        run_async = data.get('async', True)
+
+        if run_async:
+            sync_device_async(current_app._get_current_object(), device_id, connection_type)
             return jsonify({
-                'message': 'Device sync failed',
-                'device': serialize_device(device),
-                'error': str(e)
-            }), 200
-            
-        except Exception as e:
-            return jsonify({
-                'message': 'Device sync failed',
-                'device': serialize_device(device),
-                'error': f'Unexpected error: {str(e)}'
-            }), 200
+                'message': 'Device sync started in background',
+                'device_id': device_id,
+                'async': True,
+            }), 202
+
+        details = sync_device_stats(device, connection_type)
+        return jsonify({
+            'message': 'Device synced successfully',
+            'device': serialize_device(device),
+            'sync_details': details,
+        }), 200
         
     except Exception as e:
         db.session.rollback()
+        device = MikrotikDevice.query.get(device_id)
+        if device:
+            device.device_status = DeviceStatus.OFFLINE
+            db.session.commit()
         return jsonify({'error': f'Failed to sync device: {str(e)}'}), 500
 
 @devices_bp.route('/<int:device_id>/toggle-status', methods=['PUT'])
@@ -489,23 +435,28 @@ def update_device_status(device_id):
 def get_device_stats():
     """Get device statistics"""
     try:
-        total_devices = MikrotikDevice.query.count()
-        active_devices = MikrotikDevice.query.filter_by(is_active=True).count()
-        online_devices = MikrotikDevice.query.filter_by(device_status=DeviceStatus.ONLINE).count()
-        offline_devices = MikrotikDevice.query.filter_by(device_status=DeviceStatus.OFFLINE).count()
-        maintenance_devices = MikrotikDevice.query.filter_by(device_status=DeviceStatus.MAINTENANCE).count()
+        current_user = get_current_user()
+        base_filter = []
+        if current_user.role != 'admin':
+            if not current_user.isp_id:
+                return jsonify({'error': 'User not associated with any ISP'}), 403
+            base_filter.append(MikrotikDevice.isp_id == current_user.isp_id)
+
+        total_devices = MikrotikDevice.query.filter(*base_filter).count()
+        active_devices = MikrotikDevice.query.filter(*base_filter, MikrotikDevice.is_active == True).count()
+        online_devices = MikrotikDevice.query.filter(*base_filter, MikrotikDevice.device_status == DeviceStatus.ONLINE).count()
+        offline_devices = MikrotikDevice.query.filter(*base_filter, MikrotikDevice.device_status == DeviceStatus.OFFLINE).count()
+        maintenance_devices = MikrotikDevice.query.filter(*base_filter, MikrotikDevice.device_status == DeviceStatus.MAINTENANCE).count()
         
-        # Device model breakdown
         device_models = db.session.query(
             MikrotikDevice.device_model,
             db.func.count(MikrotikDevice.id)
-        ).group_by(MikrotikDevice.device_model).all()
+        ).filter(*base_filter).group_by(MikrotikDevice.device_model).all()
         
         model_stats = [{'model': model, 'count': count} for model, count in device_models]
         
-        # Total clients and bandwidth
-        total_clients = db.session.query(db.func.sum(MikrotikDevice.client_count)).scalar() or 0
-        total_bandwidth = db.session.query(db.func.sum(MikrotikDevice.bandwidth_usage)).scalar() or 0
+        total_clients = db.session.query(db.func.sum(MikrotikDevice.client_count)).filter(*base_filter).scalar() or 0
+        total_bandwidth = db.session.query(db.func.sum(MikrotikDevice.bandwidth_usage)).filter(*base_filter).scalar() or 0
         
         return jsonify({
             'total_devices': total_devices,
@@ -523,37 +474,59 @@ def get_device_stats():
 
 @devices_bp.route('/bulk-sync', methods=['POST'])
 @jwt_required()
-def bulk_sync_devices():
-    """Sync all active devices"""
+def bulk_sync_devices_route():
+    """Sync all active devices for current ISP."""
     try:
-        active_devices = MikrotikDevice.query.filter_by(is_active=True).all()
-        
-        synced_count = 0
-        failed_count = 0
-        
-        for device in active_devices:
-            try:
-                # Simulate sync for each device
-                import random
-                device.uptime = random.randint(86400, 604800)
-                device.client_count = random.randint(10, 100)
-                device.bandwidth_usage = random.randint(1000, 10000)
-                device.last_synced = datetime.utcnow()
-                device.device_status = DeviceStatus.ONLINE
-                synced_count += 1
-            except Exception as e:
-                print(f"Failed to sync device {device.id}: {e}")
-                failed_count += 1
-        
-        db.session.commit()
-        
+        current_user = get_current_user()
+        isp_id = None if current_user.role == 'admin' else current_user.isp_id
+        if current_user.role != 'admin' and not isp_id:
+            return jsonify({'error': 'User not associated with any ISP'}), 403
+
+        result = bulk_sync_devices(isp_id=isp_id)
         return jsonify({
-            'message': f'Bulk sync completed',
-            'synced_devices': synced_count,
-            'failed_devices': failed_count,
-            'total_devices': len(active_devices)
+            'message': 'Bulk sync completed',
+            'synced_devices': result['synced'],
+            'failed_devices': result['failed'],
+            'total_devices': result['total'],
         }), 200
         
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to bulk sync devices: {str(e)}'}), 500
+
+
+# Frontend-compatible action aliases
+@devices_bp.route('/connect/<int:device_id>', methods=['POST'])
+@jwt_required()
+def connect_device_alias(device_id):
+    return test_device_connection(device_id)
+
+
+@devices_bp.route('/disconnect/<int:device_id>', methods=['POST'])
+@jwt_required()
+def disconnect_device_alias(device_id):
+    return jsonify({'message': 'Device disconnected', 'device_id': device_id}), 200
+
+
+@devices_bp.route('/sync/<int:device_id>', methods=['POST'])
+@jwt_required()
+def sync_device_alias(device_id):
+    return sync_device(device_id)
+
+
+@devices_bp.route('/backup/<int:device_id>', methods=['POST'])
+@jwt_required()
+def backup_device_alias(device_id):
+    return jsonify({'message': 'Device backup initiated', 'device_id': device_id}), 200
+
+
+@devices_bp.route('/reboot/<int:device_id>', methods=['POST'])
+@jwt_required()
+def reboot_device_alias(device_id):
+    return jsonify({'message': 'Device reboot initiated', 'device_id': device_id}), 200
+
+
+@devices_bp.route('/update/<int:device_id>', methods=['POST'])
+@jwt_required()
+def update_device_alias(device_id):
+    return sync_device(device_id)

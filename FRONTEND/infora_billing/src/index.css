@@ -60,4 +60,30 @@
   }
 }
 
+.sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgb(51 65 85 / 0.8);
+  border-radius: 9999px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(71 85 105);
+}
+
+/* Captive portal animated mesh background */
+.portal-mesh {
+  background-color: #020617;
+  background-image:
+    radial-gradient(at 40% 20%, rgba(16, 185, 129, 0.18) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, rgba(6, 182, 212, 0.12) 0px, transparent 45%),
+    radial-gradient(at 0% 50%, rgba(20, 184, 166, 0.1) 0px, transparent 50%),
+    radial-gradient(at 80% 80%, rgba(16, 185, 129, 0.08) 0px, transparent 45%);
+}
 

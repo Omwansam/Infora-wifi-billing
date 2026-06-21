@@ -1,3 +1,4 @@
+import { BRAND, sanitizeBrandText } from '../../lib/brand';
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { MessageSquare, Mail, Phone, Clock } from 'lucide-react';
@@ -100,7 +101,7 @@ const ContactSupportPage = () => {
                   </div>
                   <div>
                     <p className="font-medium text-gray-900">Email Support</p>
-                    <p className="text-sm text-gray-500">support@infora.com</p>
+                    <p className="text-sm text-gray-500">{BRAND.supportEmail}</p>
                   </div>
                 </div>
                 

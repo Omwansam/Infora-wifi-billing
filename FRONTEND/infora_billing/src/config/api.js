@@ -43,6 +43,7 @@ export const API_ENDPOINTS = {
   RADIUS_ACCOUNTING: `${API_BASE_URL}/api/radius/accounting`,
   RADIUS_API: `${API_BASE_URL}/api/radius-api`,
   RADIUS_ROUTES: `${API_BASE_URL}/api/radius-routes`,
+  RADIUS_TEST: `${API_BASE_URL}/api/radius/test`,
   
   // LDAP endpoints
   LDAP_SERVERS: `${API_BASE_URL}/api/ldap/servers`,
@@ -51,6 +52,7 @@ export const API_ENDPOINTS = {
   
   // SNMP endpoints
   SNMP_DEVICES: `${API_BASE_URL}/api/snmp/devices`,
+  SNMP_TEST: `${API_BASE_URL}/api/snmp/test`,
   SNMP_WALK: `${API_BASE_URL}/api/snmp/walk`,
   SNMP_GET: `${API_BASE_URL}/api/snmp/get`,
   SNMP_SET: `${API_BASE_URL}/api/snmp/set`,
@@ -72,6 +74,28 @@ export const API_ENDPOINTS = {
   BILLING_TRANSACTIONS: `${API_BASE_URL}/api/billing/transactions`,
   BILLING_REPORTS: `${API_BASE_URL}/api/billing/reports`,
   BILLING_VOUCHERS: `${API_BASE_URL}/api/billing/vouchers`,
+
+  // M-Pesa payments
+  MPESA_STK_PUSH: `${API_BASE_URL}/api/payments/mpesa/stk-push`,
+  MPESA_STATUS: `${API_BASE_URL}/api/payments/mpesa/status`,
+
+  // Captive portal (public)
+  PORTAL_CONFIG: `${API_BASE_URL}/api/portal/config`,
+  PORTAL_PLANS: `${API_BASE_URL}/api/portal/plans`,
+  PORTAL_HOTSPOT_PURCHASE: `${API_BASE_URL}/api/portal/hotspot/purchase`,
+  PORTAL_PPPOE_LOOKUP: `${API_BASE_URL}/api/portal/pppoe/lookup`,
+  PORTAL_PPPOE_PAY: `${API_BASE_URL}/api/portal/pppoe/pay`,
+  PORTAL_PAYMENT_STATUS: `${API_BASE_URL}/api/portal/payment/status`,
+
+  // Dashboard & tickets
+  DASHBOARD_STATS: `${API_BASE_URL}/api/dashboard/stats`,
+  FINANCE_LEADS: `${API_BASE_URL}/api/finance/leads`,
+  FINANCE_EXPENSES: `${API_BASE_URL}/api/finance/expenses`,
+  FINANCE_SUMMARY: `${API_BASE_URL}/api/finance/summary`,
+  KYC: `${API_BASE_URL}/api/kyc`,
+  KYC_STATS: `${API_BASE_URL}/api/kyc/stats`,
+  INVOICE_STATS: `${API_BASE_URL}/api/invoices/stats`,
+  TICKETS: `${API_BASE_URL}/api/tickets`,
   
   // Test endpoint
   TEST: `${API_BASE_URL}/api/test`,

@@ -4,7 +4,7 @@ import { FileText, Search, Filter } from 'lucide-react';
 
 const SystemLogsPage = () => {
   const [logs] = useState([
-    { id: 1, timestamp: '2024-01-15 10:30:00', level: 'INFO', message: 'User login successful', user: 'admin@infora.com' },
+    { id: 1, timestamp: '2024-01-15 10:30:00', level: 'INFO', message: 'User login successful', user: 'admin@lumen.app' },
     { id: 2, timestamp: '2024-01-15 10:25:00', level: 'WARNING', message: 'Failed login attempt', user: 'unknown@email.com' },
     { id: 3, timestamp: '2024-01-15 10:20:00', level: 'ERROR', message: 'Database connection timeout', user: 'system' }
   ]);

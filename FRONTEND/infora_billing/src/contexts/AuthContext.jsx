@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { API_ENDPOINTS } from '../config/api';
 import { apiCall, authenticatedApiCall } from '../utils/api';
+import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from '../lib/brand';
 
 const AuthContext = createContext();
 
@@ -10,11 +11,15 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     // Check for stored user data
-    const storedUser = localStorage.getItem('infora_user');
+    const storedUser =
+      localStorage.getItem(STORAGE_KEYS.user) || localStorage.getItem(LEGACY_STORAGE_KEYS.user);
     if (storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
+        if (!localStorage.getItem(STORAGE_KEYS.user)) {
+          localStorage.setItem(STORAGE_KEYS.user, storedUser);
+        }
 
         // Verify token is still valid
         verifyToken(parsedUser.access_token).catch(() => {
@@ -29,7 +34,8 @@ export const AuthProvider = ({ children }) => {
           }
         });
       } catch (error) {
-        localStorage.removeItem('infora_user');
+        localStorage.removeItem(STORAGE_KEYS.user);
+        localStorage.removeItem(LEGACY_STORAGE_KEYS.user);
       }
     }
     setLoading(false);
@@ -55,7 +61,7 @@ export const AuthProvider = ({ children }) => {
 
       if (updatedUser) {
         setUser(updatedUser);
-        localStorage.setItem('infora_user', JSON.stringify(updatedUser));
+        localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(updatedUser));
       }
       return true;
     }
@@ -83,7 +89,7 @@ export const AuthProvider = ({ children }) => {
       };
 
       setUser(userData);
-      localStorage.setItem('infora_user', JSON.stringify(userData));
+      localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(userData));
       // Backward compatibility for modules reading from 'token'
       localStorage.setItem('token', result.data.access_token);
       if (userData.is_admin) {
@@ -128,7 +134,8 @@ export const AuthProvider = ({ children }) => {
     }
     
     setUser(null);
-    localStorage.removeItem('infora_user');
+    localStorage.removeItem(STORAGE_KEYS.user);
+    localStorage.removeItem(LEGACY_STORAGE_KEYS.user);
     localStorage.removeItem('token');
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminRefreshToken');

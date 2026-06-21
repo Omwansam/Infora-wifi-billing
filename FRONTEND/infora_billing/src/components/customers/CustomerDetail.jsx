@@ -13,10 +13,13 @@ import {
   DollarSign,
   Calendar,
   Activity,
-  Package
+  Package,
+  ShieldCheck,
+  FileText,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import KycStatusBadge from './KycStatusBadge';
 import toast from 'react-hot-toast';
 
 export default function CustomerDetail() {
@@ -197,6 +200,34 @@ export default function CustomerDetail() {
 
           {/* Customer Details */}
           <div className="p-6">
+            <div className="mb-8 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900 flex items-center">
+                    <ShieldCheck className="h-5 w-5 mr-2 text-teal-600" />
+                    KYC Verification
+                  </h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    ID: {customer.id_number || 'Not submitted'}
+                    {customer.kyc_verified_at ? ` · Verified ${formatDate(customer.kyc_verified_at)}` : ''}
+                  </p>
+                  {customer.kyc_notes && (
+                    <p className="text-sm text-slate-600 mt-2">{customer.kyc_notes}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <KycStatusBadge status={customer.kyc_status || 'pending'} size="lg" />
+                  <Link
+                    to="/customers/kyc"
+                    className="inline-flex items-center px-3 py-2 rounded-xl text-sm font-medium text-teal-700 bg-teal-50 hover:bg-teal-100"
+                  >
+                    <FileText className="h-4 w-4 mr-1.5" />
+                    Review KYC
+                  </Link>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {/* Personal Information */}
               <div>

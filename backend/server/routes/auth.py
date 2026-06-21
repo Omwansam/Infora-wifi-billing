@@ -28,33 +28,18 @@ def login():
         email = data['email'].strip().lower()
         password = data['password']
 
-        # Debug logging
-        print(f"🔍 Login attempt for email: {email}")
-
         # Find user by email
         user = User.query.filter_by(email=email).first()
         
         if not user:
-            print(f"❌ User not found: {email}")
             return jsonify({"error": "Invalid email or password"}), 401
-        
-        print(f"✅ User found: {user.email} (ID: {user.id}, Role: {user.role}, Active: {user.is_active})")
         
         # Check if user is active
         if not user.is_active:
-            print(f"❌ User is inactive: {email}")
             return jsonify({"error": "Account is deactivated. Please contact administrator."}), 401
         
         # Verify password using Werkzeug hashing
-        password_matches = check_password_hash(user.password_hash, password)
-        
-        print(f"🔍 Password verification:")
-        print(f"  Input password: {password}")
-        print(f"  Stored hash (first 20 chars): {user.password_hash[:20]}...")
-        print(f"  Password matches: {password_matches}")
-        
-        if not password_matches:
-            print(f"❌ Password verification failed for: {email}")
+        if not check_password_hash(user.password_hash, password):
             return jsonify({"error": "Invalid email or password"}), 401
 
         # Update last login

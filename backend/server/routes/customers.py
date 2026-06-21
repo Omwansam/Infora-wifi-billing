@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_
 from extensions import db
-from models import Customer, User, CustomerStatus
+from models import Customer, User, CustomerStatus, KycStatus
 from datetime import datetime
 
 customers_bp = Blueprint('customers', __name__, url_prefix='/api/customers')
@@ -26,6 +26,10 @@ def serialize_customer(customer):
             'created_at': customer.created_at.isoformat() if customer.created_at else None,
             'updated_at': customer.updated_at.isoformat() if customer.updated_at else None,
             'service_plan_id': customer.service_plan_id,
+            'id_number': customer.id_number,
+            'kyc_status': customer.kyc_status.value if getattr(customer, 'kyc_status', None) else 'pending',
+            'kyc_verified_at': customer.kyc_verified_at.isoformat() if getattr(customer, 'kyc_verified_at', None) else None,
+            'kyc_notes': customer.kyc_notes,
             'service_plan': {
                 'id': customer.service_plan.id,
                 'name': customer.service_plan.name,
@@ -34,7 +38,6 @@ def serialize_customer(customer):
             } if hasattr(customer, 'service_plan') and customer.service_plan else None
         }
     except Exception as e:
-        print(f"Error serializing customer {customer.id}: {e}")
         # Return basic customer data without service plan
         return {
             'id': customer.id,
@@ -52,6 +55,10 @@ def serialize_customer(customer):
             'created_at': customer.created_at.isoformat() if customer.created_at else None,
             'updated_at': customer.updated_at.isoformat() if customer.updated_at else None,
             'service_plan_id': customer.service_plan_id,
+            'id_number': getattr(customer, 'id_number', None),
+            'kyc_status': customer.kyc_status.value if getattr(customer, 'kyc_status', None) else 'pending',
+            'kyc_verified_at': customer.kyc_verified_at.isoformat() if getattr(customer, 'kyc_verified_at', None) else None,
+            'kyc_notes': getattr(customer, 'kyc_notes', None),
             'service_plan': None
         }
 
@@ -61,10 +68,6 @@ def serialize_customer(customer):
 def get_customers():
     """Get all customers with pagination and filtering"""
     try:
-        print(f"GET /api/customers - Request received")
-        print(f"Request URL: {request.url}")
-        print(f"Request method: {request.method}")
-        print(f"Request headers: {dict(request.headers)}")
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
         search = request.args.get('search')
@@ -72,7 +75,6 @@ def get_customers():
         sort_by = request.args.get('sort_by', 'created_at')
         sort_order = request.args.get('sort_order', 'desc')
         
-        print(f"Query params: page={page}, per_page={per_page}, search={search}, status={status}")
         
         query = Customer.query
         
@@ -109,7 +111,6 @@ def get_customers():
             page=page, per_page=per_page, error_out=False
         )
         
-        print(f"Found {customers.total} customers, returning {len(customers.items)} for page {page}")
         
         response_data = {
             'customers': [serialize_customer(customer) for customer in customers.items],
@@ -119,7 +120,6 @@ def get_customers():
             'per_page': per_page
         }
         
-        print(f"Response data: {response_data}")
         return jsonify(response_data), 200
         
     except Exception as e:
@@ -226,10 +226,8 @@ def update_customer(customer_id):
 def delete_customer(customer_id):
     """Delete customer"""
     try:
-        print(f"DELETE /api/customers/{customer_id} - Request received")
         customer = Customer.query.get_or_404(customer_id)
         
-        print(f"Found customer: {customer.full_name} (ID: {customer.id})")
         
         # Check if customer has related data that would prevent deletion
         invoice_count = customer.invoices.count()
@@ -238,7 +236,6 @@ def delete_customer(customer_id):
         transaction_count = customer.transactions.count()
         revenue_count = customer.revenue_data.count()
         
-        print(f"Related data counts - Invoices: {invoice_count}, Payments: {payment_count}, Tickets: {ticket_count}, Transactions: {transaction_count}, Revenue: {revenue_count}")
         
         # For now, allow deletion even with related data (cascade will handle it)
         # You can uncomment these checks if you want to prevent deletion with related data
@@ -264,7 +261,6 @@ def delete_customer(customer_id):
             db.session.commit()
         except Exception as delete_error:
             db.session.rollback()
-            print(f"Database error during deletion: {str(delete_error)}")
             
             # If there are foreign key constraint violations, try to handle them
             if "foreign key constraint" in str(delete_error).lower():
@@ -272,14 +268,10 @@ def delete_customer(customer_id):
             
             raise delete_error
         
-        print(f"Customer {customer.full_name} (ID: {customer.id}) deleted successfully")
         return jsonify({'message': 'Customer deleted successfully'}), 200
         
     except Exception as e:
         db.session.rollback()
-        print(f"Error deleting customer {customer_id}: {str(e)}")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error details: {e}")
         
         # Provide more specific error messages
         if "foreign key constraint" in str(e).lower():
@@ -381,7 +373,6 @@ def update_customer_usage(customer_id):
 def get_customer_stats():
     """Get customer statistics"""
     try:
-        print(f"GET /api/customers/stats - Request received")
         total_customers = Customer.query.count()
         active_customers = Customer.query.filter_by(status=CustomerStatus.ACTIVE).count()
         suspended_customers = Customer.query.filter_by(status=CustomerStatus.SUSPENDED).count()
@@ -402,7 +393,6 @@ def get_customer_stats():
         # Top customers by balance
         top_customers = Customer.query.order_by(Customer.balance.desc()).limit(5).all()
         
-        print(f"Stats calculated: total={total_customers}, active={active_customers}, suspended={suspended_customers}, pending={pending_customers}")
         
         response_data = {
             'total_customers': total_customers,
@@ -423,7 +413,6 @@ def get_customer_stats():
             ]
         }
         
-        print(f"Stats response: {response_data}")
         return jsonify(response_data), 200
         
     except Exception as e:
