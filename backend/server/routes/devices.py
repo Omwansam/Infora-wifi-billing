@@ -1,3 +1,5 @@
+import json
+import secrets
 from flask import Blueprint, request, jsonify, current_app, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
@@ -5,6 +7,11 @@ from auth_utils import get_current_user
 from models import MikrotikDevice, User, DeviceStatus, ISP
 from datetime import datetime, timedelta
 from services.encryption import encrypt_value
+from services.device_config_ops import (
+    get_provision_status,
+    list_interfaces,
+    configure_services,
+)
 from services.provisioning_scripts import build_radius_script, build_one_liner, resolve_provision_base_url
 from services.mikrotik_sync import (
     sync_device_async,
@@ -175,11 +182,16 @@ def create_device():
                 return jsonify({'error': 'User not associated with any ISP'}), 403
             isp_id = current_user.isp_id
         
-        # Validate required fields
-        required_fields = ['username', 'password', 'device_name', 'device_ip', 'device_model', 'location']
+        # Validate required fields. username/password are optional in the wizard flow:
+        # when omitted we auto-generate a management user that the provisioning
+        # script creates on the router, so the server can connect back later.
+        required_fields = ['device_name', 'device_ip', 'device_model', 'location']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field} is required'}), 400
+
+        username = (data.get('username') or '').strip() or 'infora-mgmt'
+        password = data.get('password') or secrets.token_urlsafe(18)
         
         # Check ISP device limits
         isp = ISP.query.get(isp_id)
@@ -191,8 +203,8 @@ def create_device():
         
         # Create device
         device = MikrotikDevice(
-            username=data['username'],
-            password=encrypt_value(data['password']),
+            username=username,
+            password=encrypt_value(password),
             api_key=data.get('api_key'),
             api_port=data.get('api_port', 8728),
             ssh_port=data.get('ssh_port', 22),
@@ -651,6 +663,70 @@ def revoke_provision_token(device_id):
     device.provision_token_expires_at = None
     db.session.commit()
     return jsonify({'success': True, 'message': 'Provision token revoked'}), 200
+
+
+@devices_bp.route('/<int:device_id>/provision-status', methods=['GET'])
+@jwt_required()
+def device_provision_status(device_id):
+    """Has the router pulled its script and is it reachable? (wizard Step 2 polling)"""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    status = get_provision_status(device)
+
+    # Promote device status to ONLINE once it is reachable.
+    if status['online'] and device.device_status != DeviceStatus.ONLINE:
+        device.device_status = DeviceStatus.ONLINE
+        device.last_seen = datetime.now()
+        db.session.commit()
+
+    return jsonify(status), 200
+
+
+@devices_bp.route('/<int:device_id>/interfaces', methods=['GET'])
+@jwt_required()
+def device_interfaces(device_id):
+    """List ethernet interfaces for the bridge-port picker (wizard Step 3)."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    try:
+        interfaces = list_interfaces(device)
+    except Exception as exc:
+        return jsonify({'error': f'Could not read interfaces: {exc}', 'interfaces': []}), 502
+
+    return jsonify({'interfaces': interfaces}), 200
+
+
+@devices_bp.route('/<int:device_id>/configure-services', methods=['POST'])
+@jwt_required()
+def device_configure_services(device_id):
+    """Push bridge/pool/DHCP/PPPoE/Hotspot config to the router (wizard Step 3)."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    payload = request.get_json(silent=True) or {}
+    opts = {
+        'pppoe': bool(payload.get('pppoe')),
+        'hotspot': bool(payload.get('hotspot')),
+        'anti_sharing': bool(payload.get('anti_sharing')),
+        'bridge_ports': payload.get('bridge_ports') or [],
+        'subnet': payload.get('subnet') or '172.31.0.0/16',
+    }
+
+    result = configure_services(device, opts)
+
+    if result.get('success'):
+        device.service_config = json.dumps({**opts, 'summary': result.get('summary')})
+        db.session.commit()
+
+    return jsonify(result), (200 if result.get('success') else 502)
 
 
 @devices_bp.route('/<int:device_id>/management-tunnel-script', methods=['GET'])

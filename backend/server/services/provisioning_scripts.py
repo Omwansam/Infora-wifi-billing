@@ -7,6 +7,7 @@ Single source of truth used by both the authenticated download route
 from flask import current_app
 
 from models import ISP
+from services.encryption import decrypt_value
 from services.wireguard_management import resolve_radius_host_for_device
 
 
@@ -73,6 +74,22 @@ def build_radius_script(device, snmp_community='infora'):
         '',
         '# --- 6. Timezone (accurate accounting) ---',
         f':do {{ /system clock set time-zone-name={timezone} }} on-error={{}}',
+    ]
+
+    # --- 7. Billing management user + remote access (so the server can push service config) ---
+    mgmt_user = (device.username or '').strip()
+    mgmt_pass = decrypt_value(device.password) if device.password else None
+    if mgmt_user and mgmt_pass:
+        lines += [
+            '',
+            '# --- 7. Billing management user + API/SSH access ---',
+            f':do {{ /user remove [find name="{mgmt_user}"] }} on-error={{}}',
+            f'/user add name="{mgmt_user}" password="{mgmt_pass}" group=full comment="infora-billing"',
+            '/ip service set api disabled=no',
+            '/ip service set ssh disabled=no',
+        ]
+
+    lines += [
         '',
         ':log info "Infora provisioning applied"',
         ':put "Infora provisioning completed successfully."',

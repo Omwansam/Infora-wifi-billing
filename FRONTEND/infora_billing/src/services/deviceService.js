@@ -318,6 +318,47 @@ class DeviceService {
     }
     return data;
   }
+
+  /** Poll whether the router pulled its script and is reachable (wizard Step 2) */
+  async getProvisionStatus(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceProvisionStatus(deviceId), {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data;
+  }
+
+  /** List ethernet interfaces for the bridge-port picker (wizard Step 3) */
+  async getInterfaces(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceInterfaces(deviceId), {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data.interfaces || [];
+  }
+
+  /** Push service config (PPPoE/Hotspot/bridge/subnet) to the router (wizard Step 3) */
+  async configureServices(token, deviceId, opts) {
+    const response = await fetch(API_ENDPOINTS.deviceConfigureServices(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify(opts),
+    });
+    const data = await response.json().catch(() => ({}));
+    // 502 still returns a log we want to show; only throw on hard failures
+    if (!response.ok && response.status !== 502) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data;
+  }
 }
 
 export default new DeviceService();

@@ -354,6 +354,8 @@ class MikrotikDevice(db.Model):
     provision_token_expires_at = db.Column(db.DateTime, nullable=True)
     provision_last_fetched_at = db.Column(db.DateTime, nullable=True)
     provision_fetch_count = db.Column(db.Integer, default=0, nullable=False)
+    # JSON blob of applied service config (pppoe/hotspot/bridge ports/subnet)
+    service_config = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
 

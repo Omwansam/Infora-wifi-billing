@@ -191,6 +191,10 @@ class MikroTikClient:
         
         return result
     
+    def run_cli(self, command: str) -> Tuple[str, str]:
+        """Public: run a single RouterOS CLI command over SSH. Returns (stdout, stderr)."""
+        return self._ssh_execute_command(command)
+
     def _ssh_execute_command(self, command: str) -> Tuple[str, str]:
         """Execute command via SSH"""
         if not self.ssh_client:
