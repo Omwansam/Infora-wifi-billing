@@ -1,0 +1,44 @@
+# Add this server block to your EXISTING public nginx (dan-proxy / Vision).
+# Replace BILLING_DOMAIN and paths to match your server.
+#
+# Prerequisites on the billing host:
+#   1. Flask API on 127.0.0.1:5080  (docker-compose.prod.yml)
+#   2. Static files in /srv/infora-billing/frontend-dist  (npm run build — see CONTABO.md)
+#
+# Example hostnames:
+#   billing.ruirufactorymabati.com
+#   billing.visionmentors.org
+
+server {
+    listen 80;
+    server_name billing.ruirufactorymabati.com;
+
+    # Cloudflare terminates HTTPS; proxy may receive HTTP from CF (Flexible)
+    # or HTTPS if Full strict — adjust listen 443 ssl in your main proxy config.
+
+    root /srv/infora-billing/frontend-dist;
+    index index.html;
+
+    client_max_body_size 32m;
+
+    # Flask API
+    location /api/ {
+        proxy_pass http://127.0.0.1:5080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 120s;
+    }
+
+    # React SPA (admin + /portal)
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+
+# If dan-proxy runs INSIDE Docker and cannot reach 127.0.0.1 on the host, use:
+#   proxy_pass http://172.17.0.1:5080;
+# (default docker0 bridge gateway) or add infora_flask to the same compose network.

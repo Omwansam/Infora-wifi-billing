@@ -1,14 +1,15 @@
-# Production overlay for Contabo VPS + Cloudflare
-# Usage (on VPS at /srv/infora-billing):
-#   cp config/deployment/production.env.example .env   # edit secrets + CONTABO_IP
-#   ./scripts/deploy-contabo.sh
+# Production overlay — use WITH your existing host nginx (dan-proxy / Vision).
+# Billing does NOT bind ports 80/443. Flask listens on 127.0.0.1:5080 for the proxy.
 #
-# Stack: nginx (web) + flask (gunicorn) + postgres + freeradius + wireguard
-
-version: '3.8'
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Optional bundled nginx (only if 80/443 are free on the host):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile bundled-nginx up -d
 
 services:
   web:
+    profiles:
+      - bundled-nginx
     build:
       context: .
       dockerfile: config/nginx/Dockerfile
@@ -33,6 +34,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    ports: !override
+      - "127.0.0.1:5080:5000"
     environment:
       FLASK_ENV: production
       DATABASE_URL: ${DATABASE_URL}
@@ -58,8 +61,6 @@ services:
       - wireguard_configs:/app/wireguard_configs
       - ./config/freeradius/clients.conf:/config/freeradius/clients.conf
       - ./certs:/app/certs
-    expose:
-      - "5000"
     command: >
       sh -c "flask db upgrade &&
              flask initdb &&
@@ -69,7 +70,7 @@ services:
   postgres:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports: []
+    ports: !override []
     restart: unless-stopped
 
   freeradius:
@@ -78,7 +79,7 @@ services:
     restart: unless-stopped
 
   wireguard:
-    ports:
+    ports: !override
       - "51820:51820/udp"
       - "51821:51821/udp"
     volumes:
@@ -89,7 +90,7 @@ services:
 
   openldap:
     restart: unless-stopped
-    ports: []
+    ports: !override []
 
   ldap_admin:
     profiles:

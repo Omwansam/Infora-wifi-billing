@@ -40,8 +40,8 @@ Even in a separate folder, Docker **ports and container names** can still confli
 
 | Resource | Value |
 |----------|--------|
-| Host ports | `80`, `443`, `1812/udp`, `1813/udp`, `51820/udp`, `51821/udp` |
-| Container names | `infora_web`, `infora_flask`, `infora_postgres`, `infora_freeradius`, `infora_wireguard`, `infora_openldap` |
+| Host ports (billing only) | `127.0.0.1:5080` (API), `1812/udp`, `1813/udp`, `51820/udp`, `51821/udp` — **not** 80/443 when using dan-proxy |
+| Container names | `infora_flask`, `infora_postgres`, `infora_freeradius`, `infora_wireguard`, `infora_openldap` (optional `infora_web` with bundled-nginx profile) |
 
 **Before starting the new stack**, on the VPS:
 
@@ -61,6 +61,123 @@ docker compose down
 ```
 
 Leave the old files in `/opt`; only stop the containers. The new billing stack will run entirely from `/srv/infora-billing`.
+
+---
+
+## Part 2B — Shared server: Vision / dan-proxy already on port 80 (recommended)
+
+If `docker ps` shows something like `dan-proxy-1` on `0.0.0.0:80` and `0.0.0.0:443`, **do not start `infora_web`**. The billing stack is designed to run **behind your existing nginx**.
+
+### Architecture
+
+```text
+Internet → Cloudflare → dan-proxy (port 80/443)
+                              ├─ visionmentors.org      → ngo-website
+                              ├─ admin.visionmentors.org → admin
+                              └─ billing.ruirufactorymabati.com → static files + /api → Flask :5080
+```
+
+### What billing Docker runs (no port 80/443)
+
+| Service | Host binding |
+|---------|----------------|
+| `infora_flask` | `127.0.0.1:5080` → API only |
+| `infora_freeradius` | UDP 1812, 1813 |
+| `infora_wireguard` | UDP 51820, 51821 |
+| `infora_postgres` | internal only (no public 5432) |
+
+No `infora_web` container in the default production compose.
+
+### Step 1 — Start billing without bundled nginx
+
+```bash
+cd /srv/infora-billing
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+If you previously failed on `infora_web`:
+
+```bash
+docker rm -f infora_web 2>/dev/null || true
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+Verify Flask:
+
+```bash
+curl -s http://127.0.0.1:5080/api/test
+```
+
+### Step 2 — Build frontend static files
+
+On the VPS (requires Node 20+ once, or build locally and upload):
+
+```bash
+cd /srv/infora-billing/FRONTEND/infora_billing
+npm ci
+VITE_API_BASE_URL=https://billing.ruirufactorymabati.com \
+VITE_RADIUS_SERVER=YOUR_CONTABO_IP \
+npm run build
+mkdir -p /srv/infora-billing/frontend-dist
+rm -rf /srv/infora-billing/frontend-dist/*
+cp -r dist/* /srv/infora-billing/frontend-dist/
+```
+
+Use your real public URL in `VITE_API_BASE_URL` (e.g. `https://ruirufactorymabati.com` if apex, or `https://billing.ruirufactorymabati.com` if subdomain).
+
+Update `.env`:
+
+```bash
+VITE_API_BASE_URL=https://billing.ruirufactorymabati.com
+CORS_ORIGINS=https://billing.ruirufactorymabati.com
+```
+
+### Step 3 — Add vhost to dan-proxy (Vision nginx)
+
+Copy the example and edit the domain:
+
+```bash
+# Example lives in the billing repo:
+cat /srv/infora-billing/config/deployment/nginx-external-proxy.conf.example
+```
+
+Add a `server { ... }` block to your **dan-proxy** nginx config (wherever `dan-proxy-1` mounts its conf.d), using:
+
+- `root /srv/infora-billing/frontend-dist;`
+- `proxy_pass http://127.0.0.1:5080;` for `location /api/`
+
+If dan-proxy runs **inside Docker** and cannot use `127.0.0.1`, try:
+
+```nginx
+proxy_pass http://172.17.0.1:5080;
+```
+
+Reload Vision proxy:
+
+```bash
+docker exec dan-proxy-1 nginx -t
+docker exec dan-proxy-1 nginx -s reload
+```
+
+(Replace `dan-proxy-1` with your proxy container name.)
+
+### Step 4 — Cloudflare DNS for billing
+
+Either use the **apex** domain (proxied A → Contabo IP) or a **subdomain**:
+
+| Type | Name | Content | Proxy |
+|------|------|---------|--------|
+| A | `billing` | Contabo IP | Proxied |
+
+`MPESA_CALLBACK_URL` and `CORS_ORIGINS` in `.env` must match the exact URL users open in the browser.
+
+### Optional — bundled nginx (only on a clean VPS)
+
+If ports 80/443 are free:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile bundled-nginx up -d
+```
 
 ---
 
@@ -183,12 +300,7 @@ Or configure UFW manually:
 
 ```bash
 ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 1812/udp
-ufw allow 1813/udp
-ufw allow 51820/udp
-ufw allow 51821/udp
+ufw allow 80/tcpr
 ufw enable
 ufw status
 ```
@@ -425,6 +537,8 @@ All commands from `/srv/infora-billing`:
 cd /srv/infora-billing
 ```
 
+**If you use Vision / dan-proxy (Part 2B):** no `infora_web` — Flask binds `127.0.0.1:5080` only.
+
 ### 7.1 Build images
 
 ```bash
@@ -435,11 +549,11 @@ This builds:
 
 | Service | Image |
 |---------|--------|
-| **web** | React frontend + Nginx (`config/nginx/Dockerfile`) |
 | **flask_app** | API with gunicorn |
 | **freeradius** | RADIUS server |
 
-Uses upstream images for postgres, wireguard, openldap.
+Uses upstream images for postgres, wireguard, openldap.  
+(`web` is only built with `--profile bundled-nginx`.)
 
 First build can take several minutes.
 
@@ -455,44 +569,46 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
 
-Expected state **running**:
+Expected state **running** (default / behind external proxy):
 
-- `infora_web`
-- `infora_flask`
-- `infora_postgres`
+- `infora_flask` — ports `127.0.0.1:5080->5000/tcp`
+- `infora_postgres` — no public 5432
 - `infora_freeradius`
 - `infora_wireguard`
 - `infora_openldap`
 
-### 7.4 Rebuild web only (after SSL cert or frontend env change)
+Test API:
+
+```bash
+curl -s http://127.0.0.1:5080/api/test
+```
+
+### 7.4 Rebuild after code or `.env` changes
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build flask_app
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d flask_app
+```
+
+If you changed `VITE_*` in `.env`, rebuild frontend static files (Part 2B Step 2) and reload dan-proxy — no `infora_web` rebuild needed.
+
+**Only if using bundled nginx profile:**
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build web
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile bundled-nginx up -d web
 ```
-
-Rebuild **web** whenever you change `VITE_*` variables in `.env` or nginx SSL config.
 
 ### 7.5 View logs if something fails
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs flask_app
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs web
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs freeradius
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs wireguard
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs postgres
 ```
 
 Flask on first start runs `flask db upgrade` and `flask initdb` automatically.
-
-### 7.6 Optional: use the deploy script
-
-Same steps as 7.1–7.2 plus RADIUS client sync:
-
-```bash
-cd /srv/infora-billing
-./scripts/deploy-contabo.sh
-```
 
 ---
 
@@ -681,8 +797,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml <command>
 
 | Container | Role |
 |-----------|------|
-| `infora_web` | Nginx + React (ports 80, 443) |
-| `infora_flask` | API gunicorn (internal 5000) |
+| `infora_flask` | API gunicorn (`127.0.0.1:5080` → proxy) |
+| `infora_web` | Optional bundled nginx (`--profile bundled-nginx` only) |
 | `infora_postgres` | Database (internal only in prod) |
 | `infora_freeradius` | RADIUS 1812/1813 UDP |
 | `infora_wireguard` | WireGuard 51820/51821 UDP |
