@@ -5,15 +5,18 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withIspQuery(baseUrl, ispId) {
-  if (ispId == null || ispId === '') return baseUrl;
-  const sep = baseUrl.includes('?') ? '&' : '?';
-  return `${baseUrl}${sep}isp_id=${encodeURIComponent(ispId)}`;
+function withPortalQuery(baseUrl, ispId, routerId) {
+  const params = new URLSearchParams();
+  if (ispId != null && ispId !== '') params.set('isp_id', String(ispId));
+  if (routerId != null && routerId !== '') params.set('router_id', String(routerId));
+  const qs = params.toString();
+  if (!qs) return baseUrl;
+  return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}${qs}`;
 }
 
 export const portalService = {
-  async getConfig(ispId) {
-    const url = withIspQuery(API_ENDPOINTS.PORTAL_CONFIG, ispId);
+  async getConfig(ispId, routerId) {
+    const url = withPortalQuery(API_ENDPOINTS.PORTAL_CONFIG, ispId, routerId);
     const result = await apiCall(url);
     if (!result.success) {
       return { success: false, error: result.error };
@@ -27,7 +30,7 @@ export const portalService = {
 
   async getPlans(planType, ispId) {
     const base = `${API_ENDPOINTS.PORTAL_PLANS}?type=${encodeURIComponent(planType)}`;
-    const url = withIspQuery(base, ispId);
+    const url = withPortalQuery(base, ispId);
     const result = await apiCall(url);
     if (!result.success) {
       return { success: false, error: result.error };
@@ -39,7 +42,7 @@ export const portalService = {
     return { success: true, data: body.data };
   },
 
-  async purchaseHotspot({ planId, phone, fullName, ispId }) {
+  async purchaseHotspot({ planId, phone, fullName, ispId, routerId }) {
     const result = await apiCall(API_ENDPOINTS.PORTAL_HOTSPOT_PURCHASE, {
       method: 'POST',
       body: JSON.stringify({
@@ -47,6 +50,7 @@ export const portalService = {
         phone,
         full_name: fullName || undefined,
         isp_id: ispId || undefined,
+        router_id: routerId || undefined,
       }),
     });
     if (!result.success) {
@@ -56,6 +60,33 @@ export const portalService = {
     if (!body?.ok) {
       return { success: false, error: body?.message || 'Purchase failed' };
     }
+    return { success: true, data: body.data, message: body.message };
+  },
+
+  async lookupHotspot({ phone, username, ispId }) {
+    const result = await apiCall(API_ENDPOINTS.PORTAL_HOTSPOT_LOOKUP, {
+      method: 'POST',
+      body: JSON.stringify({ phone, username, isp_id: ispId || undefined }),
+    });
+    if (!result.success) return { success: false, error: result.error };
+    const body = result.data;
+    if (!body?.ok) return { success: false, error: body?.message || 'Not found' };
+    return { success: true, data: body.data };
+  },
+
+  async redeemVoucher({ code, phone, ispId, routerId }) {
+    const result = await apiCall(API_ENDPOINTS.PORTAL_HOTSPOT_VOUCHER, {
+      method: 'POST',
+      body: JSON.stringify({
+        code,
+        phone: phone || undefined,
+        isp_id: ispId || undefined,
+        router_id: routerId || undefined,
+      }),
+    });
+    if (!result.success) return { success: false, error: result.error };
+    const body = result.data;
+    if (!body?.ok) return { success: false, error: body?.message || 'Redeem failed' };
     return { success: true, data: body.data, message: body.message };
   },
 

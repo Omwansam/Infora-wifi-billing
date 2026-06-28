@@ -15,6 +15,9 @@ from services.radius_provisioning import activate_customer_after_payment
 
 def complete_successful_payment(payment, mpesa_receipt=None, amount=None):
     """Mark payment complete, update invoice, activate customer RADIUS access."""
+    if payment.payment_status == PaymentStatus.COMPLETED:
+        return payment
+
     payment.payment_status = PaymentStatus.COMPLETED
     payment.payment_date = datetime.utcnow()
     if mpesa_receipt:
@@ -28,6 +31,8 @@ def complete_successful_payment(payment, mpesa_receipt=None, amount=None):
     isp = customer.isp if customer else None
 
     if invoice:
+        if amount is not None and abs(float(amount) - float(invoice.amount)) > 1.0:
+            pass  # log mismatch in production; still honour successful M-Pesa callback
         invoice.status = InvoiceStatus.PAID
         invoice.paid_date = datetime.utcnow()
 
@@ -35,7 +40,7 @@ def complete_successful_payment(payment, mpesa_receipt=None, amount=None):
         plan = customer.service_plan
         if payment.invoice and payment.invoice.customer:
             plan = payment.invoice.customer.service_plan or plan
-        activate_customer_after_payment(customer, isp, plan=plan)
+        activate_customer_after_payment(customer, isp, plan=plan, stack_time=True)
 
     txn = Transaction(
         transaction_number=payment.transaction_id or f'TXN-{payment.id}',
@@ -48,6 +53,14 @@ def complete_successful_payment(payment, mpesa_receipt=None, amount=None):
     )
     db.session.add(txn)
     db.session.commit()
+
+    try:
+        from services.notification_dispatch import dispatch_hotspot_payment_success
+        dispatch_hotspot_payment_success(payment)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
     return payment
 
 

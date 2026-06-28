@@ -1,27 +1,43 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { Home, Loader2, Mail, Phone, Router, Shield } from 'lucide-react';
+import { Home, Loader2, Mail, Phone, Router, Shield, Ticket, Wifi } from 'lucide-react';
 import portalService from '../../services/portalService';
 import { BRAND, portalCompanyName, sanitizeBrandText } from '../../lib/brand';
+import { resolvePortalTheme } from '../../lib/portalThemes';
 import LumenLogo from '../brand/LumenLogo';
 import { PortalBackground, PortalFadeIn } from './PortalUI';
+import PortalAnnouncements from './PortalAnnouncements';
 
 export function usePortalContext() {
   const [searchParams] = useSearchParams();
   const ispParam = searchParams.get('isp') || searchParams.get('isp_id');
+  const routerParam = searchParams.get('router_id');
   const ispId = ispParam ? Number(ispParam) : undefined;
-  const query = ispParam ? `?isp=${ispParam}` : '';
-  return { ispId, query };
+  const routerId = routerParam ? Number(routerParam) : undefined;
+  const parts = [];
+  if (ispParam) parts.push(`isp_id=${encodeURIComponent(ispParam)}`);
+  if (routerParam) parts.push(`router_id=${encodeURIComponent(routerParam)}`);
+  const query = parts.length ? `?${parts.join('&')}` : '';
+  return { ispId, routerId, query };
 }
 
-const NAV_ITEMS = [
-  { id: 'home', label: 'Home', short: 'Home', to: '/portal', icon: Home },
-  { id: 'pppoe', label: 'My Account', short: 'Account', to: '/portal/pppoe', icon: Router },
-  { id: 'wireguard', label: 'WireGuard', short: 'VPN', to: '/portal/wireguard', icon: Shield },
-];
+function buildNavItems(modules) {
+  const items = [{ id: 'home', label: 'Buy WiFi', short: 'Buy', to: '/portal', icon: Home }];
+  if (modules?.hotspot_enabled !== false) {
+    items.push(
+      { id: 'voucher', label: 'Voucher', short: 'Voucher', to: '/portal/voucher', icon: Ticket },
+      { id: 'wifi', label: 'My WiFi', short: 'My WiFi', to: '/portal/access', icon: Wifi },
+    );
+  }
+  if (modules?.pppoe_enabled !== false) {
+    items.push({ id: 'pppoe', label: 'My Account', short: 'Account', to: '/portal/pppoe', icon: Router });
+  }
+  items.push({ id: 'wireguard', label: 'WireGuard', short: 'VPN', to: '/portal/wireguard', icon: Shield });
+  return items;
+}
 
 export default function PortalShell({ children, activeTab = 'home' }) {
-  const { ispId, query } = usePortalContext();
+  const { ispId, routerId, query } = usePortalContext();
   const location = useLocation();
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -31,7 +47,7 @@ export default function PortalShell({ children, activeTab = 'home' }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const result = await portalService.getConfig(ispId);
+      const result = await portalService.getConfig(ispId, routerId);
       if (cancelled) return;
       if (result.success) {
         setConfig(result.data);
@@ -44,7 +60,11 @@ export default function PortalShell({ children, activeTab = 'home' }) {
     return () => {
       cancelled = true;
     };
-  }, [ispId]);
+  }, [ispId, routerId]);
+
+  const theme = resolvePortalTheme(config?.portal_theme || config?.default_theme || 'clean');
+  const navItems = useMemo(() => buildNavItems(config?.modules), [config?.modules]);
+  const accentStyle = config?.theme_color ? { '--portal-accent': config.theme_color } : undefined;
 
   const companyName = portalCompanyName(config);
   const portalTagline = sanitizeBrandText(config?.tagline, BRAND.portalTagline);
@@ -52,10 +72,13 @@ export default function PortalShell({ children, activeTab = 'home' }) {
   const supportEmail = sanitizeBrandText(config?.support_email || config?.email, BRAND.supportEmail);
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-slate-950 text-white">
-      <PortalBackground />
+    <div
+      className={`relative min-h-screen overflow-x-hidden ${theme.pageBg}`}
+      style={accentStyle}
+    >
+      {theme.mode === 'dark' && <PortalBackground />}
 
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/70 backdrop-blur-xl">
+      <header className={`sticky top-0 z-40 border-b backdrop-blur-xl ${theme.headerBg}`}>
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <Link to={`/portal${query}`} className="flex min-w-0 items-center gap-3">
             {config?.logo_url ? (
@@ -76,7 +99,7 @@ export default function PortalShell({ children, activeTab = 'home' }) {
           </Link>
 
           <nav className="hidden items-center gap-1 rounded-2xl border border-white/10 bg-black/25 p-1 md:flex">
-            {NAV_ITEMS.map((tab) => {
+            {navItems.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
               return (
@@ -129,7 +152,8 @@ export default function PortalShell({ children, activeTab = 'home' }) {
 
         {!loading && !error && config && (
           <>
-            {children({ config: { ...config, tagline: portalTagline, about: portalAbout, company_name: companyName }, ispId, query })}
+            <PortalAnnouncements announcements={config.announcements} />
+            {children({ config: { ...config, tagline: portalTagline, about: portalAbout, company_name: companyName }, ispId, routerId, query })}
             <PortalFadeIn delay={0.2}>
               <footer className="mt-16 rounded-[1.75rem] border border-white/8 bg-black/25 p-8 backdrop-blur-sm">
                 <div className="grid gap-8 md:grid-cols-3">
@@ -157,7 +181,7 @@ export default function PortalShell({ children, activeTab = 'home' }) {
                   <div>
                     <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/40">Quick links</p>
                     <div className="flex flex-col gap-2 text-sm">
-                      {NAV_ITEMS.filter((n) => n.id !== 'home').map((tab) => (
+                      {navItems.filter((n) => n.id !== 'home').map((tab) => (
                         <Link
                           key={tab.id}
                           to={`${tab.to}${query}`}
@@ -181,7 +205,7 @@ export default function PortalShell({ children, activeTab = 'home' }) {
       {!loading && !error && config && (
         <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-slate-950/90 backdrop-blur-xl md:hidden">
           <div className="mx-auto flex max-w-lg justify-around px-2 py-2">
-            {NAV_ITEMS.map((tab) => {
+            {navItems.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id || location.pathname === tab.to;
               return (

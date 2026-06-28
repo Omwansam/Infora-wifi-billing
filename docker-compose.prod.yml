@@ -56,6 +56,10 @@ services:
       WIREGUARD_MGMT_ENDPOINT: ${WIREGUARD_MGMT_ENDPOINT:-${PUBLIC_SERVER_HOST}}
       WIREGUARD_MGMT_PORT: ${WIREGUARD_MGMT_PORT:-51821}
       CORS_ORIGINS: ${CORS_ORIGINS}
+      PROVISION_BASE_URL: ${PROVISION_BASE_URL:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ROUTER_TIMEZONE: ${ROUTER_TIMEZONE:-Africa/Nairobi}
+      LOGO_UPLOAD_DIR: /app/uploads/logos
       MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}
       MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
       MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
@@ -64,6 +68,7 @@ services:
       MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
     volumes: !override
       - wireguard_configs:/app/wireguard_configs
+      - isp_uploads:/app/uploads
       - ./config/freeradius/clients.conf:/config/freeradius/clients.conf
       - ./certs:/app/certs
     command: ["/app/docker-entrypoint.prod.sh"]

@@ -1,5 +1,20 @@
 """Resolve RADIUS-related limits from ServicePlan columns or features JSON."""
 import re
+from datetime import datetime, timedelta
+
+
+def plan_subscription_end(plan, from_time=None, stack_from=None):
+    """Return subscription end datetime. If stack_from is in the future, add duration to it."""
+    from_time = from_time or datetime.utcnow()
+    if plan.plan_type == 'hotspot':
+        hours = plan.duration_hours or 24
+        delta = timedelta(hours=hours)
+    else:
+        days = plan.billing_cycle_days or 30
+        delta = timedelta(days=days)
+    if stack_from and stack_from.replace(tzinfo=None) > from_time:
+        return stack_from.replace(tzinfo=None) + delta
+    return from_time + delta
 
 
 def _parse_speed_mbps(speed_str):

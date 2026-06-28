@@ -54,7 +54,7 @@ export default function CaptivePortalPage() {
 
   return (
     <PortalShell activeTab="home">
-      {({ config, ispId, query }) => (
+      {({ config, ispId, routerId, query }) => (
         <div className="space-y-12 lg:space-y-16">
           <PortalFadeIn>
             <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-emerald-500/15 via-teal-500/5 to-transparent p-8 sm:p-10 lg:p-12">
@@ -128,7 +128,7 @@ export default function CaptivePortalPage() {
           </PortalFadeIn>
 
           <PortalFadeIn delay={0.08}>
-            <HotspotPackagesSection config={config} ispId={ispId} />
+            <HotspotPackagesSection config={config} ispId={ispId} routerId={routerId} />
           </PortalFadeIn>
 
           <PortalFadeIn delay={0.12}>

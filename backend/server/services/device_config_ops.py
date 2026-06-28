@@ -212,15 +212,38 @@ def build_services_commands(opts):
 
     # 7. Hotspot (profile + server using RADIUS)
     if opts.get('hotspot'):
+        shared = '1' if opts.get('anti_sharing') else '3'
         steps.append((
             'hotspot',
             ':do {/ip hotspot remove [find name=infora]} on-error={}; '
             ':do {/ip hotspot profile remove [find name=infora]} on-error={}; '
             '/ip hotspot profile add name=infora hotspot-address='
-            f'{params["gateway"]} use-radius=yes radius-accounting=yes; '
+            f'{params["gateway"]} use-radius=yes radius-accounting=yes shared-users={shared}; '
             f'/ip hotspot add name=infora interface={BRIDGE_NAME} address-pool={POOL_NAME} '
             'profile=infora disabled=no',
         ))
+
+        # Walled garden — allow portal, API, payments, captive probes before auth
+        for host in opts.get('walled_garden_hosts') or []:
+            safe_host = host.replace('"', '').strip()
+            if not safe_host:
+                continue
+            steps.append((
+                f'walled-garden:{safe_host}',
+                f':do {{/ip hotspot walled-garden ip remove [find dst-host="{safe_host}"]}} on-error={{}}; '
+                f'/ip hotspot walled-garden ip add dst-host="{safe_host}" action=allow comment="infora"',
+            ))
+
+        # External captive portal — fetch redirect page that sends users to our SPA
+        redirect_api = (opts.get('captive_redirect_fetch_url') or '').replace('"', '')
+        if redirect_api:
+            steps.append((
+                'captive-login',
+                ':do {/file remove hotspot/login.html} on-error={}; '
+                f':do {{/tool fetch url="{redirect_api}" dst-path=hotspot/login.html mode=https}} on-error={{}}; '
+                '/ip hotspot profile set [find name=infora] html-directory=hotspot '
+                'login-by=http-chap,cookie,http-pap',
+            ))
 
     # 8. Hotspot anti-sharing (fix TTL so devices behind a shared NAT are detectable)
     if opts.get('hotspot') and opts.get('anti_sharing'):
@@ -352,6 +375,19 @@ def configure_services(device, opts):
     Returns a dict with success flag, ordered log, and a summary. Never raises
     on router-side failures — the log captures what happened for the UI.
     """
+    from models import ISP
+    from services.portal_urls import portal_hostnames, public_base_url
+
+    isp = ISP.query.get(device.isp_id) if device.isp_id else None
+    if opts.get('hotspot'):
+        if not opts.get('walled_garden_hosts'):
+            opts['walled_garden_hosts'] = portal_hostnames(isp)
+        base = public_base_url()
+        if base and isp and not opts.get('captive_redirect_fetch_url'):
+            opts['captive_redirect_fetch_url'] = (
+                f'{base}/api/portal/captive-redirect?isp_id={isp.id}&router_id={device.id}'
+            )
+
     log = [{'step': 'queued', 'status': 'ok', 'detail': 'Starting device configuration...'}]
     steps, params = build_services_commands(opts)
 

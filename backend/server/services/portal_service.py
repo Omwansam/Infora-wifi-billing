@@ -30,26 +30,16 @@ from services.brand_constants import (
 )
 from services.mpesa_service import MpesaError, initiate_stk_push
 from services.payment_processor import create_pending_mpesa_payment
+from services.hotspot_credentials import (
+    generate_hotspot_password,
+    hotspot_login_email,
+    hotspot_portal_email,
+    normalize_phone,
+)
 from services.radius_provisioning import (
     get_customer_radius_password,
     radius_username,
-    set_customer_radius_password,
 )
-
-
-def normalize_phone(phone):
-    digits = re.sub(r'\D', '', str(phone or ''))
-    if digits.startswith('0'):
-        digits = '254' + digits[1:]
-    elif digits.startswith('7') or digits.startswith('1'):
-        digits = '254' + digits
-    elif not digits.startswith('254'):
-        digits = '254' + digits
-    return digits
-
-
-def hotspot_portal_email(phone):
-    return f'{normalize_phone(phone)}@hotspot.portal'
 
 
 def get_default_isp(isp_id=None):
@@ -65,16 +55,28 @@ def get_portal_settings():
     return {row.key: row.value for row in rows}
 
 
-def get_portal_config(isp_id=None):
+def get_portal_config(isp_id=None, router_id=None):
     isp = get_default_isp(isp_id)
     if not isp:
         return None
 
+    from models import MikrotikDevice
+    from services.portal_urls import portal_entry_url
+
+    device = None
+    theme = getattr(isp, 'default_portal_theme', None) or 'clean'
+    if router_id:
+        device = MikrotikDevice.query.filter_by(id=router_id, isp_id=isp.id).first()
+        if device and device.portal_theme:
+            theme = device.portal_theme
+
     settings = get_portal_settings()
     company_name = sanitize_brand_text(isp.company_name, BRAND_COMPANY)
     isp_display_name = sanitize_brand_text(isp.name, BRAND_NAME)
+    support_phone = getattr(isp, 'support_phone', None) or settings.get('portal_support_phone', isp.phone)
     return {
         'isp_id': isp.id,
+        'router_id': device.id if device else router_id,
         'company_name': company_name,
         'name': isp_display_name,
         'tagline': sanitize_brand_text(
@@ -95,7 +97,7 @@ def get_portal_config(isp_id=None):
         'email': sanitize_brand_text(isp.email, BRAND_SUPPORT_EMAIL),
         'website': isp.website or BRAND_WEBSITE,
         'logo_url': isp.logo_url,
-        'support_phone': settings.get('portal_support_phone', isp.phone),
+        'support_phone': support_phone,
         'support_email': sanitize_brand_text(
             settings.get('portal_support_email', isp.email),
             BRAND_SUPPORT_EMAIL,
@@ -108,7 +110,42 @@ def get_portal_config(isp_id=None):
             'portal_pppoe_welcome',
             'Enter your account to check your package status or renew when your plan has ended.',
         ),
+        'hotspot_name': getattr(isp, 'hotspot_name', None) or isp_display_name,
+        'theme_color': getattr(isp, 'theme_color', None) or '#1BA449',
+        'portal_theme': theme,
+        'default_theme': getattr(isp, 'default_portal_theme', None) or 'clean',
+        'after_login_redirect_url': getattr(isp, 'after_login_redirect_url', None) or 'https://www.google.com',
+        'announcements': _live_announcements(isp.id),
+        'modules': {
+            'hotspot_enabled': bool(getattr(isp, 'hotspot_enabled', True)),
+            'pppoe_enabled': bool(getattr(isp, 'pppoe_enabled', True)),
+            'reseller_enabled': bool(getattr(isp, 'reseller_enabled', False)),
+        },
+        'portal_url': portal_entry_url(isp.id, device.id if device else router_id),
     }
+
+
+def _live_announcements(isp_id):
+    """Active, non-expired portal banners for this ISP (newest first)."""
+    try:
+        from models import PortalAnnouncement
+        rows = (
+            PortalAnnouncement.query.filter_by(isp_id=isp_id, is_active=True)
+            .order_by(PortalAnnouncement.created_at.desc())
+            .all()
+        )
+        return [
+            {
+                'id': a.id,
+                'title': a.title,
+                'type': a.type,
+                'message': a.message,
+            }
+            for a in rows
+            if a.is_live()
+        ]
+    except Exception:
+        return []
 
 
 def serialize_portal_plan(plan):
@@ -144,6 +181,11 @@ def _duration_label(plan):
 def list_portal_plans(isp_id, plan_type='hotspot'):
     isp = get_default_isp(isp_id)
     if not isp:
+        return []
+
+    if plan_type == 'hotspot' and hasattr(isp, 'hotspot_enabled') and isp.hotspot_enabled is False:
+        return []
+    if plan_type == 'pppoe' and hasattr(isp, 'pppoe_enabled') and isp.pppoe_enabled is False:
         return []
 
     return ServicePlan.query.filter_by(
@@ -307,7 +349,7 @@ def _create_invoice(customer, plan, isp):
 
 
 def find_or_create_hotspot_customer(isp, plan, phone, full_name=None):
-    email = hotspot_portal_email(phone)
+    email = hotspot_login_email(isp, phone)
     phone_norm = normalize_phone(phone)
 
     customer = Customer.query.filter_by(email=email, isp_id=isp.id).first()
@@ -322,7 +364,8 @@ def find_or_create_hotspot_customer(isp, plan, phone, full_name=None):
             isp_id=isp.id,
             service_plan_id=plan.id,
         )
-        set_customer_radius_password(customer)
+        from services.radius_provisioning import set_customer_radius_password
+        set_customer_radius_password(customer, password=generate_hotspot_password(isp))
         db.session.add(customer)
         db.session.flush()
     else:
@@ -330,9 +373,121 @@ def find_or_create_hotspot_customer(isp, plan, phone, full_name=None):
         customer.package = plan.name
         customer.connection_type = 'hotspot'
         if not customer.radius_password_encrypted:
-            set_customer_radius_password(customer)
+            from services.radius_provisioning import set_customer_radius_password
+            set_customer_radius_password(customer, password=generate_hotspot_password(isp))
 
     return customer
+
+
+def lookup_hotspot_customer(isp_id, phone=None, username=None):
+    isp = get_default_isp(isp_id)
+    if not isp:
+        return None, 'ISP not found'
+
+    account = (username or '').strip().lower()
+    if phone:
+        email = hotspot_login_email(isp, phone)
+        customer = Customer.query.filter_by(email=email, isp_id=isp.id, connection_type='hotspot').first()
+        if customer:
+            return customer, None
+        phone_norm = normalize_phone(phone)
+        customer = Customer.query.filter_by(phone=phone_norm, isp_id=isp.id, connection_type='hotspot').first()
+        if customer:
+            return customer, None
+
+    if account:
+        customer = Customer.query.filter(
+            Customer.isp_id == isp.id,
+            Customer.connection_type == 'hotspot',
+            Customer.email.ilike(account),
+        ).first()
+        if not customer:
+            rad = RadCheck.query.filter(
+                RadCheck.isp_id == isp.id,
+                RadCheck.username.ilike(account),
+                RadCheck.is_active == True,
+            ).first()
+            if rad and rad.customer_id:
+                customer = Customer.query.get(rad.customer_id)
+        if customer:
+            return customer, None
+
+    return None, 'No hotspot account found for that phone or username.'
+
+
+def serialize_hotspot_status(customer):
+    from services.radius_provisioning import get_customer_radius_password, radius_username
+    access = get_customer_access_state(customer)
+    plan = customer.service_plan
+    now = datetime.utcnow()
+    remaining = None
+    if customer.subscription_end and access['has_internet']:
+        delta = customer.subscription_end.replace(tzinfo=None) - now
+        remaining = max(0, int(delta.total_seconds()))
+
+    return {
+        'customer_id': customer.id,
+        'full_name': customer.full_name,
+        'phone': customer.phone,
+        'package': plan.name if plan else customer.package,
+        'access': access,
+        'subscription_end': customer.subscription_end.isoformat() if customer.subscription_end else None,
+        'remaining_seconds': remaining,
+        'wifi_credentials': {
+            'username': radius_username(customer),
+            'password': get_customer_radius_password(customer),
+        } if access['has_internet'] else None,
+        'after_login_redirect_url': None,
+    }
+
+
+def redeem_hotspot_voucher(isp_id, code, phone=None, router_id=None):
+    from models import HotspotAccessCode, MikrotikDevice
+    from services.radius_provisioning import activate_customer_after_payment
+
+    isp = get_default_isp(isp_id)
+    if not isp:
+        return None, 'ISP not found'
+    if hasattr(isp, 'hotspot_enabled') and isp.hotspot_enabled is False:
+        return None, 'Hotspot is not enabled for this network'
+
+    code = (code or '').strip().upper()
+    if not code:
+        return None, 'Voucher code is required'
+
+    voucher = HotspotAccessCode.query.filter_by(isp_id=isp.id, code=code).first()
+    if not voucher or not voucher.is_valid():
+        return None, 'Invalid or expired voucher code'
+
+    if voucher.device_id and router_id and voucher.device_id != int(router_id):
+        return None, 'This voucher is not valid for this location'
+
+    plan = ServicePlan.query.get(voucher.plan_id)
+    if not plan or not plan.is_active:
+        return None, 'Voucher plan is no longer available'
+
+    phone_norm = normalize_phone(phone) if phone else f'voucher{voucher.id}'
+    customer = find_or_create_hotspot_customer(isp, plan, phone_norm, full_name=f'Voucher {code}')
+    activate_customer_after_payment(customer, isp, plan=plan, stack_time=True)
+
+    voucher.use_count = (voucher.use_count or 0) + 1
+    voucher.used_at = datetime.utcnow()
+    voucher.used_by_customer_id = customer.id
+    if voucher.use_count >= voucher.max_uses:
+        voucher.status = 'used'
+
+    db.session.commit()
+
+    from services.radius_provisioning import get_customer_radius_password, radius_username
+    return {
+        'wifi_credentials': {
+            'username': radius_username(customer),
+            'password': get_customer_radius_password(customer),
+        },
+        'expires_at': customer.subscription_end.isoformat() if customer.subscription_end else None,
+        'access': get_customer_access_state(customer),
+        'plan': serialize_portal_plan(plan),
+    }, None
 
 
 def initiate_portal_payment(customer, plan, isp, phone, invoice=None):
@@ -370,10 +525,12 @@ def initiate_portal_payment(customer, plan, isp, phone, invoice=None):
     }
 
 
-def purchase_hotspot_package(isp_id, plan_id, phone, full_name=None):
+def purchase_hotspot_package(isp_id, plan_id, phone, full_name=None, router_id=None):
     isp = get_default_isp(isp_id)
     if not isp:
         return None, 'ISP not found'
+    if hasattr(isp, 'hotspot_enabled') and isp.hotspot_enabled is False:
+        return None, 'Hotspot purchases are not available on this network'
 
     plan = ServicePlan.query.filter_by(
         id=plan_id,
@@ -452,10 +609,6 @@ def get_portal_payment_status(checkout_request_id):
     return payload, None
 
 
-def plan_subscription_end(plan, from_time=None):
-    from_time = from_time or datetime.utcnow()
-    if plan.plan_type == 'hotspot':
-        hours = plan.duration_hours or 24
-        return from_time + timedelta(hours=hours)
-    days = plan.billing_cycle_days or 30
-    return from_time + timedelta(days=days)
+def plan_subscription_end(plan, from_time=None, stack_from=None):
+    from services.plan_utils import plan_subscription_end as _end
+    return _end(plan, from_time=from_time, stack_from=stack_from)

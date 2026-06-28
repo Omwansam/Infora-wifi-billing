@@ -29,6 +29,7 @@ from routes.wireguard import wireguard_bp
 from routes.monitoring import monitoring_bp
 from routes.health import health_bp
 from routes.provision import provision_bp
+from routes.settings import settings_bp
 from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
@@ -87,6 +88,7 @@ app.register_blueprint(wireguard_bp)
 app.register_blueprint(monitoring_bp)
 app.register_blueprint(health_bp)
 app.register_blueprint(provision_bp)
+app.register_blueprint(settings_bp)
 
 
 @app.before_request
@@ -206,6 +208,16 @@ def seed_network_command():
     with app.app_context():
         seed_sample_data()
         click.echo('Network management sample data seeded successfully.')
+
+
+@app.cli.command('purge-retention')
+@click.option('--dry-run', is_flag=True, help='Report counts without deleting')
+def purge_retention_command(dry_run):
+    """Purge expired hotspot data per ISP retention settings (cron: daily)."""
+    from services.data_retention import purge_expired_data
+    with app.app_context():
+        summary = purge_expired_data(dry_run=dry_run)
+        click.echo(f"Retention purge: {summary}")
 
 
 @app.cli.command('enforce-expiry')

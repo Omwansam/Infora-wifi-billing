@@ -169,17 +169,20 @@ def deprovision_customer_radius(customer, isp):
     db.session.flush()
 
 
-def activate_customer_after_payment(customer, isp, plan=None):
+def activate_customer_after_payment(customer, isp, plan=None, stack_time=True):
     """Mark customer active and provision RADIUS after successful payment."""
     plan = plan or customer.service_plan
+    now = datetime.utcnow()
     customer.status = CustomerStatus.ACTIVE
-    customer.last_payment_date = datetime.utcnow()
-    customer.subscription_start = datetime.utcnow()
+    customer.last_payment_date = now
     customer.balance = 0
 
     if plan:
-        from services.portal_service import plan_subscription_end
-        customer.subscription_end = plan_subscription_end(plan)
+        from services.plan_utils import plan_subscription_end
+        stack_from = customer.subscription_end if stack_time else None
+        customer.subscription_end = plan_subscription_end(plan, from_time=now, stack_from=stack_from)
+        if not customer.subscription_start or (stack_from and stack_from.replace(tzinfo=None) <= now):
+            customer.subscription_start = now
         customer.service_plan_id = plan.id
         customer.package = plan.name
         if plan.plan_type == 'hotspot':

@@ -93,7 +93,7 @@ function PlanCard({ plan, features, isPopular, onSelect, delay }) {
   );
 }
 
-export default function HotspotPackagesSection({ config, ispId, sectionId = 'wifi-packages' }) {
+export default function HotspotPackagesSection({ config, ispId, routerId, sectionId = 'wifi-packages' }) {
   const [plans, setPlans] = useState([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [plansError, setPlansError] = useState('');
@@ -144,6 +144,7 @@ export default function HotspotPackagesSection({ config, ispId, sectionId = 'wif
                 phone,
                 fullName,
                 ispId,
+                routerId,
               })
             }
           />

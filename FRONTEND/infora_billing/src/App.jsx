@@ -55,6 +55,8 @@ import FinanceExpensesPage from './components/finance/FinanceExpensesPage';
 import FinanceReportsPage from './components/finance/FinanceReportsPage';
 import CustomerKycPage from './components/customers/CustomerKycPage';
 import PlaceholderPage from './components/placeholder/PlaceholderPage';
+import HotspotVoucherPage from './components/portal/HotspotVoucherPage';
+import HotspotAccessPage from './components/portal/HotspotAccessPage';
 import CaptivePortalPage from './components/portal/CaptivePortalPage';
 import PppoePortalPage from './components/portal/PppoePortalPage';
 import WireGuardPortalPage from './components/portal/WireGuardPortalPage';
@@ -75,6 +77,8 @@ function AppRoutes() {
       
       {/* Public captive portal — no login required */}
       <Route path="/portal" element={<CaptivePortalPage />} />
+      <Route path="/portal/voucher" element={<HotspotVoucherPage />} />
+      <Route path="/portal/access" element={<HotspotAccessPage />} />
       <Route path="/portal/hotspot" element={<Navigate to="/portal#wifi-packages" replace />} />
       <Route path="/portal/pppoe" element={<PppoePortalPage />} />
       <Route path="/portal/wireguard" element={<WireGuardPortalPage />} />

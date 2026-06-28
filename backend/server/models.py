@@ -360,6 +360,8 @@ class MikrotikDevice(db.Model):
     os_version = db.Column(db.String(50), nullable=True)
     firmware_latest = db.Column(db.String(50), nullable=True)
     last_backup_at = db.Column(db.DateTime, nullable=True)
+    # Captive-portal theme override for this router (Settings > Captive Portal)
+    portal_theme = db.Column(db.String(30), nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
 
@@ -1094,6 +1096,110 @@ class SystemSetting(db.Model):
     def __repr__(self):
         return f"<SystemSetting {self.key} ({self.value})>" 
 
+
+# =========================
+#   Notification Settings
+# =========================
+
+class NotificationSetting(db.Model):
+    """Per-ISP, per-event, per-channel notification preference + custom template.
+
+    The catalogue of available events/channels lives in
+    ``services.notification_events``; this table only stores overrides
+    (enabled flag + optional custom message body) keyed by ``event_key`` +
+    ``channel``. A missing row means "use the catalogue default".
+    """
+    __tablename__ = 'notification_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    event_key = db.Column(db.String(80), nullable=False)
+    channel = db.Column(db.String(20), nullable=False)  # sms | email
+    enabled = db.Column(db.Boolean, default=False)
+    template = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', back_populates='notification_settings')
+
+    __table_args__ = (
+        db.UniqueConstraint('isp_id', 'event_key', 'channel', name='uq_notification_setting'),
+    )
+
+    def __repr__(self):
+        return f"<NotificationSetting {self.event_key}/{self.channel} enabled={self.enabled}>"
+
+
+# =========================
+#   Portal Announcements
+# =========================
+
+class PortalAnnouncement(db.Model):
+    """Banner shown to customers at the top of the captive portal page."""
+    __tablename__ = 'portal_announcements'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    title = db.Column(db.String(200), nullable=False)
+    type = db.Column(db.String(20), default='info')  # info | warning | success | error
+    message = db.Column(db.Text, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', back_populates='portal_announcements')
+
+    def is_live(self):
+        if not self.is_active:
+            return False
+        if self.expires_at and self.expires_at < datetime.utcnow():
+            return False
+        return True
+
+    def __repr__(self):
+        return f"<PortalAnnouncement {self.title!r} active={self.is_active}>"
+
+
+# =========================
+#   Hotspot Access Codes (WiFi vouchers)
+# =========================
+
+class HotspotAccessCode(db.Model):
+    """Pre-generated WiFi access code redeemable on the captive portal."""
+    __tablename__ = 'hotspot_access_codes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('service_plans.id'), nullable=False)
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=True)
+    code = db.Column(db.String(50), nullable=False, index=True)
+    status = db.Column(db.String(20), default='unused')  # unused | used | expired
+    max_uses = db.Column(db.Integer, default=1)
+    use_count = db.Column(db.Integer, default=0)
+    used_by_customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    used_at = db.Column(db.DateTime, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', backref='hotspot_access_codes')
+    plan = db.relationship('ServicePlan')
+    device = db.relationship('MikrotikDevice')
+
+    __table_args__ = (
+        db.UniqueConstraint('isp_id', 'code', name='uq_hotspot_access_code'),
+    )
+
+    def is_valid(self):
+        if self.expires_at and self.expires_at.replace(tzinfo=None) < datetime.utcnow():
+            return False
+        if (self.use_count or 0) >= (self.max_uses or 1):
+            return False
+        return self.status != 'expired'
+
+    def __repr__(self):
+        return f"<HotspotAccessCode {self.code} ({self.status})>"
+
+
 # =========================
 #   LDAP Server Model
 # =========================
@@ -1533,6 +1639,26 @@ class ISP(db.Model):
     max_customers = db.Column(db.Integer, default=100)
     api_key = db.Column(db.String(100), unique=True, nullable=False)
     radius_secret = db.Column(db.String(100), nullable=True)
+
+    # --- Branding & general settings (Settings > General) ---
+    hotspot_name = db.Column(db.String(120), nullable=True)
+    support_phone = db.Column(db.String(30), nullable=True)
+    theme_color = db.Column(db.String(20), nullable=True, default='#1BA449')
+    currency = db.Column(db.String(10), nullable=True, default='KES')
+    custom_domain = db.Column(db.String(255), nullable=True)
+    data_retention_days = db.Column(db.Integer, nullable=True)
+    hotspot_username_prefix = db.Column(db.String(30), nullable=True)
+    hotspot_password_length = db.Column(db.Integer, nullable=True)
+
+    # --- Modules (Settings > Modules) ---
+    pppoe_enabled = db.Column(db.Boolean, default=True)
+    hotspot_enabled = db.Column(db.Boolean, default=True)
+    reseller_enabled = db.Column(db.Boolean, default=False)
+
+    # --- Captive portal (Settings > Captive Portal) ---
+    default_portal_theme = db.Column(db.String(30), nullable=True, default='clean')
+    after_login_redirect_url = db.Column(db.String(500), nullable=True)
+
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
     
@@ -1545,6 +1671,8 @@ class ISP(db.Model):
     radius_sessions = db.relationship('RadiusSession', back_populates='isp')
     network_zones = db.relationship('NetworkZone', back_populates='isp')
     wireguard_servers = db.relationship('WireGuardServer', back_populates='isp')
+    notification_settings = db.relationship('NotificationSetting', back_populates='isp', cascade='all, delete-orphan')
+    portal_announcements = db.relationship('PortalAnnouncement', back_populates='isp', cascade='all, delete-orphan')
     
     def __repr__(self):
         return f"<ISP {self.name} ({self.company_name})>"

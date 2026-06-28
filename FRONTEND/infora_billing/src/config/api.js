@@ -57,6 +57,18 @@ export const API_ENDPOINTS = {
   // ISP endpoints
   ISPS: `${API_BASE_URL}/api/isps`,
   ISP_STATS: `${API_BASE_URL}/api/isps/stats`,
+
+  // Settings (organisation-level config)
+  SETTINGS_GENERAL: `${API_BASE_URL}/api/settings/general`,
+  SETTINGS_LOGO: `${API_BASE_URL}/api/settings/logo`,
+  SETTINGS_CUSTOM_DOMAIN: `${API_BASE_URL}/api/settings/custom-domain`,
+  SETTINGS_MODULES: `${API_BASE_URL}/api/settings/modules`,
+  SETTINGS_NOTIFICATIONS: `${API_BASE_URL}/api/settings/notifications`,
+  SETTINGS_PORTAL: `${API_BASE_URL}/api/settings/portal`,
+  SETTINGS_ANNOUNCEMENTS: `${API_BASE_URL}/api/settings/announcements`,
+  SETTINGS_SUBSCRIPTION: `${API_BASE_URL}/api/settings/subscription`,
+  settingsRouterTheme: (deviceId) => `${API_BASE_URL}/api/settings/portal/router/${deviceId}`,
+  settingsAnnouncement: (id) => `${API_BASE_URL}/api/settings/announcements/${id}`,
   
   // RADIUS endpoints
   RADIUS_CLIENTS: `${API_BASE_URL}/api/radius/clients`,
@@ -123,6 +135,8 @@ export const API_ENDPOINTS = {
   PORTAL_CONFIG: `${API_BASE_URL}/api/portal/config`,
   PORTAL_PLANS: `${API_BASE_URL}/api/portal/plans`,
   PORTAL_HOTSPOT_PURCHASE: `${API_BASE_URL}/api/portal/hotspot/purchase`,
+  PORTAL_HOTSPOT_LOOKUP: `${API_BASE_URL}/api/portal/hotspot/lookup`,
+  PORTAL_HOTSPOT_VOUCHER: `${API_BASE_URL}/api/portal/hotspot/voucher`,
   PORTAL_PPPOE_LOOKUP: `${API_BASE_URL}/api/portal/pppoe/lookup`,
   PORTAL_PPPOE_PAY: `${API_BASE_URL}/api/portal/pppoe/pay`,
   PORTAL_PAYMENT_STATUS: `${API_BASE_URL}/api/portal/payment/status`,
