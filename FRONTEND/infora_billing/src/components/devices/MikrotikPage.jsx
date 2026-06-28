@@ -212,6 +212,19 @@ export default function MikrotikPage() {
     }
   };
 
+  if (showWizard) {
+    return (
+      <AddDeviceWizard
+        isps={isps}
+        onClose={() => setShowWizard(false)}
+        onSuccess={() => {
+          setShowWizard(false);
+          loadDevices();
+        }}
+      />
+    );
+  }
+
   return (
     <DevicesLayout
       title="Mikrotik Routers"
@@ -424,14 +437,6 @@ export default function MikrotikPage() {
             </motion.div>
           ))}
         </div>
-      )}
-
-      {showWizard && (
-        <AddDeviceWizard
-          isps={isps}
-          onClose={() => setShowWizard(false)}
-          onSuccess={loadDevices}
-        />
       )}
 
       {provisionModal && (

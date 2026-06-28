@@ -44,15 +44,47 @@ def _ssh_config(device, timeout=8):
     )
 
 
+def _parse_kv(output):
+    """Parse RouterOS 'name: value' print output into a dict."""
+    info = {}
+    for line in (output or '').splitlines():
+        if ':' in line:
+            key, _, value = line.partition(':')
+            info[key.strip()] = value.strip()
+    return info
+
+
+def _detect_router_info(client):
+    """Best-effort read of board-name + RouterOS version from a connected router."""
+    detected = {}
+    try:
+        out, _err = client.run_cli('/system resource print')
+        info = _parse_kv(out)
+        if info.get('board-name'):
+            detected['model'] = info['board-name']
+        if info.get('version'):
+            detected['version'] = info['version']
+    except Exception:
+        pass
+    return detected
+
+
 def get_provision_status(device):
-    """Return whether the router fetched its script and is reachable."""
+    """Return whether the router fetched its script and is reachable.
+
+    When reachable, also auto-detects the router model/version so the operator
+    never has to type them in (they are read straight off the device).
+    """
     fetched = bool(device.provision_fetch_count and device.provision_fetch_count > 0)
     host = connection_host(device)
     reachable = False
     error = None
+    detected = {}
     try:
         with MikroTikClient(_ssh_config(device, timeout=5)) as client:
             reachable = bool(client.connect())
+            if reachable:
+                detected = _detect_router_info(client)
     except Exception as exc:  # connection refused / timeout / auth — all "not reachable yet"
         error = str(exc)
 
@@ -64,6 +96,7 @@ def get_provision_status(device):
         'online': reachable,
         'host': host,
         'management_wg_ip': device.management_wg_ip,
+        'detected': detected,
         'error': error,
     }
 

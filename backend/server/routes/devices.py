@@ -182,17 +182,20 @@ def create_device():
                 return jsonify({'error': 'User not associated with any ISP'}), 403
             isp_id = current_user.isp_id
         
-        # Validate required fields. username/password are optional in the wizard flow:
-        # when omitted we auto-generate a management user that the provisioning
-        # script creates on the router, so the server can connect back later.
-        required_fields = ['device_name', 'device_ip', 'device_model', 'location']
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({'error': f'{field} is required'}), 400
+        # Only the identity (device_name) is required in the wizard flow.
+        # The NAS IP, model and location are auto-discovered: the NAS IP comes
+        # from the management tunnel, and the model/version are read from the
+        # router once it checks in (see /provision-status). Callers may still
+        # pass them explicitly. username/password are auto-generated when absent.
+        if not data.get('device_name'):
+            return jsonify({'error': 'device_name is required'}), 400
 
         username = (data.get('username') or '').strip() or 'infora-mgmt'
         password = data.get('password') or secrets.token_urlsafe(18)
-        
+        device_model = (data.get('device_model') or '').strip() or 'Auto-detect'
+        location = (data.get('location') or '').strip() or '—'
+        explicit_ip = (data.get('device_ip') or '').strip()
+
         # Check ISP device limits
         isp = ISP.query.get(isp_id)
         if not isp:
@@ -200,7 +203,11 @@ def create_device():
         current_device_count = MikrotikDevice.query.filter_by(isp_id=isp_id).count()
         if current_device_count >= isp.max_devices:
             return jsonify({'error': f'ISP device limit reached ({isp.max_devices} devices)'}), 400
-        
+
+        # Default to the management tunnel (Centipid-style) so the NAS IP and
+        # remote access are assigned automatically without the operator typing them.
+        wants_tunnel = bool(data.get('management_wg_enabled', True))
+
         # Create device
         device = MikrotikDevice(
             username=username,
@@ -211,22 +218,29 @@ def create_device():
             connection_type=data.get('connection_type', 'api'),
             use_ssl=data.get('use_ssl', True),
             device_name=data['device_name'],
-            device_ip=data['device_ip'],
-            device_model=data['device_model'],
-            device_status=DeviceStatus.ONLINE,
-            location=data['location'],
+            device_ip=explicit_ip or '0.0.0.0',  # placeholder until tunnel/auto-detect
+            device_model=device_model,
+            device_status=DeviceStatus.OFFLINE,  # flips to ONLINE once the router checks in
+            location=location,
             notes=data.get('notes', ''),
             is_active=data.get('is_active', True),
             zone_id=data.get('zone_id'),
             isp_id=isp_id,
-            management_wg_enabled=bool(data.get('management_wg_enabled', False)),
+            management_wg_enabled=wants_tunnel,
         )
-        
+
         db.session.add(device)
         db.session.flush()
 
-        if device.management_wg_enabled:
-            provision_device_management_tunnel(device)
+        if wants_tunnel:
+            try:
+                provision_device_management_tunnel(device)
+                # The tunnel IP is the NAS IP that FreeRADIUS sees for this router.
+                if not explicit_ip and device.management_wg_ip:
+                    device.device_ip = device.management_wg_ip.split('/')[0]
+            except Exception as tunnel_err:  # WG infra unavailable — degrade gracefully
+                current_app.logger.warning('Management tunnel provisioning failed: %s', tunnel_err)
+                device.management_wg_enabled = False
 
         db.session.commit()
 
@@ -675,11 +689,21 @@ def device_provision_status(device_id):
         return jsonify({'error': 'Access denied'}), 403
 
     status = get_provision_status(device)
+    dirty = False
 
     # Promote device status to ONLINE once it is reachable.
     if status['online'] and device.device_status != DeviceStatus.ONLINE:
         device.device_status = DeviceStatus.ONLINE
         device.last_seen = datetime.now()
+        dirty = True
+
+    # Auto-fill the model from what the router reports (operator never types it).
+    detected = status.get('detected') or {}
+    if detected.get('model') and (not device.device_model or device.device_model == 'Auto-detect'):
+        device.device_model = detected['model'][:50]
+        dirty = True
+
+    if dirty:
         db.session.commit()
 
     return jsonify(status), 200
