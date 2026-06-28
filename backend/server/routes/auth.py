@@ -1,12 +1,14 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
-    create_access_token, create_refresh_token, jwt_required, 
-    get_jwt_identity, get_jwt, verify_jwt_in_request
+    jwt_required,
+    get_jwt,
+    verify_jwt_in_request,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import timedelta, datetime
+from datetime import datetime
 from extensions import db
 from models import User
+from auth_utils import create_user_tokens, get_user_id_from_jwt
 
 
 
@@ -46,23 +48,7 @@ def login():
         user.last_login = datetime.now()
         db.session.commit()
 
-        # Create JWT identity payload
-        identity_payload = {
-            "id": user.id,
-            "email": user.email,
-            "role": user.role,
-            "is_admin": user.role == 'admin'
-        }
-
-        # Generate tokens
-        access_token = create_access_token(
-            identity=identity_payload,
-            expires_delta=timedelta(hours=24)
-        )
-        refresh_token = create_refresh_token(
-            identity=identity_payload,
-            expires_delta=timedelta(days=30)
-        )
+        access_token, refresh_token = create_user_tokens(user)
 
         return jsonify({
             "success": True,
@@ -133,18 +119,7 @@ def register():
         db.session.add(user)
         db.session.commit()
         
-        # Create access token
-        identity_payload = {
-            "id": user.id,
-            "email": user.email,
-            "role": user.role,
-            "is_admin": user.role == 'admin'
-        }
-        
-        access_token = create_access_token(
-            identity=identity_payload,
-            expires_delta=timedelta(hours=24)
-        )
+        access_token, _refresh_token = create_user_tokens(user)
         
         return jsonify({
             'success': True,
@@ -171,9 +146,7 @@ def register():
 def get_profile():
     """Get current user profile"""
     try:
-        identity = get_jwt_identity()
-        user_id = identity.get('id') if isinstance(identity, dict) else identity
-        
+        user_id = get_user_id_from_jwt()
         user = User.query.get(user_id)
         
         if not user:
@@ -203,9 +176,7 @@ def get_profile():
 def update_profile():
     """Update current user profile"""
     try:
-        identity = get_jwt_identity()
-        user_id = identity.get('id') if isinstance(identity, dict) else identity
-        
+        user_id = get_user_id_from_jwt()
         user = User.query.get(user_id)
         
         if not user:
@@ -256,9 +227,7 @@ def update_profile():
 def change_password():
     """Change user password"""
     try:
-        identity = get_jwt_identity()
-        user_id = identity.get('id') if isinstance(identity, dict) else identity
-        
+        user_id = get_user_id_from_jwt()
         user = User.query.get(user_id)
         
         if not user:
@@ -302,8 +271,7 @@ def change_password():
 def get_users():
     """Get all users (admin only)"""
     try:
-        identity = get_jwt_identity()
-        user_id = identity.get('id') if isinstance(identity, dict) else identity
+        user_id = get_user_id_from_jwt()
         current_user = User.query.get(user_id)
         
         if not current_user or current_user.role != 'admin':
@@ -352,8 +320,7 @@ def get_users():
 def get_user(user_id):
     """Get specific user by ID (admin only)"""
     try:
-        identity = get_jwt_identity()
-        current_user_id = identity.get('id') if isinstance(identity, dict) else identity
+        current_user_id = get_user_id_from_jwt()
         current_user = User.query.get(current_user_id)
         
         if not current_user or current_user.role != 'admin':
@@ -384,8 +351,7 @@ def get_user(user_id):
 def update_user(user_id):
     """Update user (admin only)"""
     try:
-        identity = get_jwt_identity()
-        current_user_id = identity.get('id') if isinstance(identity, dict) else identity
+        current_user_id = get_user_id_from_jwt()
         current_user = User.query.get(current_user_id)
         
         if not current_user or current_user.role != 'admin':
@@ -440,8 +406,7 @@ def update_user(user_id):
 def delete_user(user_id):
     """Delete user (admin only)"""
     try:
-        identity = get_jwt_identity()
-        current_user_id = identity.get('id') if isinstance(identity, dict) else identity
+        current_user_id = get_user_id_from_jwt()
         current_user = User.query.get(current_user_id)
         
         if not current_user or current_user.role != 'admin':
@@ -468,25 +433,12 @@ def delete_user(user_id):
 def refresh():
     """Refresh access token"""
     try:
-        identity = get_jwt_identity()
-        user_id = identity.get('id') if isinstance(identity, dict) else identity
-        
+        user_id = get_user_id_from_jwt()
         user = User.query.get(user_id)
         if not user or not user.is_active:
             return jsonify({'error': 'User not found or inactive'}), 401
         
-        # Create new access token
-        new_identity_payload = {
-            "id": user.id,
-            "email": user.email,
-            "role": user.role,
-            "is_admin": user.role == 'admin'
-        }
-        
-        access_token = create_access_token(
-            identity=new_identity_payload,
-            expires_delta=timedelta(hours=24)
-        )
+        access_token, _refresh_token = create_user_tokens(user)
         
         return jsonify({
             'success': True,
@@ -517,9 +469,7 @@ def logout():
 def verify_token():
     """Verify if the current token is valid"""
     try:
-        identity = get_jwt_identity()
-        user_id = identity.get('id') if isinstance(identity, dict) else identity
-        
+        user_id = get_user_id_from_jwt()
         user = User.query.get(user_id)
         if not user:
             return jsonify({'error': 'User not found'}), 404

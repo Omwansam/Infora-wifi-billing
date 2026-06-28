@@ -35,7 +35,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports: !override
-      - "127.0.0.1:5080:5000"
+      - "5080:5000"
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      freeradius:
+        condition: service_started
     environment:
       FLASK_ENV: production
       DATABASE_URL: ${DATABASE_URL}
@@ -57,14 +62,11 @@ services:
       MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
       MPESA_PASSKEY: ${MPESA_PASSKEY:-}
       MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
-    volumes:
+    volumes: !override
       - wireguard_configs:/app/wireguard_configs
       - ./config/freeradius/clients.conf:/config/freeradius/clients.conf
       - ./certs:/app/certs
-    command: >
-      sh -c "flask db upgrade &&
-             flask initdb &&
-             gunicorn --bind 0.0.0.0:5000 --workers 4 --threads 2 --timeout 120 'server.app:app'"
+    command: ["/app/docker-entrypoint.prod.sh"]
     restart: unless-stopped
 
   postgres:
@@ -89,6 +91,8 @@ services:
     restart: unless-stopped
 
   openldap:
+    profiles:
+      - ldap
     restart: unless-stopped
     ports: !override []
 

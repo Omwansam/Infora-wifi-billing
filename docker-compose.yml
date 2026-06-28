@@ -48,8 +48,6 @@ services:
         condition: service_healthy
       freeradius:
         condition: service_started
-      openldap:
-        condition: service_started
     networks:
       - infora_network
     command: >

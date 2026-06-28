@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta
-
+from datetime import datetime
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required
+from flask_jwt_extended import jwt_required
 from werkzeug.security import generate_password_hash
-
-from auth_utils import get_current_user
+from auth_utils import create_user_tokens, get_current_user
 from extensions import db
 from models import (
     Customer,
@@ -135,14 +133,7 @@ def _create_inquiry(data, source):
 
 
 def _auth_payload(user):
-    identity = {
-        'id': user.id,
-        'email': user.email,
-        'role': user.role,
-        'is_admin': user.role == 'admin',
-    }
-    access_token = create_access_token(identity=identity, expires_delta=timedelta(hours=24))
-    refresh_token = create_refresh_token(identity=identity, expires_delta=timedelta(days=30))
+    access_token, refresh_token = create_user_tokens(user)
     return {
         'success': True,
         'access_token': access_token,

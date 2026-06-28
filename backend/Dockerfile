@@ -1,9 +1,7 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -14,27 +12,16 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Pipfile and Pipfile.lock
-COPY Pipfile Pipfile.lock ./
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install pipenv and dependencies
-RUN pip install pipenv && \
-    pipenv install --system --deploy && \
-    pip install gunicorn==21.2.0
-
-# Copy application code
 COPY . .
+RUN mkdir -p /app/certs && chmod +x /app/docker-entrypoint.prod.sh
 
-# Create certificates directory
-RUN mkdir -p /app/certs
-
-# Set environment variables
 ENV FLASK_APP=server/app.py
-ENV FLASK_ENV=development
+ENV FLASK_ENV=production
 ENV PYTHONPATH=/app
 
-# Expose port
 EXPOSE 5000
 
-# Run the application
-CMD ["python", "server/app.py"]
+CMD ["/app/docker-entrypoint.prod.sh"]
