@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Clock, Loader2, Wifi } from 'lucide-react';
 import PortalShell from './PortalShell';
-import { CopyCredential, PortalFadeIn, PortalGlassCard, PortalButton } from './PortalUI';
+import { CopyCredential, PortalFadeIn, PortalGlassCard, PortalButton, PortalInput, PortalLabel } from './PortalUI';
+import { portalClasses, usePortalTheme } from './PortalThemeContext';
 import portalService from '../../services/portalService';
 
 function formatRemaining(seconds) {
@@ -21,6 +22,8 @@ export default function HotspotAccessPage() {
 }
 
 function AccessLookup({ ispId }) {
+  const { isLight, accent } = usePortalTheme();
+  const cx = portalClasses(isLight);
   const [phone, setPhone] = useState('');
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,38 +45,36 @@ function AccessLookup({ ispId }) {
   };
 
   return (
-    <PortalFadeIn className="mx-auto max-w-lg space-y-6">
+    <PortalFadeIn className="mx-auto max-w-lg space-y-5">
       <PortalGlassCard>
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-500/20">
-            <Wifi className="h-5 w-5 text-cyan-300" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl" style={{ backgroundColor: `${accent}18` }}>
+            <Wifi className="h-5 w-5" style={{ color: accent }} />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white">My WiFi access</h2>
-            <p className="text-sm text-white/55">Recover credentials or check time remaining</p>
+            <h2 className={`text-xl font-bold ${cx.text}`}>My WiFi access</h2>
+            <p className={`text-sm ${cx.textMuted}`}>Recover credentials or check time remaining</p>
           </div>
         </div>
         <form onSubmit={lookup} className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-white/45">Phone number</label>
-            <input
+            <PortalLabel>Phone number</PortalLabel>
+            <PortalInput
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="254700000000"
-              className="w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 text-white placeholder:text-white/30 focus:border-emerald-400/50 focus:outline-none"
             />
           </div>
-          <p className="text-center text-xs text-white/35">or</p>
+          <p className={`text-center text-xs ${cx.textSubtle}`}>or</p>
           <div>
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-white/45">Username</label>
-            <input
+            <PortalLabel>Username</PortalLabel>
+            <PortalInput
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Your hotspot username"
-              className="w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 text-white placeholder:text-white/30 focus:border-emerald-400/50 focus:outline-none"
             />
           </div>
-          {error && <p className="text-sm text-red-300">{error}</p>}
+          {error && <p className={`text-sm ${isLight ? 'text-red-600' : 'text-red-300'}`}>{error}</p>}
           <PortalButton type="submit" disabled={loading} className="w-full">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Look up access'}
           </PortalButton>
@@ -84,12 +85,14 @@ function AccessLookup({ ispId }) {
         <PortalGlassCard glow={status.access?.has_internet}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-semibold text-white">{status.access?.title}</p>
-              <p className="mt-1 text-sm text-white/55">{status.access?.message}</p>
-              <p className="mt-2 text-sm text-white/70">Package: {status.package}</p>
+              <p className={`text-lg font-semibold ${cx.text}`}>{status.access?.title}</p>
+              <p className={`mt-1 text-sm ${cx.textMuted}`}>{status.access?.message}</p>
+              <p className={`mt-2 text-sm ${cx.text}`}>Package: {status.package}</p>
             </div>
             {status.remaining_seconds != null && status.access?.has_internet && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-semibold text-emerald-200">
+              <span
+                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${isLight ? 'bg-emerald-50 text-emerald-700' : 'bg-emerald-500/20 text-emerald-200'}`}
+              >
                 <Clock className="h-3.5 w-3.5" />
                 {formatRemaining(status.remaining_seconds)}
               </span>
@@ -102,7 +105,7 @@ function AccessLookup({ ispId }) {
             </div>
           )}
           {status.subscription_end && (
-            <p className="mt-4 text-xs text-white/40">
+            <p className={`mt-4 text-xs ${cx.textSubtle}`}>
               Expires: {new Date(status.subscription_end).toLocaleString()}
             </p>
           )}

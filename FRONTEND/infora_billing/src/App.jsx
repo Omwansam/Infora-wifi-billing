@@ -59,7 +59,6 @@ import HotspotVoucherPage from './components/portal/HotspotVoucherPage';
 import HotspotAccessPage from './components/portal/HotspotAccessPage';
 import CaptivePortalPage from './components/portal/CaptivePortalPage';
 import PppoePortalPage from './components/portal/PppoePortalPage';
-import WireGuardPortalPage from './components/portal/WireGuardPortalPage';
 
 function LegacyClientRedirect({ suffix = '' }) {
   const { customerId } = React.useParams();
@@ -81,7 +80,7 @@ function AppRoutes() {
       <Route path="/portal/access" element={<HotspotAccessPage />} />
       <Route path="/portal/hotspot" element={<Navigate to="/portal#wifi-packages" replace />} />
       <Route path="/portal/pppoe" element={<PppoePortalPage />} />
-      <Route path="/portal/wireguard" element={<WireGuardPortalPage />} />
+      <Route path="/portal/wireguard" element={<Navigate to="/portal" replace />} />
 
       {/* Dashboard Redirect Route */}
       <Route path="/dashboard" element={<ProtectedRoute><DashboardRedirect /></ProtectedRoute>} />

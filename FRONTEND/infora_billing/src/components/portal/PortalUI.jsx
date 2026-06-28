@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Check, ChevronDown, Copy, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { portalClasses, usePortalTheme } from './PortalThemeContext';
 
 export function PortalBackground() {
   return (
@@ -17,11 +18,6 @@ export function PortalBackground() {
         animate={{ x: [0, -30, 0], y: [0, 40, 0] }}
         transition={{ duration: 18, repeat: Infinity, ease: 'easeInOut' }}
       />
-      <motion.div
-        className="absolute bottom-0 left-1/3 h-80 w-80 rounded-full bg-teal-400/10 blur-[80px]"
-        animate={{ scale: [1, 1.08, 1] }}
-        transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
-      />
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(16,185,129,0.08),transparent_55%)]" />
       <div className="absolute inset-0 bg-[linear-gradient(to_bottom,_transparent_0%,_rgba(2,6,23,0.55)_100%)]" />
     </div>
@@ -31,9 +27,9 @@ export function PortalBackground() {
 export function PortalFadeIn({ children, className, delay = 0 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 18 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay, ease: 'easeOut' }}
+      transition={{ duration: 0.4, delay, ease: 'easeOut' }}
       className={className}
     >
       {children}
@@ -42,13 +38,17 @@ export function PortalFadeIn({ children, className, delay = 0 }) {
 }
 
 export function PortalGlassCard({ children, className, glow = false }) {
+  const { isLight, accent } = usePortalTheme();
+  const cx = portalClasses(isLight);
   return (
     <div
       className={cn(
-        'rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-8',
-        glow && 'ring-1 ring-emerald-400/20',
+        cx.card,
+        'p-6 sm:p-8',
+        glow && (isLight ? 'ring-2 ring-emerald-500/25' : 'ring-1 ring-emerald-400/20'),
         className
       )}
+      style={glow && isLight ? { borderColor: `${accent}40` } : undefined}
     >
       {children}
     </div>
@@ -56,16 +56,18 @@ export function PortalGlassCard({ children, className, glow = false }) {
 }
 
 export function PortalSectionHeader({ eyebrow, title, subtitle, align = 'left' }) {
+  const { isLight, accent } = usePortalTheme();
+  const cx = portalClasses(isLight);
   return (
-    <div className={cn('mb-8', align === 'center' && 'text-center mx-auto max-w-2xl')}>
+    <div className={cn('mb-6', align === 'center' && 'text-center mx-auto max-w-2xl')}>
       {eyebrow && (
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300/90">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: accent }}>
           {eyebrow}
         </p>
       )}
-      <h2 className="text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-4xl">{title}</h2>
+      <h2 className={cn('text-xl font-bold tracking-tight sm:text-2xl', cx.text)}>{title}</h2>
       {subtitle && (
-        <p className={cn('mt-3 text-base leading-relaxed text-white/60', align === 'center' && 'mx-auto')}>
+        <p className={cn('mt-2 text-sm leading-relaxed', cx.textMuted, align === 'center' && 'mx-auto')}>
           {subtitle}
         </p>
       )}
@@ -74,12 +76,20 @@ export function PortalSectionHeader({ eyebrow, title, subtitle, align = 'left' }
 }
 
 export function PortalBadge({ children, variant = 'default' }) {
-  const styles = {
-    default: 'bg-white/10 text-white/80',
-    success: 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/30',
-    warning: 'bg-amber-500/20 text-amber-100 ring-1 ring-amber-400/30',
-    mpesa: 'bg-[#4CAF50]/20 text-green-200 ring-1 ring-green-400/30',
-  };
+  const { isLight } = usePortalTheme();
+  const styles = isLight
+    ? {
+        default: 'bg-slate-100 text-slate-600',
+        success: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
+        warning: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
+        mpesa: 'bg-green-50 text-green-800 ring-1 ring-green-200',
+      }
+    : {
+        default: 'bg-white/10 text-white/80',
+        success: 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/30',
+        warning: 'bg-amber-500/20 text-amber-100 ring-1 ring-amber-400/30',
+        mpesa: 'bg-[#4CAF50]/20 text-green-200 ring-1 ring-green-400/30',
+      };
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium', styles[variant])}>
       {children}
@@ -94,11 +104,18 @@ export function PortalButton({
   size = 'md',
   ...props
 }) {
+  const { isLight, accent } = usePortalTheme();
+  const cx = portalClasses(isLight);
   const variants = {
-    primary:
-      'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/25 hover:from-emerald-400 hover:to-teal-400',
-    secondary: 'border border-white/15 bg-white/5 text-white hover:bg-white/10',
-    ghost: 'text-emerald-200 hover:bg-white/5 hover:text-white',
+    primary: isLight
+      ? 'text-white shadow-sm hover:opacity-90'
+      : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/25 hover:from-emerald-400 hover:to-teal-400',
+    secondary: isLight
+      ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+      : 'border border-white/15 bg-white/5 text-white hover:bg-white/10',
+    ghost: isLight
+      ? 'text-emerald-700 hover:bg-emerald-50'
+      : 'text-emerald-200 hover:bg-white/5 hover:text-white',
   };
   const sizes = {
     sm: 'px-4 py-2 text-sm',
@@ -109,11 +126,12 @@ export function PortalButton({
     <button
       type="button"
       className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-2xl transition-all duration-200 disabled:opacity-50',
+        'inline-flex items-center justify-center gap-2 rounded-xl transition-all duration-200 disabled:opacity-50',
         variants[variant],
         sizes[size],
         className
       )}
+      style={variant === 'primary' && isLight ? { backgroundColor: accent } : undefined}
       {...props}
     >
       {children}
@@ -121,20 +139,46 @@ export function PortalButton({
   );
 }
 
-export function HowItWorksSteps({ steps }) {
+export function PortalInput({ className, ...props }) {
+  const { isLight } = usePortalTheme();
+  const cx = portalClasses(isLight);
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
+    <input
+      className={cn('w-full px-4 py-3 focus:outline-none', cx.input, className)}
+      {...props}
+    />
+  );
+}
+
+export function PortalLabel({ children, className }) {
+  const { isLight } = usePortalTheme();
+  const cx = portalClasses(isLight);
+  return (
+    <label className={cn('mb-1.5 block text-xs font-semibold uppercase tracking-wide', cx.textSubtle, className)}>
+      {children}
+    </label>
+  );
+}
+
+export function HowItWorksSteps({ steps }) {
+  const { isLight, accent } = usePortalTheme();
+  const cx = portalClasses(isLight);
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
       {steps.map((step, index) => (
         <div
           key={step.title}
-          className="relative rounded-2xl border border-white/8 bg-black/20 p-5"
+          className={cn('rounded-xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-black/20')}
         >
-          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/30 to-teal-500/10 text-sm font-bold text-emerald-200 ring-1 ring-emerald-400/20">
+          <div
+            className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-white"
+            style={{ backgroundColor: accent }}
+          >
             {index + 1}
           </div>
-          <step.icon className="mb-3 h-5 w-5 text-emerald-300" />
-          <h4 className="font-semibold text-white">{step.title}</h4>
-          <p className="mt-2 text-sm leading-relaxed text-white/55">{step.text}</p>
+          <step.icon className="mb-2 h-4 w-4" style={{ color: accent }} />
+          <h4 className={cn('text-sm font-semibold', cx.text)}>{step.title}</h4>
+          <p className={cn('mt-1 text-xs leading-relaxed', cx.textMuted)}>{step.text}</p>
         </div>
       ))}
     </div>
@@ -143,27 +187,32 @@ export function HowItWorksSteps({ steps }) {
 
 export function FaqAccordion({ items }) {
   const [open, setOpen] = useState(0);
+  const { isLight } = usePortalTheme();
+  const cx = portalClasses(isLight);
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {items.map((item, index) => {
         const isOpen = open === index;
         return (
-          <div key={item.q} className="overflow-hidden rounded-2xl border border-white/8 bg-black/20">
+          <div
+            key={item.q}
+            className={cn('overflow-hidden rounded-xl border', isLight ? 'border-slate-200 bg-white' : 'border-white/8 bg-black/20')}
+          >
             <button
               type="button"
               onClick={() => setOpen(isOpen ? -1 : index)}
-              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+              className="flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left"
             >
-              <span className="font-medium text-white">{item.q}</span>
+              <span className={cn('text-sm font-medium', cx.text)}>{item.q}</span>
               <ChevronDown
-                className={cn('h-5 w-5 shrink-0 text-white/50 transition-transform', isOpen && 'rotate-180')}
+                className={cn('h-4 w-4 shrink-0 transition-transform', cx.textSubtle, isOpen && 'rotate-180')}
               />
             </button>
             {isOpen && (
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
-                className="border-t border-white/5 px-5 pb-4 pt-3 text-sm leading-relaxed text-white/60"
+                className={cn('border-t px-4 pb-3 pt-2 text-sm leading-relaxed', cx.textMuted, isLight ? 'border-slate-100' : 'border-white/5')}
               >
                 {item.a}
               </motion.div>
@@ -177,6 +226,8 @@ export function FaqAccordion({ items }) {
 
 export function CopyCredential({ label, value }) {
   const [copied, setCopied] = useState(false);
+  const { isLight, accent } = usePortalTheme();
+  const cx = portalClasses(isLight);
 
   const handleCopy = async () => {
     try {
@@ -189,73 +240,75 @@ export function CopyCredential({ label, value }) {
   };
 
   return (
-    <div className="rounded-xl bg-black/40 p-4 ring-1 ring-white/10">
+    <div className={cn('rounded-xl p-4', isLight ? 'bg-slate-50 ring-1 ring-slate-200' : 'bg-black/40 ring-1 ring-white/10')}>
       <div className="mb-1 flex items-center justify-between gap-2">
-        <dt className="text-xs uppercase tracking-wider text-white/45">{label}</dt>
+        <dt className={cn('text-xs uppercase tracking-wider', cx.textSubtle)}>{label}</dt>
         <button
           type="button"
           onClick={handleCopy}
-          className="inline-flex items-center gap-1 rounded-lg bg-white/5 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+          className={cn(
+            'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs',
+            isLight ? 'bg-white text-slate-600 hover:bg-slate-100' : 'bg-white/5 text-white/70 hover:bg-white/10'
+          )}
         >
-          {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+          {copied ? <Check className="h-3 w-3" style={{ color: accent }} /> : <Copy className="h-3 w-3" />}
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <dd className="break-all font-mono text-lg text-white">{value}</dd>
+      <dd className={cn('break-all font-mono text-lg', cx.text)}>{value}</dd>
     </div>
   );
 }
 
 export function ConnectionStatusRing({ online, label }) {
+  const { isLight } = usePortalTheme();
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="relative flex h-28 w-28 items-center justify-center">
+      <div className="relative flex h-24 w-24 items-center justify-center">
+        <div className={cn('absolute inset-0 rounded-full', online ? 'bg-emerald-500/20 animate-pulse' : 'bg-amber-500/15')} />
         <div
           className={cn(
-            'absolute inset-0 rounded-full',
-            online ? 'bg-emerald-500/20 animate-pulse' : 'bg-amber-500/15'
-          )}
-        />
-        <div
-          className={cn(
-            'relative flex h-20 w-20 items-center justify-center rounded-full ring-4',
+            'relative flex h-16 w-16 items-center justify-center rounded-full ring-4',
             online ? 'bg-emerald-500/20 ring-emerald-400/40' : 'bg-amber-500/15 ring-amber-400/30'
           )}
         >
-          <span className={cn('h-3 w-3 rounded-full', online ? 'bg-emerald-400' : 'bg-amber-400')} />
+          <span className={cn('h-3 w-3 rounded-full', online ? 'bg-emerald-500' : 'bg-amber-400')} />
         </div>
       </div>
-      <p className={cn('text-sm font-medium', online ? 'text-emerald-200' : 'text-amber-200')}>{label}</p>
+      <p className={cn('text-sm font-medium', online ? (isLight ? 'text-emerald-700' : 'text-emerald-200') : (isLight ? 'text-amber-700' : 'text-amber-200'))}>
+        {label}
+      </p>
     </div>
   );
 }
 
 export function PayStepIndicator({ step }) {
+  const { isLight, accent } = usePortalTheme();
+  const cx = portalClasses(isLight);
   const steps = ['Details', 'M-Pesa PIN', 'Connected'];
   return (
-    <div className="mb-8 flex items-center justify-between gap-2">
+    <div className="mb-6 flex items-center justify-between gap-2">
       {steps.map((label, index) => {
         const active = index <= step;
         const current = index === step;
         return (
           <React.Fragment key={label}>
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col items-center gap-1.5">
               <div
                 className={cn(
-                  'flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold transition',
-                  current && 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30',
-                  active && !current && 'bg-emerald-500/25 text-emerald-200',
-                  !active && 'bg-white/5 text-white/35'
+                  'flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition',
+                  !active && (isLight ? 'bg-slate-100 text-slate-400' : 'bg-white/5 text-white/35')
                 )}
+                style={current ? { backgroundColor: accent, color: '#fff' } : active ? { backgroundColor: `${accent}33`, color: accent } : undefined}
               >
                 {index + 1}
               </div>
-              <span className={cn('hidden text-[10px] uppercase tracking-wide sm:block', active ? 'text-white/70' : 'text-white/30')}>
+              <span className={cn('hidden text-[10px] uppercase tracking-wide sm:block', active ? cx.textMuted : cx.textSubtle)}>
                 {label}
               </span>
             </div>
             {index < steps.length - 1 && (
-              <div className={cn('mb-6 h-px flex-1', active ? 'bg-emerald-500/40' : 'bg-white/10')} />
+              <div className={cn('mb-5 h-px flex-1', active ? 'bg-emerald-500/40' : isLight ? 'bg-slate-200' : 'bg-white/10')} />
             )}
           </React.Fragment>
         );
@@ -264,30 +317,16 @@ export function PayStepIndicator({ step }) {
   );
 }
 
-export function PortalStatStrip({ items }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {items.map((item) => (
-        <div
-          key={item.label}
-          className="rounded-2xl border border-white/8 bg-black/25 px-4 py-4 text-center backdrop-blur-sm"
-        >
-          <p className="text-lg font-bold text-white sm:text-xl">{item.value}</p>
-          <p className="mt-1 text-xs text-white/50">{item.label}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function ExternalLinkButton({ href, children }) {
+  const { accent } = usePortalTheme();
   if (!href) return null;
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 text-sm text-emerald-200 hover:text-white"
+      className="inline-flex items-center gap-1 text-sm hover:opacity-80"
+      style={{ color: accent }}
     >
       {children}
       <ExternalLink className="h-3.5 w-3.5" />
