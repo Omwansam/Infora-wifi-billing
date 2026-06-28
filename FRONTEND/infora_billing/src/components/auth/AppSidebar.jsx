@@ -19,7 +19,6 @@ import {
   TrendingUp,
   MessageSquare,
   Server,
-  Wrench,
   HelpCircle,
   ChevronDown,
   User,
@@ -27,7 +26,6 @@ import {
   Shield,
   Network,
   Database,
-  Router,
   Lock,
   Activity,
   BarChart3,
@@ -37,8 +35,6 @@ import {
   Key,
   Monitor,
   Bell,
-  Download,
-  Upload,
   RefreshCw,
   Settings,
   PanelLeftClose,
@@ -252,6 +248,10 @@ const AppSidebar = () => {
     if (url === '/clients/online') {
       return location.pathname.startsWith('/clients/online');
     }
+    // Devices is a single link but should stay active across all /devices/* tabs.
+    if (url === '/devices/mikrotik') {
+      return location.pathname.startsWith('/devices');
+    }
     return location.pathname.startsWith(url);
   };
 
@@ -289,19 +289,7 @@ const AppSidebar = () => {
               ],
             },
             { type: 'link', title: 'Communication', url: '/communication', icon: MessageSquare },
-            {
-              type: 'section',
-              title: 'Devices',
-              icon: Server,
-              section: 'devices',
-              items: [
-                { title: 'Mikrotik', url: '/devices/mikrotik', icon: Router },
-                { title: 'Equipment', url: '/devices/equipment', icon: Wrench },
-                { title: 'Status', url: '/devices/status', icon: Activity },
-                { title: 'Backup', url: '/devices/backup', icon: Download },
-                { title: 'Firmware', url: '/devices/firmware', icon: Upload },
-              ],
-            },
+            { type: 'link', title: 'Devices', url: '/devices/mikrotik', icon: Server },
             {
               type: 'section',
               title: 'Network',
