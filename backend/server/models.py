@@ -349,6 +349,11 @@ class MikrotikDevice(db.Model):
     management_wg_ip = db.Column(db.String(50), nullable=True)
     management_wg_public_key = db.Column(db.String(64), nullable=True)
     management_wg_private_key_encrypted = db.Column(db.Text, nullable=True)
+    # One-line self-provisioning (router fetches token-authenticated .rsc)
+    provision_token = db.Column(db.String(64), unique=True, nullable=True, index=True)
+    provision_token_expires_at = db.Column(db.DateTime, nullable=True)
+    provision_last_fetched_at = db.Column(db.DateTime, nullable=True)
+    provision_fetch_count = db.Column(db.Integer, default=0, nullable=False)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
 
@@ -362,6 +367,20 @@ class MikrotikDevice(db.Model):
     isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
     isp = db.relationship('ISP', back_populates='mikrotik_devices')
     
+    @staticmethod
+    def generate_provision_token():
+        """64-hex opaque token used in the one-line self-provisioning URL."""
+        import secrets
+        return secrets.token_hex(32)
+
+    def provision_token_is_valid(self):
+        """True if a token exists and has not expired."""
+        if not self.provision_token:
+            return False
+        if self.provision_token_expires_at and self.provision_token_expires_at < datetime.now():
+            return False
+        return True
+
     def __repr__(self):
         return f"<MikrotikDevice {self.device_name} ({self.device_ip})>"
 

@@ -28,6 +28,8 @@ export const API_ENDPOINTS = {
   DEVICES: `${API_BASE_URL}/api/devices`,
   deviceRadiusScript: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/radius-script`,
   deviceManagementTunnelScript: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/management-tunnel-script`,
+  deviceProvisionToken: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/provision-token`,
+  deviceProvisionToken: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/provision-token`,
   HEALTH_DEPLOYMENT: `${API_BASE_URL}/api/health/deployment`,
   HEALTH_RADIUS_USER: `${API_BASE_URL}/api/health/radius-user`,
   DEVICE_STATS: `${API_BASE_URL}/api/devices/stats`,

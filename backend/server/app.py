@@ -27,6 +27,7 @@ from routes.website import website_bp
 from routes.wireguard import wireguard_bp
 from routes.monitoring import monitoring_bp
 from routes.health import health_bp
+from routes.provision import provision_bp
 from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
@@ -83,6 +84,7 @@ app.register_blueprint(website_bp)
 app.register_blueprint(wireguard_bp)
 app.register_blueprint(monitoring_bp)
 app.register_blueprint(health_bp)
+app.register_blueprint(provision_bp)
 
 
 @app.before_request

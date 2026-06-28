@@ -75,6 +75,10 @@ class Config:
     WIREGUARD_MGMT_SERVER_IP = os.getenv('WIREGUARD_MGMT_SERVER_IP', '10.250.0.1')
     WIREGUARD_MGMT_PORT = int(os.getenv('WIREGUARD_MGMT_PORT', '51821'))
     WIREGUARD_MGMT_ENDPOINT = os.getenv('WIREGUARD_MGMT_ENDPOINT', os.getenv('PUBLIC_SERVER_HOST', ''))
+    # Timezone applied to MikroTik routers during self-provisioning
+    ROUTER_TIMEZONE = os.getenv('ROUTER_TIMEZONE', 'Africa/Nairobi')
+    # Public base URL the router uses to fetch its provisioning script (HTTPS)
+    PROVISION_BASE_URL = os.getenv('PROVISION_BASE_URL', '')
     CORS_ORIGINS = [
         o.strip()
         for o in os.getenv(

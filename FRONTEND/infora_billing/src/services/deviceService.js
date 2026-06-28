@@ -290,6 +290,34 @@ class DeviceService {
     const data = await response.json().catch(() => ({}));
     return { ok: response.ok, status: response.status, ...data };
   }
+
+  /** Generate or rotate the one-line self-provisioning token for a device */
+  async generateProvisionToken(token, deviceId, expiresInHours = null) {
+    const body = expiresInHours ? { expires_in_hours: expiresInHours } : {};
+    const response = await fetch(API_ENDPOINTS.deviceProvisionToken(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `Failed (${response.status})`);
+    }
+    return data;
+  }
+
+  /** Revoke a device's self-provisioning token */
+  async revokeProvisionToken(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceProvisionToken(deviceId), {
+      method: 'DELETE',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `Failed (${response.status})`);
+    }
+    return data;
+  }
 }
 
 export default new DeviceService();

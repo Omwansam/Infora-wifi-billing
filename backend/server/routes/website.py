@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 from werkzeug.security import generate_password_hash
 from auth_utils import create_user_tokens, get_current_user
+from services.rate_limit import rate_limit
 from extensions import db
 from models import (
     Customer,
@@ -238,6 +239,7 @@ def website_changelog():
 
 
 @website_bp.route('/contact', methods=['POST'])
+@rate_limit(limit=6, window=60, scope='website-contact')
 def website_contact():
     data = request.get_json() or {}
     inquiry, error = _create_inquiry(data, WebsiteInquirySource.CONTACT)
@@ -257,6 +259,7 @@ def website_contact():
 
 
 @website_bp.route('/affiliate', methods=['POST'])
+@rate_limit(limit=6, window=60, scope='website-affiliate')
 def website_affiliate():
     data = request.get_json() or {}
     if not data.get('message'):
@@ -279,6 +282,7 @@ def website_affiliate():
 
 
 @website_bp.route('/trial-signup', methods=['POST'])
+@rate_limit(limit=5, window=60, scope='website-trial-signup')
 def website_trial_signup():
     data = request.get_json() or {}
     first_name = (data.get('first_name') or '').strip()
@@ -353,6 +357,7 @@ def website_trial_signup():
 
 
 @website_bp.route('/login', methods=['POST'])
+@rate_limit(limit=10, window=60, scope='website-login')
 def website_login():
     """Public login for marketing site — returns tokens for billing app handoff."""
     from werkzeug.security import check_password_hash

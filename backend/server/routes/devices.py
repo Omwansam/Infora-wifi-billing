@@ -3,8 +3,9 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 from auth_utils import get_current_user
 from models import MikrotikDevice, User, DeviceStatus, ISP
-from datetime import datetime
+from datetime import datetime, timedelta
 from services.encryption import encrypt_value
+from services.provisioning_scripts import build_radius_script, build_one_liner, resolve_provision_base_url
 from services.mikrotik_sync import (
     sync_device_async,
     sync_device_stats,
@@ -578,31 +579,12 @@ def update_device_alias(device_id):
 @jwt_required()
 def download_radius_script(device_id):
     """Return MikroTik .rsc script with device-specific RADIUS settings."""
-    import os
-
     device = MikrotikDevice.query.get_or_404(device_id)
-    isp = ISP.query.get(device.isp_id) if device.isp_id else None
-    if not isp or not isp.radius_secret:
-        return jsonify({'error': 'ISP has no RADIUS secret configured'}), 400
 
-    radius_host = resolve_radius_host_for_device(device)
-    radius_secret = isp.radius_secret
-
-    template_path = os.path.abspath(os.path.join(
-        os.path.dirname(__file__), '..', '..', '..', 'config', 'mikrotik', 'radius-provision.rsc'
-    ))
-    with open(template_path, 'r', encoding='utf-8') as fh:
-        script = fh.read()
-
-    if device.management_wg_enabled:
-        script = (
-            '# Import management tunnel first: GET /api/devices/'
-            f'{device.id}/management-tunnel-script\n\n'
-            + script
-        )
-
-    script = script.replace(':local RADIUS_SERVER "10.0.0.10"', f':local RADIUS_SERVER "{radius_host}"')
-    script = script.replace(':local RADIUS_SECRET "radius_secret_key"', f':local RADIUS_SECRET "{radius_secret}"')
+    try:
+        script = build_radius_script(device)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
 
     filename = f'infora-radius-{device.device_name.replace(" ", "-")}.rsc'
     return Response(
@@ -610,6 +592,65 @@ def download_radius_script(device_id):
         mimetype='text/plain',
         headers={'Content-Disposition': f'attachment; filename={filename}'},
     )
+
+
+@devices_bp.route('/<int:device_id>/provision-token', methods=['POST'])
+@jwt_required()
+def mint_provision_token(device_id):
+    """Generate or rotate the one-line self-provisioning token for a device."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    isp = ISP.query.get(device.isp_id) if device.isp_id else None
+    if not isp or not isp.radius_secret:
+        return jsonify({'error': 'ISP has no RADIUS secret configured'}), 400
+
+    payload = request.get_json(silent=True) or {}
+    hours = payload.get('expires_in_hours') if isinstance(payload, dict) else None
+    if hours is not None:
+        try:
+            hours = int(hours)
+            if hours <= 0:
+                hours = None
+        except (TypeError, ValueError):
+            return jsonify({'error': 'expires_in_hours must be a positive integer'}), 400
+
+    device.provision_token = MikrotikDevice.generate_provision_token()
+    device.provision_token_expires_at = (
+        datetime.now() + timedelta(hours=hours) if hours else None
+    )
+    device.provision_fetch_count = 0
+    device.provision_last_fetched_at = None
+    db.session.commit()
+
+    base_url = resolve_provision_base_url()
+    return jsonify({
+        'success': True,
+        'provision_token': device.provision_token,
+        'expires_at': device.provision_token_expires_at.isoformat() if device.provision_token_expires_at else None,
+        'one_liner': build_one_liner(device),
+        'warning': None if base_url else (
+            'PROVISION_BASE_URL / PUBLIC_SERVER_HOST not set — the command host is incomplete. '
+            'Set PROVISION_BASE_URL to your HTTPS domain.'
+        ),
+    }), 200
+
+
+@devices_bp.route('/<int:device_id>/provision-token', methods=['DELETE'])
+@jwt_required()
+def revoke_provision_token(device_id):
+    """Revoke a device's self-provisioning token."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    device.provision_token = None
+    device.provision_token_expires_at = None
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Provision token revoked'}), 200
 
 
 @devices_bp.route('/<int:device_id>/management-tunnel-script', methods=['GET'])

@@ -17,6 +17,7 @@ from services.portal_service import (
     serialize_wireguard_status,
 )
 from services.wireguard_provisioning import build_client_config
+from services.rate_limit import rate_limit
 
 portal_bp = Blueprint('portal', __name__, url_prefix='/api/portal')
 
@@ -45,6 +46,7 @@ def portal_plans():
 
 
 @portal_bp.route('/hotspot/purchase', methods=['POST'])
+@rate_limit(limit=12, window=60, scope='portal-hotspot-purchase')
 def portal_hotspot_purchase():
     data = request.get_json() or {}
     plan_id = data.get('plan_id')
@@ -67,6 +69,7 @@ def portal_hotspot_purchase():
 
 
 @portal_bp.route('/pppoe/lookup', methods=['POST'])
+@rate_limit(limit=15, window=60, scope='portal-pppoe-lookup')
 def portal_pppoe_lookup():
     data = request.get_json() or {}
     account = data.get('account') or data.get('username')
@@ -80,6 +83,7 @@ def portal_pppoe_lookup():
 
 
 @portal_bp.route('/pppoe/pay', methods=['POST'])
+@rate_limit(limit=12, window=60, scope='portal-pppoe-pay')
 def portal_pppoe_pay():
     data = request.get_json() or {}
     account = data.get('account') or data.get('username')
@@ -110,6 +114,7 @@ def portal_payment_status(checkout_request_id):
 
 
 @portal_bp.route('/wireguard/lookup', methods=['POST'])
+@rate_limit(limit=15, window=60, scope='portal-wg-lookup')
 def portal_wireguard_lookup():
     data = request.get_json() or {}
     account = data.get('account') or data.get('email')
@@ -123,6 +128,7 @@ def portal_wireguard_lookup():
 
 
 @portal_bp.route('/wireguard/config', methods=['POST'])
+@rate_limit(limit=15, window=60, scope='portal-wg-config')
 def portal_wireguard_config():
     """Download .conf for customer self-service (email + isp_id verification)."""
     data = request.get_json() or {}
@@ -148,6 +154,7 @@ def portal_wireguard_config():
 
 
 @portal_bp.route('/wireguard/qrcode', methods=['POST'])
+@rate_limit(limit=15, window=60, scope='portal-wg-qrcode')
 def portal_wireguard_qrcode():
     data = request.get_json() or {}
     account = data.get('account') or data.get('email')

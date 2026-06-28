@@ -13,6 +13,10 @@ import {
   Zap,
   Download,
   AlertTriangle,
+  Terminal,
+  Copy,
+  Check,
+  X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
@@ -40,6 +44,8 @@ export default function MikrotikPage() {
   const [showWizard, setShowWizard] = useState(false);
   const [actionId, setActionId] = useState(null);
   const [deploymentIssues, setDeploymentIssues] = useState([]);
+  const [provisionModal, setProvisionModal] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const loadIsps = async () => {
@@ -159,6 +165,50 @@ export default function MikrotikPage() {
       toast.error(error.message || 'Delete failed');
     } finally {
       setActionId(null);
+    }
+  };
+
+  const handleQuickProvision = async (device) => {
+    try {
+      setActionId(device.id);
+      const token = getAccessToken();
+      const result = await deviceService.generateProvisionToken(token, device.id);
+      setProvisionModal({
+        device,
+        oneLiner: result.one_liner,
+        expiresAt: result.expires_at,
+        warning: result.warning,
+      });
+      setCopied(false);
+      if (result.warning) toast.error(result.warning, { duration: 6000 });
+    } catch (error) {
+      toast.error(error.message || 'Could not generate provisioning command');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleCopyOneLiner = async () => {
+    if (!provisionModal?.oneLiner) return;
+    try {
+      await navigator.clipboard.writeText(provisionModal.oneLiner);
+      setCopied(true);
+      toast.success('Command copied');
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      toast.error('Copy failed — select and copy manually');
+    }
+  };
+
+  const handleRevokeProvision = async (device) => {
+    if (!window.confirm(`Revoke the provisioning token for "${device.name}"? The current command will stop working.`)) return;
+    try {
+      const token = getAccessToken();
+      await deviceService.revokeProvisionToken(token, device.id);
+      toast.success('Provisioning token revoked');
+      setProvisionModal(null);
+    } catch (error) {
+      toast.error(error.message || 'Revoke failed');
     }
   };
 
@@ -341,6 +391,14 @@ export default function MikrotikPage() {
                     >
                       <Download className="h-4 w-4" />
                     </button>
+                    <button
+                      onClick={() => handleQuickProvision(device)}
+                      disabled={actionId === device.id}
+                      className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"
+                      title="Quick provision (one-line command)"
+                    >
+                      <Terminal className="h-4 w-4" />
+                    </button>
                     <button className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100" title="View details">
                       <Eye className="h-4 w-4" />
                     </button>
@@ -374,6 +432,97 @@ export default function MikrotikPage() {
           onClose={() => setShowWizard(false)}
           onSuccess={loadDevices}
         />
+      )}
+
+      {provisionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-2xl rounded-2xl bg-white shadow-xl overflow-hidden"
+          >
+            <div className="flex items-start justify-between gap-3 p-5 border-b border-slate-100">
+              <div className="flex gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-700">
+                  <Terminal className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">Quick provision — {provisionModal.device.name}</h3>
+                  <p className="text-sm text-slate-500">
+                    Paste this single command into the router's terminal (Winbox/SSH).
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setProvisionModal(null)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="relative">
+                <pre className="bg-slate-900 text-emerald-200 text-xs rounded-xl p-4 pr-12 overflow-x-auto whitespace-pre-wrap break-all font-mono">
+{provisionModal.oneLiner}
+                </pre>
+                <button
+                  onClick={handleCopyOneLiner}
+                  className="absolute top-3 right-3 p-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700"
+                  title="Copy command"
+                >
+                  {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                </button>
+              </div>
+
+              {provisionModal.warning && (
+                <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">
+                  {provisionModal.warning}
+                </div>
+              )}
+
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                <p className="font-semibold">Before running:</p>
+                <ul className="mt-1 list-disc list-inside space-y-0.5">
+                  <li>The router needs internet access (the command pings 8.8.8.8 first).</li>
+                  <li>The script downloads, imports, then deletes itself — your RADIUS secret is not left on disk.</li>
+                  <li>Re-running is safe; it is idempotent (removes old entries before adding).</li>
+                </ul>
+              </div>
+
+              <p className="text-xs text-slate-500">
+                {provisionModal.expiresAt
+                  ? `This command expires ${formatDate(provisionModal.expiresAt)}.`
+                  : 'This command stays valid until you rotate or revoke the token.'}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 p-5 border-t border-slate-100 bg-slate-50">
+              <button
+                onClick={() => handleRevokeProvision(provisionModal.device)}
+                className="text-sm font-medium text-rose-600 hover:text-rose-700"
+              >
+                Revoke token
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleQuickProvision(provisionModal.device)}
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium border border-slate-200 bg-white hover:bg-slate-50"
+                >
+                  Rotate token
+                </button>
+                <button
+                  onClick={handleCopyOneLiner}
+                  className="inline-flex items-center px-3.5 py-2 rounded-lg text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {copied ? <Check className="h-4 w-4 mr-1.5" /> : <Copy className="h-4 w-4 mr-1.5" />}
+                  {copied ? 'Copied' : 'Copy command'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
       )}
     </DevicesLayout>
   );

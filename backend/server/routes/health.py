@@ -7,6 +7,7 @@ from flask import Blueprint, current_app, jsonify, request
 from extensions import db
 from models import ISP, Customer, MikrotikDevice, RadCheck, WireGuardPeer, WireGuardServer
 from services.radius_provisioning import radius_username
+from services.rate_limit import rate_limit
 
 health_bp = Blueprint('health', __name__, url_prefix='/api/health')
 
@@ -150,6 +151,7 @@ def build_deployment_report():
 
 
 @health_bp.route('/deployment', methods=['GET'])
+@rate_limit(limit=12, window=60, scope='health-deployment')
 def deployment_health():
     try:
         report = build_deployment_report()
@@ -161,6 +163,7 @@ def deployment_health():
 
 
 @health_bp.route('/radius-user', methods=['GET'])
+@rate_limit(limit=20, window=60, scope='health-radius-user')
 def radius_user_health():
     """Verify radcheck row exists for a customer email (RADIUS username)."""
     email = (request.args.get('email') or '').strip().lower()

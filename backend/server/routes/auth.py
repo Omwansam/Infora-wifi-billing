@@ -9,6 +9,7 @@ from datetime import datetime
 from extensions import db
 from models import User
 from auth_utils import create_user_tokens, get_user_id_from_jwt
+from services.rate_limit import rate_limit
 
 
 
@@ -19,6 +20,7 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
 
 @auth_bp.route('/login', methods=['POST'])
+@rate_limit(limit=10, window=60, scope='auth-login')
 def login():
     """User login endpoint"""
     try:
@@ -72,6 +74,7 @@ def login():
         return jsonify({"error": f"Login failed: {str(e)}"}), 500
 
 @auth_bp.route('/register', methods=['POST'])
+@rate_limit(limit=5, window=60, scope='auth-register')
 def register():
     """User registration endpoint"""
     try:
@@ -223,6 +226,7 @@ def update_profile():
         return jsonify({'error': f'Failed to update profile: {str(e)}'}), 500
 
 @auth_bp.route('/change-password', methods=['POST'])
+@rate_limit(limit=5, window=60, scope='auth-change-password')
 @jwt_required()
 def change_password():
     """Change user password"""
