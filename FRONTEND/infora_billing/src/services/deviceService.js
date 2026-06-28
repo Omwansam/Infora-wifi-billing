@@ -345,6 +345,91 @@ class DeviceService {
     return data.interfaces || [];
   }
 
+  /** Check whether a newer RouterOS version is available (persists versions) */
+  async checkFirmware(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceFirmwareCheck(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed (${response.status})`);
+    return data;
+  }
+
+  /** Trigger a full RouterOS upgrade (install + reboot) */
+  async upgradeFirmware(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceFirmwareUpgrade(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && response.status !== 502) throw new Error(data.error || `Failed (${response.status})`);
+    return data;
+  }
+
+  /** Put a device into / out of maintenance mode */
+  async setMaintenance(token, deviceId, maintenance) {
+    const response = await fetch(API_ENDPOINTS.deviceMaintenance(deviceId), {
+      method: 'PUT',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify({ maintenance }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed (${response.status})`);
+    return data;
+  }
+
+  /** List stored config backups for a device */
+  async listBackups(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceBackups(deviceId), {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed (${response.status})`);
+    return data.backups || [];
+  }
+
+  /** Create a new config backup (exports + stores on server) */
+  async createBackup(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceBackupCreate(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed (${response.status})`);
+    return data;
+  }
+
+  /** Download a stored backup file (triggers a browser download) */
+  async downloadBackup(token, backupId, filename = 'backup.rsc') {
+    const response = await fetch(API_ENDPOINTS.deviceBackupDownload(backupId), {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+    if (!response.ok) throw new Error(`Download failed (${response.status})`);
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
+  /** Delete a stored backup */
+  async deleteBackup(token, backupId) {
+    const response = await fetch(API_ENDPOINTS.deviceBackupDelete(backupId), {
+      method: 'DELETE',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed (${response.status})`);
+    return data;
+  }
+
   /** Push service config (PPPoE/Hotspot/bridge/subnet) to the router (wizard Step 3) */
   async configureServices(token, deviceId, opts) {
     const response = await fetch(API_ENDPOINTS.deviceConfigureServices(deviceId), {

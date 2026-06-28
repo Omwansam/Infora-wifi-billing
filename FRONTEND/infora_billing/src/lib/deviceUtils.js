@@ -9,6 +9,9 @@ export function mapMikrotikDevice(device) {
     bandwidth: device.bandwidth_usage || 0,
     location: device.location,
     uptime: device.uptime,
+    osVersion: device.os_version,
+    firmwareLatest: device.firmware_latest,
+    lastBackupAt: device.last_backup_at,
     lastSynced: device.last_synced,
     isActive: device.is_active,
     management_wg_enabled: Boolean(device.management_wg_enabled),
@@ -17,6 +20,12 @@ export function mapMikrotikDevice(device) {
     zoneName: device.zone_name,
     notes: device.notes,
   };
+}
+
+export function uptimeLabel(value) {
+  // RouterOS uptime is a string like "1w2d3h4m5s"; pass through if present.
+  if (!value && value !== 0) return '—';
+  return String(value);
 }
 
 export function bandwidthLabel(value) {

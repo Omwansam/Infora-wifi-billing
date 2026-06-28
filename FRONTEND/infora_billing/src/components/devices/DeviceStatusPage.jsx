@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Activity,
@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
-import { bandwidthLabel } from '../../lib/deviceUtils';
+import { bandwidthLabel, uptimeLabel } from '../../lib/deviceUtils';
 import { formatDate } from '../../lib/utils';
 import deviceService from '../../services/deviceService';
 import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
@@ -31,6 +31,29 @@ export default function DeviceStatusPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [syncingId, setSyncingId] = useState(null);
   const [bulkSyncing, setBulkSyncing] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  // Auto-refresh the fleet view every 30s when enabled.
+  useEffect(() => {
+    if (!autoRefresh) return undefined;
+    const id = setInterval(() => loadDevices(), 30000);
+    return () => clearInterval(id);
+  }, [autoRefresh, loadDevices]);
+
+  const handleMaintenance = async (device) => {
+    const enable = device.status !== 'maintenance';
+    try {
+      setSyncingId(device.id);
+      const token = getAccessToken();
+      await deviceService.setMaintenance(token, device.id, enable);
+      toast.success(enable ? 'Marked as maintenance' : 'Maintenance cleared');
+      loadDevices();
+    } catch (error) {
+      toast.error(error.message || 'Failed to update maintenance');
+    } finally {
+      setSyncingId(null);
+    }
+  };
 
   const filtered = useMemo(
     () =>
@@ -89,7 +112,17 @@ export default function DeviceStatusPage() {
       title="Device Status"
       subtitle="Real-time connectivity and health across your Mikrotik fleet"
       action={
-        <div className="flex gap-3 self-start">
+        <div className="flex gap-3 self-start items-center">
+          <button
+            onClick={() => setAutoRefresh((v) => !v)}
+            className={`inline-flex items-center px-3 py-2.5 rounded-xl text-sm font-medium border ${
+              autoRefresh ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500'
+            }`}
+            title="Toggle 30s auto-refresh"
+          >
+            <Activity className={`h-4 w-4 mr-2 ${autoRefresh ? 'animate-pulse' : ''}`} />
+            Auto {autoRefresh ? 'on' : 'off'}
+          </button>
           <button
             onClick={loadDevices}
             disabled={loading}
@@ -182,8 +215,9 @@ export default function DeviceStatusPage() {
                   <th className="px-5 py-3 font-semibold">Device</th>
                   <th className="px-5 py-3 font-semibold">Status</th>
                   <th className="px-5 py-3 font-semibold">IP</th>
+                  <th className="px-5 py-3 font-semibold">Version</th>
                   <th className="px-5 py-3 font-semibold">Clients</th>
-                  <th className="px-5 py-3 font-semibold">Bandwidth</th>
+                  <th className="px-5 py-3 font-semibold">Uptime</th>
                   <th className="px-5 py-3 font-semibold">Last Sync</th>
                   <th className="px-5 py-3 font-semibold text-right">Actions</th>
                 </tr>
@@ -199,20 +233,36 @@ export default function DeviceStatusPage() {
                       <DeviceStatusBadge status={device.status} />
                     </td>
                     <td className="px-5 py-4 font-mono text-slate-700">{device.ip}</td>
+                    <td className="px-5 py-4 font-mono text-xs text-slate-600">{device.osVersion || '—'}</td>
                     <td className="px-5 py-4 font-medium">{device.clients}</td>
-                    <td className="px-5 py-4">{bandwidthLabel(device.bandwidth)}</td>
+                    <td className="px-5 py-4 text-slate-500 text-xs">{uptimeLabel(device.uptime)}</td>
                     <td className="px-5 py-4 text-slate-500">
                       {device.lastSynced ? formatDate(device.lastSynced) : 'Never'}
                     </td>
-                    <td className="px-5 py-4 text-right">
-                      <button
-                        onClick={() => handleSync(device.id)}
-                        disabled={syncingId === device.id}
-                        className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold text-cyan-700 bg-cyan-50 hover:bg-cyan-100 disabled:opacity-50"
-                      >
-                        <RefreshCw className={`h-3.5 w-3.5 mr-1 ${syncingId === device.id ? 'animate-spin' : ''}`} />
-                        Refresh
-                      </button>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleMaintenance(device)}
+                          disabled={syncingId === device.id}
+                          className={`inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50 ${
+                            device.status === 'maintenance'
+                              ? 'text-amber-700 bg-amber-50 hover:bg-amber-100'
+                              : 'text-slate-600 bg-slate-100 hover:bg-slate-200'
+                          }`}
+                          title={device.status === 'maintenance' ? 'Clear maintenance' : 'Mark maintenance'}
+                        >
+                          <Wrench className="h-3.5 w-3.5 mr-1" />
+                          {device.status === 'maintenance' ? 'Clear' : 'Maint'}
+                        </button>
+                        <button
+                          onClick={() => handleSync(device.id)}
+                          disabled={syncingId === device.id}
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold text-cyan-700 bg-cyan-50 hover:bg-cyan-100 disabled:opacity-50"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 mr-1 ${syncingId === device.id ? 'animate-spin' : ''}`} />
+                          Sync
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -234,6 +234,118 @@ def build_services_commands(opts):
     return steps, params
 
 
+def read_device_info(device):
+    """Read live version/board/uptime over SSH. Returns a dict (best-effort)."""
+    with MikroTikClient(_ssh_config(device, timeout=10)) as client:
+        if not client.connect():
+            raise RuntimeError('Could not connect to router')
+        resource, _ = client.run_cli('/system resource print')
+        routerboard, _ = client.run_cli('/system routerboard print')
+    res = _parse_kv(resource)
+    rb = _parse_kv(routerboard)
+    return {
+        'version': res.get('version'),
+        'board_name': res.get('board-name'),
+        'uptime': res.get('uptime'),
+        'cpu_load': res.get('cpu-load'),
+        'free_memory': res.get('free-memory'),
+        'architecture': res.get('architecture-name'),
+        'current_firmware': rb.get('current-firmware'),
+        'upgrade_firmware': rb.get('upgrade-firmware'),
+    }
+
+
+def check_firmware(device):
+    """Ask RouterOS whether a newer channel release is available.
+
+    Returns {installed, latest, update_available, channel}. Never raises on
+    parse issues — connection failures propagate to the caller.
+    """
+    with MikroTikClient(_ssh_config(device, timeout=15)) as client:
+        if not client.connect():
+            raise RuntimeError('Could not connect to router')
+        # check-for-updates contacts MikroTik's upgrade servers, then print shows the result.
+        client.run_cli('/system package update check-for-updates')
+        out, _ = client.run_cli('/system package update print')
+    info = _parse_kv(out)
+    installed = info.get('installed-version')
+    latest = info.get('latest-version')
+    status = (info.get('status') or '').lower()
+    update_available = bool(latest and installed and latest != installed) or 'new version is available' in status
+    return {
+        'installed': installed,
+        'latest': latest,
+        'channel': info.get('channel'),
+        'status': info.get('status'),
+        'update_available': update_available,
+    }
+
+
+def upgrade_firmware(device):
+    """Trigger a full RouterOS upgrade (downloads, installs, reboots).
+
+    Returns an ordered log. The device will reboot, so the SSH session is
+    expected to drop after the install command is issued.
+    """
+    log = [{'step': 'queued', 'status': 'ok', 'detail': 'Starting firmware upgrade...'}]
+    try:
+        with MikroTikClient(_ssh_config(device, timeout=20)) as client:
+            if not client.connect():
+                log.append({'step': 'connect', 'status': 'error', 'detail': 'Connection failed'})
+                return {'success': False, 'log': log}
+            log.append({'step': 'connect', 'status': 'ok', 'detail': f'Connected to {connection_host(device)}'})
+
+            # Upgrade RouterBOOT firmware to match the new RouterOS, then install + reboot.
+            try:
+                client.run_cli('/system routerboard upgrade')
+                log.append({'step': 'routerboard', 'status': 'ok', 'detail': 'RouterBOOT upgrade queued'})
+            except Exception as exc:
+                log.append({'step': 'routerboard', 'status': 'error', 'detail': str(exc)[:200]})
+
+            try:
+                # This downloads + installs and reboots; the session usually drops here.
+                out, err = client.run_cli('/system package update install')
+                detail = (out or err or 'Install command sent — device rebooting').strip()[:200]
+                log.append({'step': 'install', 'status': 'ok', 'detail': detail or 'Install command sent — device rebooting'})
+            except Exception:
+                # A dropped connection during reboot is the expected/success path.
+                log.append({'step': 'install', 'status': 'ok', 'detail': 'Install issued — device is rebooting to apply the upgrade'})
+    except Exception as exc:
+        log.append({'step': 'connect', 'status': 'error', 'detail': str(exc)[:200]})
+        return {'success': False, 'log': log}
+
+    log.append({'step': 'done', 'status': 'ok', 'detail': 'Upgrade in progress. Re-sync once the router is back online.'})
+    return {'success': True, 'log': log}
+
+
+def export_config(device):
+    """Return the full RouterOS configuration as text (from /export over SSH)."""
+    with MikroTikClient(_ssh_config(device, timeout=30)) as client:
+        if not client.connect():
+            raise RuntimeError('Could not connect to router')
+        out, err = client.run_cli('/export')
+    text = out or ''
+    if not text.strip() and err:
+        raise RuntimeError(err.strip()[:300])
+    return text
+
+
+def reboot_device(device):
+    """Reboot the router over SSH (session drops, which is expected)."""
+    try:
+        with MikroTikClient(_ssh_config(device, timeout=10)) as client:
+            if not client.connect():
+                return {'success': False, 'detail': 'Connection failed'}
+            try:
+                client.run_cli('/system reboot')
+            except Exception:
+                pass  # connection drop on reboot is expected
+    except Exception as exc:
+        # A drop right after issuing reboot is success; only report hard pre-connect errors.
+        return {'success': True, 'detail': f'Reboot issued ({str(exc)[:120]})'}
+    return {'success': True, 'detail': 'Reboot issued'}
+
+
 def configure_services(device, opts):
     """Connect to the router and push the service configuration.
 

@@ -44,6 +44,11 @@ def sync_device_stats(device, connection_type=None):
         device.bandwidth_usage = info.bandwidth_rx + info.bandwidth_tx
         device.last_synced = datetime.utcnow()
         device.device_status = DeviceStatus.ONLINE
+        # Persist version / board so the Firmware + Status pages show real data.
+        if info.version:
+            device.os_version = info.version
+        if info.board_name and (not device.device_model or device.device_model == 'Auto-detect'):
+            device.device_model = info.board_name
         db.session.commit()
 
         return {

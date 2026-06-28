@@ -356,6 +356,10 @@ class MikrotikDevice(db.Model):
     provision_fetch_count = db.Column(db.Integer, default=0, nullable=False)
     # JSON blob of applied service config (pppoe/hotspot/bridge ports/subnet)
     service_config = db.Column(db.Text, nullable=True)
+    # Firmware / RouterOS version tracking (populated by sync + firmware check)
+    os_version = db.Column(db.String(50), nullable=True)
+    firmware_latest = db.Column(db.String(50), nullable=True)
+    last_backup_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
 
@@ -385,6 +389,62 @@ class MikrotikDevice(db.Model):
 
     def __repr__(self):
         return f"<MikrotikDevice {self.device_name} ({self.device_ip})>"
+
+
+class DeviceBackup(db.Model):
+    """A stored RouterOS configuration export for a MikroTik device."""
+    __tablename__ = 'device_backups'
+
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id', ondelete='CASCADE'), nullable=False, index=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    storage_path = db.Column(db.String(512), nullable=False)
+    file_format = db.Column(db.String(10), default='rsc')  # rsc (text export) or backup (binary)
+    size_bytes = db.Column(db.Integer, default=0)
+    sha256 = db.Column(db.String(64), nullable=True)
+    status = db.Column(db.String(20), default='success')  # success | error
+    notes = db.Column(db.Text, nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    device = db.relationship('MikrotikDevice', backref=db.backref('backups', cascade='all, delete-orphan', passive_deletes=True))
+
+    def __repr__(self):
+        return f"<DeviceBackup {self.filename} device={self.device_id}>"
+
+
+class Equipment(db.Model):
+    """Physical network/IT asset inventory with procurement tracking."""
+    __tablename__ = 'equipment'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    equipment_type = db.Column(db.String(50), default='Router')  # Router, Switch, Access Point, Server, Other
+    serial_number = db.Column(db.String(120), nullable=True)
+    vendor = db.Column(db.String(120), nullable=True)
+    price = db.Column(db.Float, default=0)
+    paid_amount = db.Column(db.Float, default=0)
+    status = db.Column(db.String(20), default='pending')  # active | installment | pending | retired
+    location = db.Column(db.String(120), nullable=True)
+    purchase_date = db.Column(db.Date, nullable=True)
+    warranty_until = db.Column(db.Date, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    # Optional link to a managed MikroTik device
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id', ondelete='SET NULL'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    isp = db.relationship('ISP')
+    device = db.relationship('MikrotikDevice')
+
+    @property
+    def outstanding(self):
+        return max((self.price or 0) - (self.paid_amount or 0), 0)
+
+    def __repr__(self):
+        return f"<Equipment {self.name} ({self.equipment_type})>"
 
 
 # =========================

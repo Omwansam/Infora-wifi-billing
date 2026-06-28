@@ -1,17 +1,28 @@
 import json
+import os
 import secrets
-from flask import Blueprint, request, jsonify, current_app, Response
+from flask import Blueprint, request, jsonify, current_app, Response, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 from auth_utils import get_current_user
-from models import MikrotikDevice, User, DeviceStatus, ISP
+from models import MikrotikDevice, User, DeviceStatus, ISP, DeviceBackup
 from datetime import datetime, timedelta
 from services.encryption import encrypt_value
 from services.device_config_ops import (
     get_provision_status,
     list_interfaces,
     configure_services,
+    check_firmware,
+    upgrade_firmware,
+    reboot_device,
 )
+from services.device_backups import (
+    create_backup,
+    list_backups,
+    delete_backup,
+    serialize_backup,
+)
+from services.rate_limit import rate_limit
 from services.provisioning_scripts import build_radius_script, build_one_liner, resolve_provision_base_url
 from services.mikrotik_sync import (
     sync_device_async,
@@ -45,6 +56,9 @@ def serialize_device(device):
             'device_ip': device.device_ip,
             'device_model': device.device_model,
             'device_status': device.device_status.value if device.device_status else None,
+            'os_version': getattr(device, 'os_version', None),
+            'firmware_latest': getattr(device, 'firmware_latest', None),
+            'last_backup_at': device.last_backup_at.isoformat() if getattr(device, 'last_backup_at', None) else None,
             'uptime': device.uptime,
             'client_count': device.client_count,
             'bandwidth_usage': device.bandwidth_usage,
@@ -583,22 +597,149 @@ def sync_device_alias(device_id):
     return sync_device(device_id)
 
 
+def _device_for_user(device_id):
+    """Fetch a device + enforce tenant scoping. Returns (device, error_response)."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if not current_user:
+        return None, (jsonify({'error': 'User not found'}), 404)
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return None, (jsonify({'error': 'Access denied'}), 403)
+    return device, None
+
+
+@devices_bp.route('/<int:device_id>/backup', methods=['POST'])
 @devices_bp.route('/backup/<int:device_id>', methods=['POST'])
+@rate_limit(limit=10, window=60, scope='device-backup')
 @jwt_required()
-def backup_device_alias(device_id):
-    return jsonify({'message': 'Device backup initiated', 'device_id': device_id}), 200
+def backup_device_route(device_id):
+    """Export the RouterOS config over SSH and store it on the server."""
+    device, err = _device_for_user(device_id)
+    if err:
+        return err
+    try:
+        current_user = get_current_user()
+        backup = create_backup(device, user_id=current_user.id if current_user else None)
+        db.session.commit()
+        return jsonify({
+            'message': 'Backup created',
+            'backup': serialize_backup(backup),
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Backup failed: {str(e)}'}), 502
 
 
+@devices_bp.route('/<int:device_id>/backups', methods=['GET'])
+@jwt_required()
+def list_device_backups(device_id):
+    """List stored config backups for a device (newest first)."""
+    device, err = _device_for_user(device_id)
+    if err:
+        return err
+    backups = list_backups(device.id)
+    return jsonify({'backups': [serialize_backup(b) for b in backups]}), 200
+
+
+@devices_bp.route('/backups/<int:backup_id>/download', methods=['GET'])
+@jwt_required()
+def download_device_backup(backup_id):
+    """Download a stored backup file."""
+    backup = DeviceBackup.query.get_or_404(backup_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and backup.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+    if not backup.storage_path or not os.path.isfile(backup.storage_path):
+        return jsonify({'error': 'Backup file not found on server'}), 404
+    return send_file(
+        backup.storage_path,
+        as_attachment=True,
+        download_name=backup.filename,
+        mimetype='text/plain',
+    )
+
+
+@devices_bp.route('/backups/<int:backup_id>', methods=['DELETE'])
+@jwt_required()
+def delete_device_backup(backup_id):
+    """Delete a stored backup (file + record)."""
+    backup = DeviceBackup.query.get_or_404(backup_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and backup.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+    delete_backup(backup)
+    return jsonify({'message': 'Backup deleted'}), 200
+
+
+@devices_bp.route('/<int:device_id>/reboot', methods=['POST'])
 @devices_bp.route('/reboot/<int:device_id>', methods=['POST'])
+@rate_limit(limit=5, window=300, scope='device-reboot')
 @jwt_required()
-def reboot_device_alias(device_id):
-    return jsonify({'message': 'Device reboot initiated', 'device_id': device_id}), 200
+def reboot_device_route(device_id):
+    """Reboot the router over SSH."""
+    device, err = _device_for_user(device_id)
+    if err:
+        return err
+    result = reboot_device(device)
+    if result.get('success'):
+        device.device_status = DeviceStatus.MAINTENANCE
+        db.session.commit()
+    return jsonify(result), (200 if result.get('success') else 502)
 
 
+@devices_bp.route('/<int:device_id>/firmware/check', methods=['POST'])
 @devices_bp.route('/update/<int:device_id>', methods=['POST'])
+@rate_limit(limit=10, window=60, scope='firmware-check')
 @jwt_required()
-def update_device_alias(device_id):
-    return sync_device(device_id)
+def firmware_check_route(device_id):
+    """Check whether a newer RouterOS version is available and persist versions."""
+    device, err = _device_for_user(device_id)
+    if err:
+        return err
+    try:
+        info = check_firmware(device)
+    except Exception as e:
+        return jsonify({'error': f'Firmware check failed: {str(e)}'}), 502
+
+    if info.get('installed'):
+        device.os_version = info['installed']
+    if info.get('latest'):
+        device.firmware_latest = info['latest']
+    db.session.commit()
+
+    return jsonify(info), 200
+
+
+@devices_bp.route('/<int:device_id>/firmware/upgrade', methods=['POST'])
+@rate_limit(limit=5, window=300, scope='firmware-upgrade')
+@jwt_required()
+def firmware_upgrade_route(device_id):
+    """Trigger a full RouterOS upgrade (install + reboot)."""
+    device, err = _device_for_user(device_id)
+    if err:
+        return err
+    result = upgrade_firmware(device)
+    if result.get('success'):
+        device.device_status = DeviceStatus.MAINTENANCE
+        db.session.commit()
+    return jsonify(result), (200 if result.get('success') else 502)
+
+
+@devices_bp.route('/<int:device_id>/maintenance', methods=['PUT'])
+@jwt_required()
+def set_device_maintenance(device_id):
+    """Put a device into / out of maintenance mode."""
+    device, err = _device_for_user(device_id)
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    enable = bool(payload.get('maintenance', True))
+    device.device_status = DeviceStatus.MAINTENANCE if enable else DeviceStatus.OFFLINE
+    db.session.commit()
+    return jsonify({
+        'message': 'Maintenance mode ' + ('enabled' if enable else 'disabled'),
+        'device': serialize_device(device),
+    }), 200
 
 
 @devices_bp.route('/<int:device_id>/radius-script', methods=['GET'])
