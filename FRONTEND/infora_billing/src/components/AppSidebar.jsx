@@ -20,6 +20,7 @@ import {
   Mail,
   Smartphone,
   Building,
+  Package,
   Tool,
   Bell,
   LogOut,
@@ -68,16 +69,18 @@ export default function AppSidebar() {
       icon: Home,
       badge: null
     },
-      {
-        title: "Customer Management",
-        icon: Users,
-      section: "customers",
-        items: [
-        { title: "Add New Customer", url: "/customers/new", icon: UserPlus },
-          { title: "View All Customers", url: "/customers", icon: Users },
-        { title: "KYC Management", url: "/customers/kyc", icon: FileText }
-      ]
-      },
+    {
+      title: "Clients",
+      url: "/clients",
+      icon: Users,
+      badge: null
+    },
+    {
+      title: "Packages",
+      url: "/plans",
+      icon: Package,
+      badge: null
+    },
       {
         title: "Billing & Payments",
         icon: CreditCard,
@@ -88,12 +91,6 @@ export default function AppSidebar() {
         { title: "Invoices", url: "/billing/invoices", icon: FileText },
         { title: "Transaction History", url: "/billing/transactions", icon: BarChart3 }
       ]
-    },
-    {
-      title: "Service Plans",
-      url: "/plans",
-      icon: Wifi,
-      badge: null
     },
     {
       title: "Finance",

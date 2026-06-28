@@ -2,10 +2,51 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_
 from extensions import db
-from models import Customer, User, CustomerStatus, KycStatus
+from auth_utils import get_current_user
+from models import User, Customer, CustomerStatus, ServicePlan, ISP, KycStatus, RadAcct, MikrotikDevice
 from datetime import datetime
+from services.radius_provisioning import (
+    provision_customer_radius,
+    deprovision_customer_radius,
+    suspend_customer_access,
+    activate_customer_after_payment,
+    set_customer_radius_password,
+    sync_customer_radius_status,
+)
+import secrets
 
 customers_bp = Blueprint('customers', __name__, url_prefix='/api/customers')
+
+
+def _resolve_isp_for_user():
+    """Return ISP for the current JWT user (None for admin without ISP)."""
+    user = get_current_user()
+    if not user:
+        return None
+    if user.isp_id:
+        return ISP.query.get(user.isp_id)
+    return ISP.query.filter_by(is_active=True).first()
+
+
+def _resolve_plan_for_customer(data, isp):
+    """Resolve service plan from service_plan_id or package name."""
+    if data.get('service_plan_id'):
+        return ServicePlan.query.get(data['service_plan_id'])
+    package = data.get('package')
+    if package and isp:
+        return ServicePlan.query.filter_by(name=package, isp_id=isp.id).first()
+    if isp:
+        return ServicePlan.query.filter_by(isp_id=isp.id, is_active=True).first()
+    return None
+
+
+def _serialize_wireguard_peer(customer):
+    from services.wireguard_provisioning import serialize_peer
+    peer = getattr(customer, 'wireguard_peer', None)
+    if not peer or not peer.is_active:
+        return None
+    return serialize_peer(peer, plan=customer.service_plan)
+
 
 def serialize_customer(customer):
     """Serialize customer object to dictionary"""
@@ -30,6 +71,11 @@ def serialize_customer(customer):
             'kyc_status': customer.kyc_status.value if getattr(customer, 'kyc_status', None) else 'pending',
             'kyc_verified_at': customer.kyc_verified_at.isoformat() if getattr(customer, 'kyc_verified_at', None) else None,
             'kyc_notes': customer.kyc_notes,
+            'subscription_start': customer.subscription_start.isoformat() if customer.subscription_start else None,
+            'subscription_end': customer.subscription_end.isoformat() if customer.subscription_end else None,
+            'connection_type': customer.connection_type or 'pppoe',
+            'radius_username': customer.email.strip().lower() if customer.email else None,
+            'wireguard_peer': _serialize_wireguard_peer(customer),
             'service_plan': {
                 'id': customer.service_plan.id,
                 'name': customer.service_plan.name,
@@ -72,11 +118,18 @@ def get_customers():
         per_page = request.args.get('per_page', 20, type=int)
         search = request.args.get('search')
         status = request.args.get('status')
+        connection_type = request.args.get('connection_type')
         sort_by = request.args.get('sort_by', 'created_at')
         sort_order = request.args.get('sort_order', 'desc')
         
         
         query = Customer.query
+
+        if connection_type:
+            allowed = {'hotspot', 'pppoe', 'wireguard'}
+            if connection_type not in allowed:
+                return jsonify({'error': 'Invalid connection_type'}), 400
+            query = query.filter_by(connection_type=connection_type)
         
         # Search functionality
         if search:
@@ -125,6 +178,183 @@ def get_customers():
     except Exception as e:
         return jsonify({'error': f'Failed to get customers: {str(e)}'}), 500
 
+
+def _resolve_session_customer(record, customer_by_id, customer_by_email):
+    if record.customer_id and record.customer_id in customer_by_id:
+        return customer_by_id[record.customer_id]
+    username = (record.username or '').strip().lower()
+    return customer_by_email.get(username)
+
+
+def _infer_connection_type(record, customer):
+    if customer and customer.connection_type:
+        return customer.connection_type
+    protocol = (record.framedprotocol or '').lower()
+    if 'ppp' in protocol:
+        return 'pppoe'
+    service = (record.servicetype or '').lower()
+    if service in ('framed-user', 'login-user'):
+        return 'hotspot'
+    return 'pppoe'
+
+
+def _serialize_active_session(record, customer=None, device=None):
+    now = datetime.utcnow()
+    start = record.acctstarttime
+    duration_sec = record.acctsessiontime or 0
+    if start and not record.acctstoptime:
+        duration_sec = max(duration_sec, int((now - start).total_seconds()))
+
+    conn_type = _infer_connection_type(record, customer)
+    router_name = device.device_name if device else record.nasipaddress
+
+    return {
+        'id': record.radacctid,
+        'session_id': record.acctsessionid,
+        'username': record.username,
+        'customer_id': customer.id if customer else record.customer_id,
+        'customer_name': customer.full_name if customer else None,
+        'connection_type': conn_type,
+        'ip_address': record.framedipaddress,
+        'mac_address': record.callingstationid,
+        'router_id': device.id if device else record.mikrotik_device_id,
+        'router_name': router_name,
+        'nas_ip': record.nasipaddress,
+        'session_start': start.isoformat() if start else None,
+        'duration_seconds': duration_sec,
+        'bytes_in': int(record.acctinputoctets or 0),
+        'bytes_out': int(record.acctoutputoctets or 0),
+        'plan_name': customer.service_plan.name if customer and customer.service_plan else record.groupname,
+    }
+
+
+@customers_bp.route('/sessions/active', methods=['GET'])
+@jwt_required()
+def get_active_online_sessions():
+    """Live sessions from FreeRADIUS radacct (acctstoptime IS NULL)."""
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        connection_type = (request.args.get('connection_type') or 'all').strip().lower()
+        search = (request.args.get('search') or '').strip()
+        router_id = request.args.get('router_id', type=int)
+
+        if connection_type not in ('all', 'pppoe', 'hotspot'):
+            return jsonify({'error': 'Invalid connection_type'}), 400
+
+        query = RadAcct.query.filter(RadAcct.acctstoptime.is_(None))
+
+        if user.role != 'admin' and user.isp_id:
+            query = query.filter(RadAcct.isp_id == user.isp_id)
+
+        if router_id:
+            device = MikrotikDevice.query.get(router_id)
+            if device:
+                query = query.filter(
+                    or_(
+                        RadAcct.mikrotik_device_id == router_id,
+                        RadAcct.nasipaddress == device.device_ip,
+                    )
+                )
+
+        if search:
+            term = f'%{search}%'
+            query = query.filter(
+                or_(
+                    RadAcct.username.ilike(term),
+                    RadAcct.framedipaddress.ilike(term),
+                    RadAcct.callingstationid.ilike(term),
+                    RadAcct.acctsessionid.ilike(term),
+                )
+            )
+
+        records = query.order_by(RadAcct.acctstarttime.desc()).limit(500).all()
+
+        customer_ids = {r.customer_id for r in records if r.customer_id}
+        usernames = {(r.username or '').strip().lower() for r in records if r.username}
+        customers_by_id = {}
+        customers_by_email = {}
+        if customer_ids or usernames:
+            customer_query = Customer.query
+            if customer_ids and usernames:
+                customer_query = customer_query.filter(
+                    or_(
+                        Customer.id.in_(customer_ids),
+                        db.func.lower(Customer.email).in_(list(usernames)),
+                    )
+                )
+            elif customer_ids:
+                customer_query = customer_query.filter(Customer.id.in_(customer_ids))
+            else:
+                customer_query = customer_query.filter(
+                    db.func.lower(Customer.email).in_(list(usernames))
+                )
+            for customer in customer_query.all():
+                customers_by_id[customer.id] = customer
+                if customer.email:
+                    customers_by_email[customer.email.strip().lower()] = customer
+
+        device_ids = {r.mikrotik_device_id for r in records if r.mikrotik_device_id}
+        nas_ips = {r.nasipaddress for r in records if r.nasipaddress}
+        devices_by_id = {}
+        devices_by_ip = {}
+        device_filters = []
+        if device_ids:
+            device_filters.append(MikrotikDevice.id.in_(device_ids))
+        if nas_ips:
+            device_filters.append(MikrotikDevice.device_ip.in_(list(nas_ips)))
+        if device_filters:
+            device_query = MikrotikDevice.query.filter(or_(*device_filters))
+            if user.role != 'admin' and user.isp_id:
+                device_query = device_query.filter(MikrotikDevice.isp_id == user.isp_id)
+            for device in device_query.all():
+                devices_by_id[device.id] = device
+                devices_by_ip[device.device_ip] = device
+
+        sessions = []
+        counts = {'all': 0, 'pppoe': 0, 'hotspot': 0}
+        for record in records:
+            customer = _resolve_session_customer(record, customers_by_id, customers_by_email)
+            device = None
+            if record.mikrotik_device_id:
+                device = devices_by_id.get(record.mikrotik_device_id)
+            if not device and record.nasipaddress:
+                device = devices_by_ip.get(record.nasipaddress)
+
+            payload = _serialize_active_session(record, customer, device)
+            counts['all'] += 1
+            if payload['connection_type'] == 'hotspot':
+                counts['hotspot'] += 1
+            else:
+                counts['pppoe'] += 1
+
+            if connection_type != 'all' and payload['connection_type'] != connection_type:
+                continue
+            sessions.append(payload)
+
+        router_query = MikrotikDevice.query.filter_by(is_active=True)
+        if user.role != 'admin' and user.isp_id:
+            router_query = router_query.filter_by(isp_id=user.isp_id)
+        routers = [
+            {'id': d.id, 'name': d.device_name, 'ip': d.device_ip}
+            for d in router_query.order_by(MikrotikDevice.device_name).all()
+        ]
+
+        return jsonify({
+            'ok': True,
+            'data': {
+                'sessions': sessions,
+                'counts': counts,
+                'routers': routers,
+            },
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to load active sessions: {str(e)}'}), 500
+
+
 @customers_bp.route('/<int:customer_id>', methods=['GET'])
 @jwt_required()
 def get_customer(customer_id):
@@ -156,25 +386,86 @@ def create_customer():
         
         # Create customer
         status = CustomerStatus(data.get('status', 'active')) if data.get('status') else CustomerStatus.ACTIVE
+        isp = _resolve_isp_for_user()
+        if not isp:
+            return jsonify({'error': 'No ISP context — assign user to an ISP or create an ISP first'}), 400
+
+        plan = _resolve_plan_for_customer(data, isp)
+        package_name = plan.name if plan else data.get('package', 'Basic WiFi')
+        requested_type = (data.get('connection_type') or '').strip().lower() or None
+
+        if requested_type and requested_type not in ('hotspot', 'pppoe', 'wireguard'):
+            return jsonify({'error': 'Invalid connection_type'}), 400
+        if plan and requested_type and plan.plan_type != requested_type:
+            return jsonify({
+                'error': f'Selected plan is for {plan.plan_type} clients, not {requested_type}',
+            }), 400
+        if requested_type == 'hotspot' and status == CustomerStatus.ACTIVE:
+            return jsonify({
+                'error': 'Hotspot clients are created via the captive portal after payment',
+            }), 400
+
+        connection_type = requested_type or (plan.plan_type if plan else 'pppoe')
+
         customer = Customer(
             full_name=data['name'],
-            email=data['email'],
+            email=data['email'].strip().lower(),
             phone=data['phone'],
             address=data.get('address'),
             status=status,
             balance=data.get('balance', 0.00),
-            package=data.get('package', 'Basic WiFi'),
+            package=package_name,
             usage_percentage=data.get('usage_percentage', 0),
-            device_count=data.get('device_count', 0)
+            device_count=data.get('device_count', 0),
+            isp_id=isp.id,
+            service_plan_id=plan.id if plan else None,
+            connection_type=connection_type,
         )
-        
+
+        if plan and status == CustomerStatus.ACTIVE:
+            from services.portal_service import plan_subscription_end
+            customer.subscription_start = datetime.utcnow()
+            customer.subscription_end = plan_subscription_end(plan)
+
         db.session.add(customer)
+        db.session.flush()
+
+        generated_password = None
+        radius_provisioned = False
+        wireguard_provisioned = False
+        radius_provision_reason = None
+
+        if status == CustomerStatus.ACTIVE and plan:
+            if plan.plan_type == 'wireguard':
+                from services.wireguard_provisioning import provision_customer_wireguard
+                provision_customer_wireguard(customer, plan, isp)
+                wireguard_provisioned = True
+            else:
+                password = data.get('password') or secrets.token_urlsafe(8)
+                set_customer_radius_password(customer, password)
+                generated_password = password
+                provision_customer_radius(customer, plan, isp, password=generated_password)
+                radius_provisioned = True
+        elif status == CustomerStatus.PENDING:
+            radius_provision_reason = 'Customer is pending — activate or connect to provision RADIUS'
+        elif not plan:
+            radius_provision_reason = 'No service plan assigned — RADIUS not provisioned'
+        elif status != CustomerStatus.ACTIVE:
+            radius_provision_reason = f'Customer status is {status.value} — RADIUS not provisioned on create'
+
         db.session.commit()
-        
-        return jsonify({
+
+        response = {
             'message': 'Customer created successfully',
-            'customer': serialize_customer(customer)
-        }), 201
+            'customer': serialize_customer(customer),
+            'radius_provisioned': radius_provisioned,
+            'wireguard_provisioned': wireguard_provisioned,
+            'radius_provision_reason': radius_provision_reason,
+        }
+        if generated_password:
+            response['radius_password'] = generated_password
+
+        return jsonify(response), 201
         
     except Exception as e:
         db.session.rollback()
@@ -187,7 +478,8 @@ def update_customer(customer_id):
     try:
         customer = Customer.query.get_or_404(customer_id)
         data = request.get_json()
-        
+        old_status = customer.status
+
         # Update fields
         if 'name' in data:
             customer.full_name = data['name']
@@ -196,7 +488,7 @@ def update_customer(customer_id):
             existing_customer = Customer.query.filter_by(email=data['email']).first()
             if existing_customer and existing_customer.id != customer.id:
                 return jsonify({'error': 'Email already taken'}), 409
-            customer.email = data['email']
+            customer.email = data['email'].strip().lower()
         if 'phone' in data:
             customer.phone = data['phone']
         if 'address' in data:
@@ -209,7 +501,15 @@ def update_customer(customer_id):
             customer.usage_percentage = data['usage_percentage']
         if 'device_count' in data:
             customer.device_count = data['device_count']
-        
+        if 'service_plan_id' in data:
+            customer.service_plan_id = data['service_plan_id']
+            plan = ServicePlan.query.get(data['service_plan_id'])
+            if plan:
+                customer.package = plan.name
+
+        if customer.status != old_status or 'service_plan_id' in data:
+            sync_customer_radius_status(customer, old_status=old_status)
+
         db.session.commit()
         
         return jsonify({
@@ -227,34 +527,11 @@ def delete_customer(customer_id):
     """Delete customer"""
     try:
         customer = Customer.query.get_or_404(customer_id)
-        
-        
-        # Check if customer has related data that would prevent deletion
-        invoice_count = customer.invoices.count()
-        payment_count = customer.payments.count()
-        ticket_count = customer.tickets.count()
-        transaction_count = customer.transactions.count()
-        revenue_count = customer.revenue_data.count()
-        
-        
-        # For now, allow deletion even with related data (cascade will handle it)
-        # You can uncomment these checks if you want to prevent deletion with related data
-        
-        # if invoice_count > 0:
-        #     return jsonify({'error': f'Cannot delete customer with {invoice_count} existing invoices'}), 400
-        
-        # if payment_count > 0:
-        #     return jsonify({'error': f'Cannot delete customer with {payment_count} existing payments'}), 400
-        
-        # if ticket_count > 0:
-        #     return jsonify({'error': f'Cannot delete customer with {ticket_count} existing tickets'}), 400
-        
-        # if transaction_count > 0:
-        #     return jsonify({'error': f'Cannot delete customer with {transaction_count} existing transactions'}), 400
-        
-        # if revenue_count > 0:
-        #     return jsonify({'error': f'Cannot delete customer with {revenue_count} existing revenue records'}), 400
-        
+
+        isp = ISP.query.get(customer.isp_id) if customer.isp_id else None
+        if isp:
+            deprovision_customer_radius(customer, isp)
+
         # Delete the customer (cascade will handle related data)
         try:
             db.session.delete(customer)
@@ -288,15 +565,20 @@ def update_customer_status(customer_id):
     try:
         customer = Customer.query.get_or_404(customer_id)
         data = request.get_json()
-        
+
         new_status = data.get('status')
         if not new_status:
             return jsonify({'error': 'Status is required'}), 400
-        
+
+        old_status = customer.status
         try:
             customer.status = CustomerStatus(new_status)
         except ValueError:
             return jsonify({'error': 'Invalid status'}), 400
+
+        if customer.status != old_status:
+            sync_customer_radius_status(customer, old_status=old_status)
+
         db.session.commit()
         
         return jsonify({
@@ -377,6 +659,14 @@ def get_customer_stats():
         active_customers = Customer.query.filter_by(status=CustomerStatus.ACTIVE).count()
         suspended_customers = Customer.query.filter_by(status=CustomerStatus.SUSPENDED).count()
         pending_customers = Customer.query.filter_by(status=CustomerStatus.PENDING).count()
+        pppoe_clients = Customer.query.filter_by(connection_type='pppoe').count()
+        hotspot_clients = Customer.query.filter_by(connection_type='hotspot').count()
+        active_pppoe = Customer.query.filter_by(
+            connection_type='pppoe', status=CustomerStatus.ACTIVE
+        ).count()
+        active_hotspot = Customer.query.filter_by(
+            connection_type='hotspot', status=CustomerStatus.ACTIVE
+        ).count()
         
         # Average balance
         avg_balance = db.session.query(db.func.avg(Customer.balance)).scalar() or 0
@@ -396,9 +686,14 @@ def get_customer_stats():
         
         response_data = {
             'total_customers': total_customers,
+            'total_clients': total_customers,
             'active_customers': active_customers,
             'suspended_customers': suspended_customers,
             'pending_customers': pending_customers,
+            'pppoe_clients': pppoe_clients,
+            'hotspot_clients': hotspot_clients,
+            'active_pppoe_clients': active_pppoe,
+            'active_hotspot_clients': active_hotspot,
             'average_balance': float(avg_balance),
             'total_balance': float(total_balance),
             'customers_with_balance': customers_with_balance,
@@ -417,6 +712,58 @@ def get_customer_stats():
         
     except Exception as e:
         return jsonify({'error': f'Failed to get customer stats: {str(e)}'}), 500
+
+@customers_bp.route('/<int:customer_id>/connect', methods=['POST'])
+@jwt_required()
+def connect_client(customer_id):
+    """Connect client to internet — provision RADIUS and set active."""
+    try:
+        customer = Customer.query.get_or_404(customer_id)
+        isp = ISP.query.get(customer.isp_id) if customer.isp_id else _resolve_isp_for_user()
+        if not isp:
+            return jsonify({'error': 'No ISP context'}), 400
+        if customer.connection_type not in ('pppoe', 'hotspot'):
+            return jsonify({'error': 'Connect/disconnect applies to PPPoE and hotspot clients only'}), 400
+        if customer.status == CustomerStatus.ACTIVE:
+            return jsonify({'message': 'Client is already connected', 'customer': serialize_customer(customer)}), 200
+
+        plan = customer.service_plan
+        if not plan:
+            return jsonify({'error': 'Assign a service plan before connecting'}), 400
+
+        activate_customer_after_payment(customer, isp)
+        db.session.commit()
+        return jsonify({
+            'message': 'Client connected — internet access provisioned',
+            'customer': serialize_customer(customer),
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to connect client: {str(e)}'}), 500
+
+
+@customers_bp.route('/<int:customer_id>/disconnect', methods=['POST'])
+@jwt_required()
+def disconnect_client(customer_id):
+    """Disconnect client from internet — suspend and remove RADIUS access."""
+    try:
+        customer = Customer.query.get_or_404(customer_id)
+        isp = ISP.query.get(customer.isp_id) if customer.isp_id else _resolve_isp_for_user()
+        if customer.connection_type not in ('pppoe', 'hotspot'):
+            return jsonify({'error': 'Connect/disconnect applies to PPPoE and hotspot clients only'}), 400
+        if customer.status == CustomerStatus.SUSPENDED:
+            return jsonify({'message': 'Client is already disconnected', 'customer': serialize_customer(customer)}), 200
+
+        suspend_customer_access(customer, isp)
+        db.session.commit()
+        return jsonify({
+            'message': 'Client disconnected — internet access removed',
+            'customer': serialize_customer(customer),
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to disconnect client: {str(e)}'}), 500
+
 
 @customers_bp.route('/<int:customer_id>/invoices', methods=['GET'])
 @jwt_required()

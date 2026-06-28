@@ -75,8 +75,8 @@ export default function FinanceLeadsPage() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-7xl">
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div>
@@ -187,7 +187,7 @@ export default function FinanceLeadsPage() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button
-                          onClick={() => navigate(`/customers/${lead.id}`)}
+                          onClick={() => navigate(`/clients/${lead.id}`)}
                           className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium text-violet-700 bg-violet-50 hover:bg-violet-100"
                         >
                           View

@@ -65,7 +65,7 @@ export default function SignupPage() {
           navigate('/', { replace: true });
         } else {
           // Support users go to a different route
-          navigate('/customers', { replace: true });
+          navigate('/clients', { replace: true });
         }
       } else {
         toast.error(result.error || 'Registration failed');

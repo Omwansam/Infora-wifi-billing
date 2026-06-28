@@ -42,7 +42,7 @@ export default function LoginPage() {
           navigate('/', { replace: true });
         } else {
           // Support users go to a different route (you can customize this)
-          navigate('/customers', { replace: true });
+          navigate('/clients', { replace: true });
         }
       } else {
         toast.error(result.error || 'Login failed');

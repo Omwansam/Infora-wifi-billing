@@ -1,0 +1,50 @@
+# Root environment (docker-compose)
+.env
+.env.*
+!.env.example
+config/deployment/production.env
+
+# TLS certificates & private keys (see certs/nginx/README.md)
+certs/**/*.pem
+certs/**/*.key
+certs/**/*.crt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / frontend build output
+node_modules/
+dist/
+dist-ssr/
+web-build/
+
+# Local databases
+*.db
+
+# IDE & local tooling
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.cursor/
+.claude/
+.DS_Store
+*.sw?
+
+# Logs
+logs/
+*.log
+
+# Docker local overrides
+docker-compose.override.yml

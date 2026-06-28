@@ -77,6 +77,84 @@
   background: rgb(71 85 105);
 }
 
+/* Responsive utilities */
+@layer utilities {
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  .table-scroll {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+html {
+  overflow-x: clip;
+}
+
+body {
+  overflow-x: clip;
+}
+
+.dark .min-h-full.bg-slate-50 {
+  @apply bg-slate-950;
+}
+
+/* Dark mode — common admin page surfaces */
+.dark .min-h-screen.bg-slate-50 {
+  @apply bg-slate-950;
+}
+
+.dark .bg-white {
+  @apply bg-slate-900;
+}
+
+.dark .bg-slate-50 {
+  @apply bg-slate-900/60;
+}
+
+.dark .border-slate-200 {
+  @apply border-slate-800;
+}
+
+.dark .border-slate-100 {
+  @apply border-slate-800;
+}
+
+.dark .text-slate-900 {
+  @apply text-slate-100;
+}
+
+.dark .text-slate-800 {
+  @apply text-slate-200;
+}
+
+.dark .text-slate-700 {
+  @apply text-slate-300;
+}
+
+.dark .hover\:bg-slate-50:hover {
+  @apply bg-slate-800/80;
+}
+
+.dark .hover\:bg-slate-100:hover {
+  @apply bg-slate-800;
+}
+
+.dark input,
+.dark select,
+.dark textarea {
+  @apply bg-slate-900 border-slate-700 text-slate-100;
+}
+
+.dark .shadow-sm {
+  --tw-shadow-color: rgb(0 0 0 / 0.35);
+}
+
 /* Captive portal animated mesh background */
 .portal-mesh {
   background-color: #020617;

@@ -1,8 +1,9 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 from auth_utils import get_current_user
 from services.brand_constants import sanitize_brand_text, BRAND_COMPANY
+from services.radius_clients_export import sync_radius_clients_conf
 from models import ISP, User, MikrotikDevice, Customer, Invoice, ServicePlan
 from datetime import datetime, timedelta
 
@@ -305,6 +306,11 @@ def regenerate_radius_secret(isp_id):
         # Regenerate RADIUS secret
         isp.generate_radius_secret()
         db.session.commit()
+
+        try:
+            sync_radius_clients_conf()
+        except OSError as sync_err:
+            current_app.logger.warning('Failed to sync RADIUS clients.conf: %s', sync_err)
         
         return jsonify({
             'message': 'RADIUS secret regenerated successfully',

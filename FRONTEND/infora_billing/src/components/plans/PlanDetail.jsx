@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -25,7 +25,6 @@ import { normalizePlanFeatures, planMonthlyRevenue } from '../../lib/planUtils';
 import { customerInitials } from '../../lib/billingFormatters';
 import PlanFeatureIcon from './PlanFeatureIcon';
 import PlanStatusBadge from './PlanStatusBadge';
-import PlanForm from './PlanForm';
 
 export default function PlanDetail() {
   const { planId } = useParams();
@@ -34,7 +33,6 @@ export default function PlanDetail() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [showForm, setShowForm] = useState(false);
 
   const loadPlanDetails = async () => {
     try {
@@ -121,12 +119,12 @@ export default function PlanDetail() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="text-center bg-white rounded-2xl border border-slate-200 p-10 max-w-md">
           <Wifi className="h-12 w-12 text-slate-300 mx-auto" />
-          <h2 className="mt-4 text-xl font-semibold text-slate-900">Plan not found</h2>
+          <h2 className="mt-4 text-xl font-semibold text-slate-900">Package not found</h2>
           <button
             onClick={() => navigate('/plans')}
             className="mt-6 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium"
           >
-            Back to Plans
+            Back to Packages
           </button>
         </div>
       </div>
@@ -134,7 +132,7 @@ export default function PlanDetail() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
       <div className="max-w-6xl mx-auto">
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <button
@@ -142,7 +140,7 @@ export default function PlanDetail() {
             className="inline-flex items-center text-sm text-slate-600 hover:text-slate-900 mb-4"
           >
             <ArrowLeft className="h-4 w-4 mr-1.5" />
-            Back to Service Plans
+            Back to Packages
           </button>
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
             <div>
@@ -155,7 +153,7 @@ export default function PlanDetail() {
             </div>
             <div className="flex gap-2 self-start">
               <button
-                onClick={() => setShowForm(true)}
+                onClick={() => navigate(`/plans/${planId}/edit`)}
                 disabled={actionLoading}
                 className="inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-medium bg-white border border-slate-200 hover:bg-slate-50"
               >
@@ -266,7 +264,7 @@ export default function PlanDetail() {
                         </div>
                       </div>
                       <button
-                        onClick={() => navigate(`/customers/${customer.id}`)}
+                        onClick={() => navigate(`/clients/${customer.id}`)}
                         className="p-2 rounded-lg text-slate-400 hover:text-cyan-700 hover:bg-cyan-50"
                       >
                         <ExternalLink className="h-4 w-4" />
@@ -339,19 +337,6 @@ export default function PlanDetail() {
             </motion.div>
           </div>
         </div>
-
-        <AnimatePresence>
-          {showForm && (
-            <PlanForm
-              planId={plan.id}
-              onClose={() => setShowForm(false)}
-              onSuccess={() => {
-                setShowForm(false);
-                loadPlanDetails();
-              }}
-            />
-          )}
-        </AnimatePresence>
       </div>
     </div>
   );

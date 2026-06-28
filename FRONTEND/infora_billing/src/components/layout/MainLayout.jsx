@@ -8,26 +8,24 @@ function MainLayoutContent({ children }) {
   const { width } = useSidebar();
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen min-w-0 bg-slate-50 dark:bg-slate-950">
       <AppSidebar />
       <motion.div
-        className="flex min-h-screen flex-1 flex-col"
+        className="flex min-h-screen min-w-0 flex-1 flex-col overflow-x-hidden"
         animate={{ marginLeft: width }}
         transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
       >
         <Header />
-        <main className="flex-1 p-6">{children}</main>
+        <main className="min-w-0 flex-1">{children}</main>
       </motion.div>
     </div>
   );
 }
 
-const MainLayout = ({ children }) => {
-  return (
-    <SidebarProvider>
-      <MainLayoutContent>{children}</MainLayoutContent>
-    </SidebarProvider>
-  );
-};
+const MainLayout = ({ children }) => (
+  <SidebarProvider>
+    <MainLayoutContent>{children}</MainLayoutContent>
+  </SidebarProvider>
+);
 
 export default MainLayout;

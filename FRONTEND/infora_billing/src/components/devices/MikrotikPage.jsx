@@ -11,6 +11,8 @@ import {
   Trash2,
   Router,
   Zap,
+  Download,
+  AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
@@ -37,6 +39,7 @@ export default function MikrotikPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showWizard, setShowWizard] = useState(false);
   const [actionId, setActionId] = useState(null);
+  const [deploymentIssues, setDeploymentIssues] = useState([]);
 
   useEffect(() => {
     const loadIsps = async () => {
@@ -53,6 +56,18 @@ export default function MikrotikPage() {
     };
     loadIsps();
   }, []);
+
+  useEffect(() => {
+    const loadDeploymentHealth = async () => {
+      try {
+        const result = await deviceService.getDeploymentHealth();
+        setDeploymentIssues(result.data?.issues || []);
+      } catch {
+        setDeploymentIssues([]);
+      }
+    };
+    loadDeploymentHealth();
+  }, [devices.length]);
 
   const filteredDevices = useMemo(
     () =>
@@ -116,6 +131,22 @@ export default function MikrotikPage() {
     }
   };
 
+  const handleDownloadRadius = async (device) => {
+    try {
+      setActionId(device.id);
+      const token = getAccessToken();
+      if (device.management_wg_enabled) {
+        await deviceService.downloadManagementTunnelScript(token, device.id, device.name);
+      }
+      await deviceService.downloadRadiusScript(token, device.id, device.name);
+      toast.success('RADIUS script downloaded — import on MikroTik');
+    } catch (error) {
+      toast.error(error.message || 'Download failed');
+    } finally {
+      setActionId(null);
+    }
+  };
+
   const handleDelete = async (device) => {
     if (!window.confirm(`Remove "${device.name}" from inventory?`)) return;
     try {
@@ -155,6 +186,22 @@ export default function MikrotikPage() {
         </div>
       }
     >
+      {deploymentIssues.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-amber-900">Deployment checklist</p>
+              <ul className="mt-2 text-sm text-amber-800 list-disc list-inside space-y-1">
+                {deploymentIssues.map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
         {statsCards.map((stat, index) => (
           <motion.div
@@ -285,6 +332,14 @@ export default function MikrotikPage() {
                       title="Sync device"
                     >
                       <RefreshCw className={`h-4 w-4 ${actionId === device.id ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                      onClick={() => handleDownloadRadius(device)}
+                      disabled={actionId === device.id}
+                      className="p-2 rounded-lg text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+                      title="Download RADIUS .rsc script"
+                    >
+                      <Download className="h-4 w-4" />
                     </button>
                     <button className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100" title="View details">
                       <Eye className="h-4 w-4" />

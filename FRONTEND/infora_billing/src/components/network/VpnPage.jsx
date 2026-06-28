@@ -182,8 +182,9 @@ export default function VpnPage() {
           ))}
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="table-scroll">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
                 <th className="px-5 py-3 font-semibold">Client</th>
@@ -207,6 +208,7 @@ export default function VpnPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

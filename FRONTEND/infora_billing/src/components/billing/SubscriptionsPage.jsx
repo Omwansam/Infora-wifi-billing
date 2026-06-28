@@ -101,8 +101,8 @@ export default function SubscriptionsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-7xl">
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div>
@@ -289,7 +289,7 @@ export default function SubscriptionsPage() {
               <div className="flex justify-between"><span className="text-slate-500">Balance</span><span>{formatCurrency(selected.balance)}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Data usage</span><span>{selected.usagePercentage}%</span></div>
               <button
-                onClick={() => navigate(`/customers/${selected.id}`)}
+                onClick={() => navigate(`/clients/${selected.id}`)}
                 className="w-full mt-2 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700"
               >
                 View customer profile

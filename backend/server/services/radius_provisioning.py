@@ -4,6 +4,7 @@ FreeRADIUS SQL provisioning (primary auth path).
 Flask writes radcheck / radreply / radusergroup; MikroTik NAS authenticates via FreeRADIUS.
 """
 import secrets
+from datetime import datetime
 
 from extensions import db
 from models import (
@@ -14,13 +15,23 @@ from models import (
     RadUserGroup,
     RadGroupCheck,
     RadGroupReply,
+    ServicePlan,
+    ISP,
 )
 from services.encryption import decrypt_value, encrypt_value
 from services.plan_utils import generate_radius_attributes
 
 
 def radius_username(customer):
+    """RADIUS username = lowercased email (PPPoE login)."""
     return customer.email.strip().lower()
+
+
+def format_radius_expiration(dt):
+    """FreeRADIUS Expiration attribute format: 'DD Mon YYYY HH:MM:SS'."""
+    if not dt:
+        return None
+    return dt.strftime('%d %b %Y %H:%M:%S')
 
 
 def set_customer_radius_password(customer, password=None):
@@ -39,6 +50,19 @@ def verify_radius_password(customer, password):
     if not stored:
         return False
     return stored == password
+
+
+def _delete_user_radius_rows(username, isp_id):
+    """Hard-delete all RADIUS rows for a user (FreeRADIUS SQL has no is_active filter)."""
+    RadCheck.query.filter_by(username=username, isp_id=isp_id).delete(
+        synchronize_session=False
+    )
+    RadReply.query.filter_by(username=username, isp_id=isp_id).delete(
+        synchronize_session=False
+    )
+    RadUserGroup.query.filter_by(username=username, isp_id=isp_id).delete(
+        synchronize_session=False
+    )
 
 
 def ensure_plan_group(plan, isp):
@@ -61,12 +85,16 @@ def ensure_plan_group(plan, isp):
         ))
 
     for attr in generate_radius_attributes(plan):
-        exists = RadGroupReply.query.filter_by(
+        row = RadGroupReply.query.filter_by(
             groupname=groupname,
             attribute=attr['attribute'],
             isp_id=isp.id,
         ).first()
-        if not exists:
+        if row:
+            row.op = attr['op']
+            row.value = attr['value']
+            row.is_active = True
+        else:
             db.session.add(RadGroupReply(
                 groupname=groupname,
                 attribute=attr['attribute'],
@@ -86,10 +114,7 @@ def provision_customer_radius(customer, plan, isp, password=None):
 
     ensure_plan_group(plan, isp)
 
-    # Deactivate stale rows first, then upsert active rows
-    RadCheck.query.filter_by(username=username, isp_id=isp.id).update({'is_active': False})
-    RadReply.query.filter_by(username=username, isp_id=isp.id).update({'is_active': False})
-    RadUserGroup.query.filter_by(username=username, isp_id=isp.id).update({'is_active': False})
+    _delete_user_radius_rows(username, isp.id)
 
     db.session.add(RadCheck(
         username=username,
@@ -100,6 +125,18 @@ def provision_customer_radius(customer, plan, isp, password=None):
         customer_id=customer.id,
         is_active=True,
     ))
+
+    expiration = format_radius_expiration(customer.subscription_end)
+    if expiration:
+        db.session.add(RadCheck(
+            username=username,
+            attribute='Expiration',
+            op=':=',
+            value=expiration,
+            isp_id=isp.id,
+            customer_id=customer.id,
+            is_active=True,
+        ))
 
     for attr in generate_radius_attributes(plan):
         db.session.add(RadReply(
@@ -126,18 +163,14 @@ def provision_customer_radius(customer, plan, isp, password=None):
 
 
 def deprovision_customer_radius(customer, isp):
-    """Disable RADIUS access for a customer."""
+    """Remove RADIUS access for a customer (hard delete)."""
     username = radius_username(customer)
-    RadCheck.query.filter_by(username=username, isp_id=isp.id).update({'is_active': False})
-    RadReply.query.filter_by(username=username, isp_id=isp.id).update({'is_active': False})
-    RadUserGroup.query.filter_by(username=username, isp_id=isp.id).update({'is_active': False})
+    _delete_user_radius_rows(username, isp.id)
     db.session.flush()
 
 
 def activate_customer_after_payment(customer, isp, plan=None):
     """Mark customer active and provision RADIUS after successful payment."""
-    from datetime import datetime
-
     plan = plan or customer.service_plan
     customer.status = CustomerStatus.ACTIVE
     customer.last_payment_date = datetime.utcnow()
@@ -153,16 +186,82 @@ def activate_customer_after_payment(customer, isp, plan=None):
             customer.connection_type = 'hotspot'
         elif plan.plan_type == 'pppoe':
             customer.connection_type = 'pppoe'
+        elif plan.plan_type == 'wireguard':
+            customer.connection_type = 'wireguard'
 
     if plan and isp:
-        provision_customer_radius(customer, plan, isp)
+        if plan.plan_type == 'wireguard':
+            from services.wireguard_provisioning import provision_customer_wireguard
+            provision_customer_wireguard(customer, plan, isp)
+        else:
+            provision_customer_radius(customer, plan, isp)
 
     db.session.flush()
 
 
 def suspend_customer_access(customer, isp):
-    """Suspend billing customer and remove RADIUS access."""
+    """Suspend billing customer and remove RADIUS / WireGuard access."""
+    from services.wireguard_provisioning import deprovision_customer_wireguard
+
     customer.status = CustomerStatus.SUSPENDED
     if isp:
         deprovision_customer_radius(customer, isp)
+    deprovision_customer_wireguard(customer)
     db.session.flush()
+
+
+def reprovision_plan_customers(plan):
+    """Re-provision all active customers on a plan after limit changes."""
+    isp = ISP.query.get(plan.isp_id)
+    if not isp:
+        return 0
+
+    ensure_plan_group(plan, isp)
+
+    customers = Customer.query.filter_by(
+        service_plan_id=plan.id,
+        isp_id=isp.id,
+        status=CustomerStatus.ACTIVE,
+    ).all()
+
+    count = 0
+    for customer in customers:
+        provision_customer_radius(customer, plan, isp)
+        count += 1
+
+    db.session.flush()
+    return count
+
+
+def sync_customer_radius_status(customer, old_status=None):
+    """
+    Apply RADIUS changes when customer status changes via legacy /api/customers.
+    Returns generated password when provisioning a new active customer without one.
+    """
+    isp = ISP.query.get(customer.isp_id) if customer.isp_id else None
+    if not isp:
+        return None
+
+    plan = customer.service_plan
+    if not plan and customer.service_plan_id:
+        plan = ServicePlan.query.get(customer.service_plan_id)
+
+    if customer.status == CustomerStatus.SUSPENDED:
+        deprovision_customer_radius(customer, isp)
+        from services.wireguard_provisioning import deprovision_customer_wireguard
+        deprovision_customer_wireguard(customer)
+        return None
+
+    if customer.status == CustomerStatus.ACTIVE and plan:
+        if plan.plan_type == 'wireguard':
+            from services.wireguard_provisioning import provision_customer_wireguard
+            provision_customer_wireguard(customer, plan, isp)
+            return None
+        return provision_customer_radius(customer, plan, isp)
+
+    if customer.status == CustomerStatus.PENDING:
+        deprovision_customer_radius(customer, isp)
+        from services.wireguard_provisioning import deprovision_customer_wireguard
+        deprovision_customer_wireguard(customer)
+
+    return None

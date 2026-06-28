@@ -12,6 +12,7 @@ export const getPlans = async (params = {}) => {
   if (params.is_active !== undefined) queryParams.append('is_active', params.is_active);
   if (params.popular !== undefined) queryParams.append('popular', params.popular);
   if (params.search) queryParams.append('search', params.search);
+  if (params.plan_type) queryParams.append('plan_type', params.plan_type);
   
   const url = queryParams.toString() 
     ? `${API_ENDPOINTS.PLANS}?${queryParams.toString()}`
@@ -62,10 +63,14 @@ export const togglePlanPopular = async (planId) => {
   return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/${planId}/toggle-popular`, token, { method: 'PUT' });
 };
 
-// Get active plans only
-export const getActivePlans = async () => {
+// Get active plans only (optional plan_type: hotspot | pppoe | wireguard)
+export const getActivePlans = async (params = {}) => {
   const token = getAccessToken();
-  return authenticatedApiCall(`${API_ENDPOINTS.PLANS}/active`, token, { method: 'GET' });
+  const queryParams = new URLSearchParams();
+  if (params.plan_type) queryParams.append('plan_type', params.plan_type);
+  const qs = queryParams.toString();
+  const url = qs ? `${API_ENDPOINTS.PLANS}/active?${qs}` : `${API_ENDPOINTS.PLANS}/active`;
+  return authenticatedApiCall(url, token, { method: 'GET' });
 };
 
 // Get popular plans only

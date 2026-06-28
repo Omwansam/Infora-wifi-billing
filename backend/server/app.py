@@ -24,6 +24,10 @@ from routes.kyc import kyc_bp
 from routes.payments import payments_bp
 from routes.portal import portal_bp
 from routes.website import website_bp
+from routes.wireguard import wireguard_bp
+from routes.monitoring import monitoring_bp
+from routes.health import health_bp
+from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
 import warnings
@@ -40,14 +44,12 @@ app = Flask(__name__)
 app.config.from_object(Config)
 app.url_map.strict_slashes = False
 
-# Initialize extensions with more permissive CORS
+# Initialize extensions with CORS (production domain via CORS_ORIGINS env)
 CORS(app,
-     origins=[
+     origins=app.config.get('CORS_ORIGINS', [
          'http://localhost:5173',
          'http://127.0.0.1:5173',
-         'http://localhost:5174',
-         'http://127.0.0.1:5174',
-     ],
+     ]),
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
      allow_headers=['Content-Type', 'Authorization'])
@@ -78,6 +80,9 @@ app.register_blueprint(kyc_bp)
 app.register_blueprint(payments_bp)
 app.register_blueprint(portal_bp)
 app.register_blueprint(website_bp)
+app.register_blueprint(wireguard_bp)
+app.register_blueprint(monitoring_bp)
+app.register_blueprint(health_bp)
 
 
 @app.before_request
@@ -198,5 +203,98 @@ def seed_network_command():
         seed_sample_data()
         click.echo('Network management sample data seeded successfully.')
 
+
+@app.cli.command('enforce-expiry')
+@click.option('--grace-hours', default=0, type=int, help='Grace period after subscription_end')
+def enforce_expiry_command(grace_hours):
+    """Suspend expired customers and remove RADIUS access (cron: */15 * * * *)."""
+    with app.app_context():
+        count = enforce_expired_subscriptions(grace_hours=grace_hours)
+        click.echo(f'Expired subscriptions enforced: {count} customer(s) suspended.')
+
+
+@app.cli.command('verify-deployment')
+def verify_deployment_command():
+    """Print MikroTik + WireGuard deployment checklist (run on the server after deploy)."""
+    from routes.health import build_deployment_report
+
+    with app.app_context():
+        report = build_deployment_report()
+        click.echo('=== Infora deployment connectivity ===')
+        click.echo(f"Ready: {'YES' if report['ready'] else 'NO'}")
+        click.echo(f"FREERADIUS_HOST: {report['config'].get('freeradius_host')}")
+        click.echo(f"MikroTik devices: {report['counts'].get('mikrotik_devices')}")
+        click.echo(f"WireGuard servers: {report['counts'].get('wireguard_servers')}")
+        if report['issues']:
+            click.echo('\nIssues:')
+            for issue in report['issues']:
+                click.echo(f'  - {issue}')
+        if report['mikrotik_devices']:
+            click.echo('\nMikroTik reachability:')
+            for d in report['mikrotik_devices']:
+                ok = 'OK' if d['api_reachable'] else 'FAIL'
+                click.echo(f"  [{ok}] {d['name']} {d['ip']}:{d['port']} ({d['connection_type']})")
+        if report['wireguard_servers']:
+            click.echo('\nWireGuard servers:')
+            for s in report['wireguard_servers']:
+                ep = 'OK' if s['endpoint_ok'] else 'FIX ENDPOINT'
+                click.echo(f"  [{ep}] {s['name']} {s['endpoint']}:{s['port']} mode={s['deployment_mode']}")
+        click.echo('\nNext: flask generate-radius-clients && restart freeradius')
+
+
+@app.cli.command('generate-radius-clients')
+@click.option('--output', default=None, help='Write to file (default: config/freeradius/clients.conf)')
+def generate_radius_clients_command(output):
+    """Export radius_clients + mikrotik_devices to FreeRADIUS clients.conf."""
+    import os
+    from services.radius_clients_export import generate_clients_conf, sync_radius_clients_conf
+
+    with app.app_context():
+        if output:
+            content = generate_clients_conf()
+            os.makedirs(os.path.dirname(output), exist_ok=True)
+            with open(output, 'w', encoding='utf-8') as fh:
+                fh.write(content)
+            path = output
+        else:
+            path = sync_radius_clients_conf()
+        click.echo(f'Wrote {path}')
+
+
+@app.cli.command('sync-wireguard-stats')
+def sync_wireguard_stats_command():
+    """Collect peer rx/tx from wg show and update wireguard_peers (cron)."""
+    from services.wireguard_accounting import collect_wireguard_stats
+
+    with app.app_context():
+        result = collect_wireguard_stats()
+        click.echo(f'WireGuard stats sync: {result}')
+
+
+def _start_expiry_scheduler(app):
+    """Optional in-process expiry enforcement when SUBSCRIPTION_ENFORCEMENT_INTERVAL is set."""
+    interval = app.config.get('SUBSCRIPTION_ENFORCEMENT_INTERVAL')
+    if not interval:
+        return
+
+    import threading
+    import time
+
+    def _loop():
+        while True:
+            time.sleep(int(interval))
+            with app.app_context():
+                try:
+                    enforce_expired_subscriptions(
+                        grace_hours=app.config.get('SUBSCRIPTION_GRACE_HOURS', 0)
+                    )
+                except Exception as exc:
+                    app.logger.warning('expiry enforcement failed: %s', exc)
+
+    thread = threading.Thread(target=_loop, daemon=True, name='subscription-expiry')
+    thread.start()
+
+
 if __name__ == "__main__":
+    _start_expiry_scheduler(app)
     app.run(debug=True, port=5000, host='0.0.0.0')

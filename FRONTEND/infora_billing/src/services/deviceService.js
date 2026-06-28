@@ -237,6 +237,59 @@ class DeviceService {
       throw error;
     }
   }
+
+  /** Download MikroTik .rsc script with RADIUS settings for this device */
+  async downloadRadiusScript(token, deviceId, deviceName = 'router') {
+    const response = await fetch(API_ENDPOINTS.deviceRadiusScript(deviceId), {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || err.message || `Download failed (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `infora-radius-${deviceName.replace(/\s+/g, '-')}.rsc`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    return { ok: true };
+  }
+
+  async downloadManagementTunnelScript(token, deviceId, deviceName = 'router') {
+    const response = await fetch(API_ENDPOINTS.deviceManagementTunnelScript(deviceId), {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || err.message || `Download failed (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `infora-mgmt-tunnel-${deviceName.replace(/\s+/g, '-')}.rsc`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    return { ok: true };
+  }
+
+  async getDeploymentHealth() {
+    const response = await fetch(API_ENDPOINTS.HEALTH_DEPLOYMENT);
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, ...data };
+  }
 }
 
 export default new DeviceService();

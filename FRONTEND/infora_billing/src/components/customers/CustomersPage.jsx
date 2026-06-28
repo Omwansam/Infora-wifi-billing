@@ -13,10 +13,13 @@ import {
   UserPlus,
   FileText,
   AlertCircle,
+  Pause,
+  Play,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { customerInitials } from '../../lib/billingFormatters';
+import { isSubscriptionExpired } from '../../lib/subscriptionUtils';
 import PaymentStatusBadge from '../billing/PaymentStatusBadge';
 import KycStatusBadge from './KycStatusBadge';
 import toast from 'react-hot-toast';
@@ -42,6 +45,7 @@ export default function CustomersPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [actionId, setActionId] = useState(null);
 
   const loadCustomers = useCallback(async () => {
     try {
@@ -86,6 +90,27 @@ export default function CustomersPage() {
   useEffect(() => {
     loadStats();
   }, [loadStats]);
+
+  const handleAccessToggle = async (customer) => {
+    try {
+      setActionId(customer.id);
+      const isSuspend = customer.status === 'active';
+      const result = isSuspend
+        ? await customerService.suspendCustomer(customer.id)
+        : await customerService.activateCustomer(customer.id);
+      if (result.success) {
+        toast.success(isSuspend ? 'Suspended — RADIUS removed' : 'Activated — RADIUS provisioned');
+        loadCustomers();
+        loadStats();
+      } else {
+        toast.error(result.error || 'Action failed');
+      }
+    } catch {
+      toast.error('Action failed');
+    } finally {
+      setActionId(null);
+    }
+  };
 
   const confirmDelete = async () => {
     if (!customerToDelete) return;
@@ -143,8 +168,8 @@ export default function CustomersPage() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-7xl">
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div>
@@ -272,8 +297,8 @@ export default function CustomersPage() {
                     <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Status</th>
                     <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">KYC</th>
                     <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Balance</th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Expires</th>
                     <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Usage</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Last Payment</th>
                     <th className="px-6 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Actions</th>
                   </tr>
                 </thead>
@@ -304,6 +329,15 @@ export default function CustomersPage() {
                       <td className="px-6 py-4 text-sm font-semibold text-slate-900">
                         {formatCurrency(customer.balance)}
                       </td>
+                      <td className="px-6 py-4 text-sm">
+                        {customer.subscription_end ? (
+                          <span className={isSubscriptionExpired(customer.subscription_end) ? 'text-rose-600 font-medium' : 'text-slate-600'}>
+                            {formatDate(customer.subscription_end)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2 min-w-[100px]">
                           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -315,11 +349,26 @@ export default function CustomersPage() {
                           <span className="text-xs text-slate-500">{customer.usage_percentage || 0}%</span>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-sm text-slate-500">
-                        {customer.last_payment_date ? formatDate(customer.last_payment_date) : '—'}
-                      </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-end gap-1">
+                          {(customer.status === 'active' || customer.status === 'suspended') && (
+                            <button
+                              onClick={() => handleAccessToggle(customer)}
+                              disabled={actionId === customer.id}
+                              className={`p-2 rounded-lg disabled:opacity-50 ${
+                                customer.status === 'active'
+                                  ? 'text-amber-600 hover:bg-amber-50'
+                                  : 'text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                              title={customer.status === 'active' ? 'Suspend RADIUS' : 'Activate RADIUS'}
+                            >
+                              {customer.status === 'active' ? (
+                                <Pause className="h-4 w-4" />
+                              ) : (
+                                <Play className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
                           <button
                             onClick={() => navigate(`/customers/${customer.id}`)}
                             className="p-2 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50"

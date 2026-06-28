@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import { AdminRoute, AdminOrSupportRoute } from './components/auth/RoleBasedRoute';
 import MainLayout from './components/layout/MainLayout';
@@ -9,10 +10,11 @@ import Dashboard from './components/Dashboard';
 import LoginPage from './components/auth/login';
 import SignupPage from './components/auth/signup';
 import DashboardRedirect from './components/auth/DashboardRedirect';
-import CustomersPage from './components/customers/CustomersPage';
-import CustomerForm from './components/customers/CustomerForm';
-import CustomerDetail from './components/customers/CustomerDetail';
-import CustomerEdit from './components/customers/CustomerEdit';
+import ClientsPage from './components/clients/ClientsPage';
+import ClientForm from './components/clients/ClientForm';
+import ClientDetail from './components/clients/ClientDetail';
+import OnlineUsersPage from './components/clients/OnlineUsersPage';
+import ClientEdit from './components/clients/ClientEdit';
 import PaymentsPage from './components/billing/PaymentsPage';
 import InvoicesPage from './components/billing/InvoicesPage';
 import InvoiceForm from './components/billing/InvoiceForm';
@@ -22,6 +24,8 @@ import SubscriptionsPage from './components/billing/SubscriptionsPage';
 import VouchersPage from './components/billing/VouchersPage';
 import ServicePlansPage from './components/plans/ServicePlansPage';
 import PlanDetail from './components/plans/PlanDetail';
+import PlanForm from './components/plans/PlanForm';
+import FupMonitorPage from './components/monitoring/FupMonitorPage';
 import MikrotikPage from './components/devices/MikrotikPage';
 import EquipmentPage from './components/devices/EquipmentPage';
 import DeviceStatusPage from './components/devices/DeviceStatusPage';
@@ -32,6 +36,7 @@ import RadiusPage from './components/network/RadiusPage';
 import LdapPage from './components/network/LdapPage';
 import SnmpPage from './components/network/SnmpPage';
 import VpnPage from './components/network/VpnPage';
+import WireGuardPage from './components/network/WireGuardPage';
 import EapPage from './components/network/EapPage';
 import TicketsPage from './components/tickets/TicketsPage';
 import SettingsPage from './components/settings/SettingsPage';
@@ -52,6 +57,13 @@ import CustomerKycPage from './components/customers/CustomerKycPage';
 import PlaceholderPage from './components/placeholder/PlaceholderPage';
 import CaptivePortalPage from './components/portal/CaptivePortalPage';
 import PppoePortalPage from './components/portal/PppoePortalPage';
+import WireGuardPortalPage from './components/portal/WireGuardPortalPage';
+
+function LegacyClientRedirect({ suffix = '' }) {
+  const { customerId } = React.useParams();
+  const target = customerId ? `/clients/${customerId}${suffix}` : '/clients';
+  return <Navigate to={target} replace />;
+}
 
 // App Routes Component
 function AppRoutes() {
@@ -65,17 +77,31 @@ function AppRoutes() {
       <Route path="/portal" element={<CaptivePortalPage />} />
       <Route path="/portal/hotspot" element={<Navigate to="/portal#wifi-packages" replace />} />
       <Route path="/portal/pppoe" element={<PppoePortalPage />} />
+      <Route path="/portal/wireguard" element={<WireGuardPortalPage />} />
 
       {/* Dashboard Redirect Route */}
       <Route path="/dashboard" element={<ProtectedRoute><DashboardRedirect /></ProtectedRoute>} />
 
       {/* Protected Routes - All users can access */}
       <Route path="/" element={<ProtectedRoute><MainLayout><Dashboard /></MainLayout></ProtectedRoute>} />
-      <Route path="/customers" element={<ProtectedRoute><MainLayout><CustomersPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/customers/new" element={<ProtectedRoute><MainLayout><CustomerForm /></MainLayout></ProtectedRoute>} />
-      <Route path="/customers/:customerId" element={<ProtectedRoute><MainLayout><CustomerDetail /></MainLayout></ProtectedRoute>} />
-      <Route path="/customers/:customerId/edit" element={<ProtectedRoute><MainLayout><CustomerEdit /></MainLayout></ProtectedRoute>} />
-      <Route path="/customers/kyc" element={<ProtectedRoute><MainLayout><CustomerKycPage /></MainLayout></ProtectedRoute>} />
+
+      {/* Client management */}
+      <Route path="/clients" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/new" element={<ProtectedRoute><MainLayout><ClientForm /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/pppoe/new" element={<ProtectedRoute><MainLayout><ClientForm /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/pppoe" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/hotspot" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/online" element={<ProtectedRoute><MainLayout><OnlineUsersPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/kyc" element={<ProtectedRoute><MainLayout><CustomerKycPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/:customerId" element={<ProtectedRoute><MainLayout><ClientDetail /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/:customerId/edit" element={<ProtectedRoute><MainLayout><ClientEdit /></MainLayout></ProtectedRoute>} />
+
+      {/* Legacy customer URLs → clients */}
+      <Route path="/customers" element={<Navigate to="/clients" replace />} />
+      <Route path="/customers/new" element={<Navigate to="/clients/new" replace />} />
+      <Route path="/customers/kyc" element={<Navigate to="/clients/kyc" replace />} />
+      <Route path="/customers/:customerId/edit" element={<LegacyClientRedirect suffix="/edit" />} />
+      <Route path="/customers/:customerId" element={<LegacyClientRedirect />} />
       <Route path="/billing/payments" element={<ProtectedRoute><MainLayout><PaymentsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/invoices" element={<ProtectedRoute><MainLayout><InvoicesPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/invoices/create" element={<ProtectedRoute><MainLayout><InvoiceForm /></MainLayout></ProtectedRoute>} />
@@ -85,8 +111,12 @@ function AppRoutes() {
       <Route path="/billing/vouchers" element={<ProtectedRoute><MainLayout><VouchersPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/subscriptions" element={<ProtectedRoute><MainLayout><SubscriptionsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/billing/reports" element={<ProtectedRoute><MainLayout><FinanceReportsPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/packages" element={<Navigate to="/plans" replace />} />
       <Route path="/plans" element={<ProtectedRoute><MainLayout><ServicePlansPage /></MainLayout></ProtectedRoute>} />
+      <Route path="/plans/new" element={<ProtectedRoute><MainLayout><PlanForm /></MainLayout></ProtectedRoute>} />
+      <Route path="/plans/:planId/edit" element={<ProtectedRoute><MainLayout><PlanForm /></MainLayout></ProtectedRoute>} />
       <Route path="/plans/:planId" element={<ProtectedRoute><MainLayout><PlanDetail /></MainLayout></ProtectedRoute>} />
+      <Route path="/fup" element={<ProtectedRoute><MainLayout><FupMonitorPage /></MainLayout></ProtectedRoute>} />
       <Route path="/tickets" element={<ProtectedRoute><MainLayout><TicketsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><MainLayout><SettingsPage /></MainLayout></ProtectedRoute>} />
 
@@ -112,6 +142,7 @@ function AppRoutes() {
       <Route path="/network/ldap" element={<AdminRoute><MainLayout><LdapPage /></MainLayout></AdminRoute>} />
       <Route path="/network/snmp" element={<AdminRoute><MainLayout><SnmpPage /></MainLayout></AdminRoute>} />
       <Route path="/network/vpn" element={<AdminRoute><MainLayout><VpnPage /></MainLayout></AdminRoute>} />
+      <Route path="/network/wireguard" element={<AdminRoute><MainLayout><WireGuardPage /></MainLayout></AdminRoute>} />
       <Route path="/network/eap" element={<AdminRoute><MainLayout><EapPage /></MainLayout></AdminRoute>} />
       
       {/* Security Routes */}
@@ -152,8 +183,9 @@ function AppRoutes() {
 // Main App Component
 function App() {
   return (
-    <AuthProvider>
-      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <ThemeProvider>
+      <AuthProvider>
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppRoutes />
         <Toaster
           position="top-right"
@@ -180,7 +212,8 @@ function App() {
           }}
         />
       </Router>
-    </AuthProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 

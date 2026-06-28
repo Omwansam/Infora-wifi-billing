@@ -132,6 +132,58 @@ export const portalService = {
       pending: true,
     };
   },
+
+  async lookupWireguard({ account, ispId }) {
+    const result = await apiCall(API_ENDPOINTS.PORTAL_WIREGUARD_LOOKUP, {
+      method: 'POST',
+      body: JSON.stringify({ account, isp_id: ispId || undefined }),
+    });
+    if (!result.success) return { success: false, error: result.error };
+    const body = result.data;
+    if (!body?.ok) return { success: false, error: body?.message || 'Not found' };
+    return { success: true, data: body.data };
+  },
+
+  async downloadWireguardConfig({ account, ispId }) {
+    try {
+      const res = await fetch(API_ENDPOINTS.PORTAL_WIREGUARD_CONFIG, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account, isp_id: ispId || undefined }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { success: false, error: body.message || 'Download failed' };
+      }
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'infora-wireguard.conf';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  async fetchWireguardQrcode({ account, ispId }) {
+    try {
+      const res = await fetch(API_ENDPOINTS.PORTAL_WIREGUARD_QRCODE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account, isp_id: ispId || undefined }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { success: false, error: body.message || 'QR failed' };
+      }
+      const blob = await res.blob();
+      return { success: true, url: URL.createObjectURL(blob) };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  },
 };
 
 export default portalService;

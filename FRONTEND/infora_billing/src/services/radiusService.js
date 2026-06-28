@@ -367,6 +367,20 @@ class RadiusService {
       throw error;
     }
   }
+
+  /** FreeRADIUS + PostgreSQL integration health from billing API */
+  async getBillingRadiusStatus(token) {
+    const response = await fetch(API_ENDPOINTS.BILLING_RADIUS_STATUS, {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || `HTTP error! status: ${response.status}`);
+    }
+    return data;
+  }
 }
 
 export default new RadiusService();

@@ -1,35 +1,39 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
   Plus,
+  Router,
   Wifi,
+  Clock,
+  Boxes,
   DollarSign,
   Star,
   CheckCircle,
-  Edit,
-  Trash2,
-  Eye,
   RefreshCw,
-  Users,
   Package,
+  Layers,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   getPlans,
   getPlanStats,
   deletePlan,
-  togglePlanActive,
 } from '../../services/planService';
 import { formatCurrency } from '../../lib/utils';
-import { normalizePlanFeatures } from '../../lib/planUtils';
-import PlanFeatureIcon from './PlanFeatureIcon';
-import PlanStatusBadge from './PlanStatusBadge';
-import PlanForm from './PlanForm';
+import PackageTableRow from './PackageTableRow';
 
-const FILTER_TABS = [
-  { value: 'all', label: 'All Plans' },
+const TYPE_TABS = [
+  { key: 'all', label: 'All Packages', icon: Layers },
+  { key: 'pppoe', label: 'PPPoE', icon: Router },
+  { key: 'hotspot', label: 'Hotspot', icon: Wifi },
+  { key: 'trial', label: 'Trial', icon: Clock },
+  { key: 'bundle', label: 'Bundle', icon: Boxes },
+];
+
+const STATUS_FILTERS = [
+  { value: 'all', label: 'All' },
   { value: 'active', label: 'Active' },
   { value: 'inactive', label: 'Inactive' },
   { value: 'popular', label: 'Popular' },
@@ -42,50 +46,35 @@ export default function ServicePlansPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [showForm, setShowForm] = useState(false);
-  const [editingPlan, setEditingPlan] = useState(null);
-  const [pagination, setPagination] = useState({
-    current_page: 1,
-    per_page: 12,
-    total: 0,
-    pages: 0,
-  });
 
   const loadPlans = useCallback(async () => {
     try {
       setLoading(true);
       const params = {
-        page: pagination.current_page,
-        per_page: pagination.per_page,
+        per_page: 50,
         search: searchTerm || undefined,
+        plan_type: typeFilter !== 'all' ? typeFilter : undefined,
         is_active: statusFilter === 'active' ? true : statusFilter === 'inactive' ? false : undefined,
         popular: statusFilter === 'popular' ? true : undefined,
       };
       const response = await getPlans(params);
       if (response.success) {
         setPlans(response.data.plans || []);
-        setPagination((prev) => ({
-          ...prev,
-          current_page: response.data.current_page || 1,
-          total: response.data.total || 0,
-          pages: response.data.pages || 0,
-        }));
       }
     } catch {
-      toast.error('Failed to load plans');
+      toast.error('Failed to load packages');
       setPlans([]);
     } finally {
       setLoading(false);
     }
-  }, [pagination.current_page, pagination.per_page, searchTerm, statusFilter]);
+  }, [searchTerm, typeFilter, statusFilter]);
 
   const loadStats = useCallback(async () => {
     try {
       const response = await getPlanStats();
-      if (response.success) {
-        setStats(response.data);
-      }
+      if (response.success) setStats(response.data);
     } catch {
       setStats({});
     }
@@ -105,87 +94,74 @@ export default function ServicePlansPage() {
     loadStats();
   };
 
-  const handleDeletePlan = async (planId, planName) => {
-    if (!window.confirm(`Delete "${planName}"? This cannot be undone.`)) return;
+  const handleDeletePlan = async (plan) => {
+    if (!window.confirm(`Delete package "${plan.name}"?`)) return;
     try {
       setActionLoading(true);
-      const response = await deletePlan(planId);
+      const response = await deletePlan(plan.id);
       if (response.success) {
-        toast.success('Plan deleted');
+        toast.success('Package deleted');
         loadPlans();
         loadStats();
       }
     } catch (error) {
-      toast.error(error.message || 'Failed to delete plan');
+      toast.error(error.message || 'Failed to delete');
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleToggleActive = async (planId) => {
-    try {
-      setActionLoading(true);
-      const response = await togglePlanActive(planId);
-      if (response.success) {
-        toast.success(`Plan ${response.data.is_active ? 'activated' : 'deactivated'}`);
-        loadPlans();
-        loadStats();
-      }
-    } catch {
-      toast.error('Failed to update plan status');
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  const handleEditPlan = (plan) => navigate(`/plans/${plan.id}/edit`);
 
   const statsCards = useMemo(
     () => [
       {
-        title: 'Total Plans',
+        title: 'Total Packages',
         value: stats.total_plans || 0,
-        subtitle: `${stats.active_plans || 0} currently active`,
+        subtitle: `${stats.active_plans || 0} active · ${(stats.total_plans || 0) - (stats.active_plans || 0)} inactive`,
         icon: Package,
-        accent: 'from-cyan-500 to-blue-600',
+        accent: 'from-violet-500 to-purple-600',
       },
       {
-        title: 'Active Plans',
+        title: 'Active',
         value: stats.active_plans || 0,
-        subtitle: 'Available for new subscribers',
+        subtitle: 'Available for new clients',
         icon: CheckCircle,
         accent: 'from-emerald-500 to-teal-600',
       },
       {
-        title: 'Popular Plans',
+        title: 'Featured',
         value: stats.popular_plans || 0,
-        subtitle: 'Featured on signup flows',
+        subtitle: 'Shown on portal & signup',
         icon: Star,
         accent: 'from-amber-500 to-orange-600',
       },
       {
-        title: 'Average Price',
+        title: 'Avg. Price',
         value: formatCurrency(stats.average_price || 0),
         subtitle: stats.price_range
           ? `${formatCurrency(stats.price_range.min)} – ${formatCurrency(stats.price_range.max)}`
-          : 'Across all packages',
+          : 'Monthly pricing',
         icon: DollarSign,
-        accent: 'from-indigo-500 to-violet-600',
+        accent: 'from-indigo-500 to-blue-600',
       },
     ],
     [stats]
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-7xl">
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold text-cyan-600 uppercase tracking-wider">Catalog</p>
-              <h1 className="text-3xl font-bold text-slate-900 mt-1">Service Plans</h1>
-              <p className="text-slate-600 mt-1">Packages, pricing tiers, and subscriber offerings</p>
+              <p className="text-sm font-semibold text-violet-600 uppercase tracking-wider">Pricing</p>
+              <h1 className="text-3xl font-bold text-slate-900 mt-1">Packages</h1>
+              <p className="text-slate-600 mt-1">PPPoE, hotspot, trial, and bundle pricing for your network</p>
             </div>
-            <div className="flex gap-3 self-start">
+            <div className="flex flex-wrap gap-3 self-start">
               <button
+                type="button"
                 onClick={handleRefresh}
                 disabled={loading}
                 className="inline-flex items-center px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-medium bg-white hover:bg-slate-50 disabled:opacity-50"
@@ -194,20 +170,18 @@ export default function ServicePlansPage() {
                 Refresh
               </button>
               <button
-                onClick={() => {
-                  setEditingPlan(null);
-                  setShowForm(true);
-                }}
-                className="inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 shadow-sm"
+                type="button"
+                onClick={() => navigate('/plans/new')}
+                className="inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 shadow-sm"
               >
                 <Plus className="h-4 w-4 mr-2" />
-                Add Plan
+                Add Package
               </button>
             </div>
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
           {statsCards.map((stat, index) => (
             <motion.div
               key={stat.title}
@@ -232,31 +206,52 @@ export default function ServicePlansPage() {
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 mb-6">
-          <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-            <div className="relative flex-1">
+          <div className="flex flex-wrap gap-2">
+            {TYPE_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const active = typeFilter === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setTypeFilter(tab.key)}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                    active ? 'bg-violet-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
+        >
+          <div className="p-5 border-b border-slate-100 flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between">
+            <div className="relative flex-1 max-w-xl">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by plan name or speed..."
+                placeholder="Search package name or speed..."
                 value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setPagination((prev) => ({ ...prev, current_page: 1 }));
-                }}
-                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
             </div>
             <div className="flex flex-wrap gap-2">
-              {FILTER_TABS.map((tab) => (
+              {STATUS_FILTERS.map((tab) => (
                 <button
                   key={tab.value}
-                  onClick={() => {
-                    setStatusFilter(tab.value);
-                    setPagination((prev) => ({ ...prev, current_page: 1 }));
-                  }}
-                  className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
+                  type="button"
+                  onClick={() => setStatusFilter(tab.value)}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
                     statusFilter === tab.value
-                      ? 'bg-slate-900 text-white'
+                      ? 'bg-violet-600 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
@@ -265,172 +260,69 @@ export default function ServicePlansPage() {
               ))}
             </div>
           </div>
-        </div>
 
-        {loading ? (
-          <div className="text-center py-16">
-            <div className="animate-spin rounded-full h-10 w-10 border-2 border-cyan-600 border-t-transparent mx-auto" />
-            <p className="mt-4 text-slate-600">Loading service plans...</p>
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  {['Package', 'Price', 'Duration', 'Data limit', 'Status', 'Actions'].map((h) => (
+                    <th
+                      key={h}
+                      className={`px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-400 ${
+                        h === 'Actions' ? 'text-right' : 'text-left'
+                      }`}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-16 text-center text-slate-500">
+                      <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-violet-500" />
+                      Loading packages…
+                    </td>
+                  </tr>
+                ) : plans.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-16 text-center">
+                      <Package className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+                      <p className="font-semibold text-slate-900">No packages found</p>
+                      <p className="text-sm text-slate-500 mt-1">Create a package or adjust your filters.</p>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/plans/new')}
+                        className="inline-flex items-center gap-2 mt-4 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Package
+                      </button>
+                    </td>
+                  </tr>
+                ) : (
+                  plans.map((plan) => (
+                    <PackageTableRow
+                      key={plan.id}
+                      plan={plan}
+                      onEdit={handleEditPlan}
+                      onDelete={handleDeletePlan}
+                      deleting={actionLoading}
+                    />
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-        ) : plans.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-2xl border border-slate-200">
-            <Wifi className="mx-auto h-12 w-12 text-slate-300" />
-            <h3 className="mt-4 text-lg font-semibold text-slate-900">No plans found</h3>
-            <p className="mt-1 text-slate-500">Adjust filters or create your first service plan.</p>
-            <button
-              onClick={() => setShowForm(true)}
-              className="mt-6 inline-flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-cyan-600 hover:bg-cyan-700"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Create Plan
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {plans.map((plan, index) => {
-              const features = normalizePlanFeatures(plan.features);
-              return (
-                <motion.div
-                  key={plan.id}
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.04 }}
-                  className={`relative rounded-2xl border bg-white shadow-sm overflow-hidden ${
-                    plan.popular ? 'border-cyan-300 ring-1 ring-cyan-100' : 'border-slate-200'
-                  }`}
-                >
-                  {plan.popular && (
-                    <div className="bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-xs font-semibold text-center py-1.5">
-                      Most Popular
-                    </div>
-                  )}
-                  <div className="p-6">
-                    <div className="flex items-start justify-between gap-3 mb-4">
-                      <div>
-                        <h3 className="text-xl font-bold text-slate-900">{plan.name}</h3>
-                        <p className="text-sm text-slate-500 mt-0.5">{plan.speed}</p>
-                      </div>
-                      <div className="flex flex-col items-end gap-1.5">
-                        {plan.popular && <PlanStatusBadge status="popular" />}
-                        <PlanStatusBadge status={plan.is_active ? 'active' : 'inactive'} />
-                      </div>
-                    </div>
 
-                    <div className="mb-5">
-                      <span className="text-3xl font-bold text-slate-900">{formatCurrency(plan.price)}</span>
-                      <span className="text-sm text-slate-500 ml-1">/month</span>
-                    </div>
-
-                    <div className="space-y-2 mb-5 min-h-[120px]">
-                      {features.slice(0, 4).map((feature, featureIndex) => (
-                        <div key={featureIndex} className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-50">
-                          <PlanFeatureIcon feature={feature} />
-                          <span className="text-sm text-slate-700">{feature}</span>
-                        </div>
-                      ))}
-                      {features.length > 4 && (
-                        <p className="text-xs font-medium text-cyan-700 text-center pt-1">
-                          +{features.length - 4} more features
-                        </p>
-                      )}
-                      {features.length === 0 && (
-                        <p className="text-sm text-slate-400 text-center py-6">No features listed</p>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => navigate(`/plans/${plan.id}`)}
-                          className="p-2 rounded-lg text-slate-500 hover:text-cyan-700 hover:bg-cyan-50"
-                          title="View details"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingPlan(plan);
-                            setShowForm(true);
-                          }}
-                          className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100"
-                          title="Edit plan"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleActive(plan.id)}
-                          disabled={actionLoading}
-                          className="p-2 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                          title={plan.is_active ? 'Deactivate' : 'Activate'}
-                        >
-                          <CheckCircle className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeletePlan(plan.id, plan.name)}
-                          disabled={actionLoading}
-                          className="p-2 rounded-lg text-slate-500 hover:text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                          title="Delete plan"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <div className="flex items-center text-sm text-slate-500">
-                        <Users className="h-4 w-4 mr-1.5" />
-                        {plan.customers_count || 0}
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        )}
-
-        {!loading && pagination.pages > 1 && (
-          <div className="flex items-center justify-between bg-white rounded-2xl border border-slate-200 p-4 mt-6">
-            <p className="text-sm text-slate-600">
-              Showing {(pagination.current_page - 1) * pagination.per_page + 1}–
-              {Math.min(pagination.current_page * pagination.per_page, pagination.total)} of {pagination.total}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPagination((prev) => ({ ...prev, current_page: prev.current_page - 1 }))}
-                disabled={pagination.current_page === 1}
-                className="px-3 py-2 rounded-lg border border-slate-200 text-sm disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <span className="px-3 py-2 text-sm text-slate-600">
-                Page {pagination.current_page} of {pagination.pages}
-              </span>
-              <button
-                onClick={() => setPagination((prev) => ({ ...prev, current_page: prev.current_page + 1 }))}
-                disabled={pagination.current_page === pagination.pages}
-                className="px-3 py-2 rounded-lg border border-slate-200 text-sm disabled:opacity-50"
-              >
-                Next
-              </button>
+          {!loading && plans.length > 0 && (
+            <div className="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
+              {plans.length} package{plans.length !== 1 ? 's' : ''}
+              {typeFilter !== 'all' ? ` · ${typeFilter}` : ''}
             </div>
-          </div>
-        )}
-
-        <AnimatePresence>
-          {showForm && (
-            <PlanForm
-              planId={editingPlan?.id}
-              onClose={() => {
-                setShowForm(false);
-                setEditingPlan(null);
-              }}
-              onSuccess={() => {
-                setShowForm(false);
-                setEditingPlan(null);
-                loadPlans();
-                loadStats();
-              }}
-            />
           )}
-        </AnimatePresence>
+        </motion.div>
       </div>
     </div>
   );

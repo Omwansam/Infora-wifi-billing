@@ -33,6 +33,8 @@ export function portalCompanyName(config) {
 export const STORAGE_KEYS = {
   user: 'lumen_user',
   sidebarCollapsed: 'lumen-sidebar-collapsed',
+  theme: 'lumen-theme',
+  notificationsReadAt: 'lumen-notifications-read-at',
 };
 
 /** @deprecated legacy keys — read once for migration */

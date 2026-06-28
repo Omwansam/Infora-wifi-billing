@@ -220,6 +220,50 @@ def lookup_pppoe_customer(isp_id, account):
     return customer, None
 
 
+def lookup_wireguard_customer(isp_id, account):
+    isp = get_default_isp(isp_id)
+    if not isp:
+        return None, 'ISP not found'
+
+    account = (account or '').strip().lower()
+    if not account:
+        return None, 'Email or account is required'
+
+    customer = Customer.query.filter(
+        Customer.isp_id == isp.id,
+        Customer.connection_type == 'wireguard',
+        or_(
+            Customer.email.ilike(account),
+            Customer.phone == account,
+            Customer.phone == normalize_phone(account),
+        ),
+    ).first()
+
+    if not customer:
+        return None, 'WireGuard account not found.'
+
+    return customer, None
+
+
+def serialize_wireguard_status(customer):
+    from models import WireGuardPeer
+    from services.wireguard_provisioning import serialize_peer
+
+    access = get_customer_access_state(customer)
+    plan = customer.service_plan
+    peer = WireGuardPeer.query.filter_by(customer_id=customer.id, is_active=True).first()
+
+    return {
+        'customer_id': customer.id,
+        'full_name': customer.full_name,
+        'email': customer.email,
+        'package': plan.name if plan else customer.package,
+        'access': access,
+        'subscription_end': customer.subscription_end.isoformat() if customer.subscription_end else None,
+        'peer': serialize_peer(peer, plan=plan) if peer else None,
+    }
+
+
 def serialize_pppoe_status(customer):
     access = get_customer_access_state(customer)
     plan = customer.service_plan

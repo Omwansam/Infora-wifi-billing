@@ -124,8 +124,8 @@ export default function VouchersPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-7xl">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}

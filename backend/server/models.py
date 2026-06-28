@@ -117,7 +117,7 @@ class Customer(db.Model):
     phone = db.Column(db.String(20), nullable=False)
     address = db.Column(db.String(255), nullable=True)
     status = db.Column(db.Enum(CustomerStatus, name="customer_status"), default=CustomerStatus.ACTIVE, nullable=False)
-    connection_type = db.Column(db.String(20), default='pppoe', nullable=False)  # hotspot | pppoe
+    connection_type = db.Column(db.String(20), default='pppoe', nullable=False)  # hotspot | pppoe | wireguard
     join_date = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     balance = db.Column(db.Numeric(10, 2), default=0.00)
     package = db.Column(db.String(50), nullable=False)
@@ -169,6 +169,12 @@ class Customer(db.Model):
     # Relationships mapping the customer to multiple isps
     isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
     isp = db.relationship('ISP', back_populates='customers')
+    wireguard_peer = db.relationship(
+        'WireGuardPeer',
+        back_populates='customer',
+        uselist=False,
+        cascade='all, delete-orphan',
+    )
 
     def __repr__(self):
         return f"<Customer {self.full_name} ({self.email})>"
@@ -193,9 +199,12 @@ class ServicePlan(db.Model):
     static_ip = db.Column(db.String(45), nullable=True)
     session_timeout = db.Column(db.Integer, nullable=True)  # minutes
     idle_timeout = db.Column(db.Integer, nullable=True)  # minutes
-    plan_type = db.Column(db.String(20), default='pppoe', nullable=False)  # hotspot | pppoe
+    plan_type = db.Column(db.String(20), default='pppoe', nullable=False)  # pppoe | hotspot | trial | bundle | wireguard
     duration_hours = db.Column(db.Integer, nullable=True)  # hotspot access duration after payment
     billing_cycle_days = db.Column(db.Integer, default=30, nullable=True)  # pppoe renewal period
+    wireguard_dns = db.Column(db.String(255), nullable=True)
+    wireguard_allowed_ips = db.Column(db.String(255), nullable=True, default='0.0.0.0/0')
+    wireguard_server_id = db.Column(db.Integer, db.ForeignKey('wireguard_servers.id'), nullable=True)
     popular = db.Column(db.Boolean, default=False)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
@@ -336,9 +345,13 @@ class MikrotikDevice(db.Model):
     notes = db.Column(db.Text, nullable=True)
     last_synced = db.Column(db.DateTime, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
+    management_wg_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    management_wg_ip = db.Column(db.String(50), nullable=True)
+    management_wg_public_key = db.Column(db.String(64), nullable=True)
+    management_wg_private_key_encrypted = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
-    
+
     # Foreign Key To store network zone id
     zone_id = db.Column(db.Integer, db.ForeignKey('network_zones.id'), nullable=True)
     # Relationship mapping the mikrotik device to the related network zone
@@ -1134,6 +1147,83 @@ class VPNClient(db.Model):
     def __repr__(self):
         return f"<VPNClient {self.name} ({self.vpn_config_id})>"
 
+
+# =========================
+#   WireGuard Server (per ISP / site)
+# =========================
+
+class WireGuardServer(db.Model):
+    """WireGuard VPN server — one per ISP or router location."""
+    __tablename__ = 'wireguard_servers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    endpoint = db.Column(db.String(255), nullable=False)  # public IP or hostname
+    port = db.Column(db.Integer, default=51820, nullable=False)
+    subnet = db.Column(db.String(50), nullable=False)  # e.g. 10.200.200.0/24
+    server_address = db.Column(db.String(50), nullable=False)  # e.g. 10.200.200.1/32
+    public_key = db.Column(db.String(255), nullable=False)
+    private_key_encrypted = db.Column(db.Text, nullable=False)
+    dns_servers = db.Column(db.String(255), default='8.8.8.8,8.8.4.4')
+    mtu = db.Column(db.Integer, default=1420)
+    deployment_mode = db.Column(db.String(20), default='linux')  # linux | mikrotik
+    mikrotik_device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(
+        db.DateTime,
+        server_default=db.func.current_timestamp(),
+        onupdate=db.func.current_timestamp(),
+    )
+
+    isp = db.relationship('ISP', back_populates='wireguard_servers')
+    mikrotik_device = db.relationship('MikrotikDevice')
+    peers = db.relationship('WireGuardPeer', back_populates='server', cascade='all, delete-orphan')
+
+    def __repr__(self):
+        return f"<WireGuardServer {self.name} ({self.endpoint}:{self.port})>"
+
+
+# =========================
+#   WireGuard Peer (customer VPN client)
+# =========================
+
+class WireGuardPeer(db.Model):
+    """WireGuard peer linked to a billing customer."""
+    __tablename__ = 'wireguard_peers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, unique=True)
+    server_id = db.Column(db.Integer, db.ForeignKey('wireguard_servers.id'), nullable=False)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    assigned_ip = db.Column(db.String(45), nullable=False)  # e.g. 10.200.200.2
+    public_key = db.Column(db.String(255), nullable=False)
+    private_key_encrypted = db.Column(db.Text, nullable=False)
+    preshared_key_encrypted = db.Column(db.Text, nullable=True)
+    allowed_ips = db.Column(db.String(255), default='0.0.0.0/0')  # client tunnel routes
+    last_handshake = db.Column(db.DateTime, nullable=True)
+    rx_bytes = db.Column(db.BigInteger, default=0)
+    tx_bytes = db.Column(db.BigInteger, default=0)
+    is_active = db.Column(db.Boolean, default=True)
+    mikrotik_peer_name = db.Column(db.String(100), nullable=True)
+    mikrotik_synced_at = db.Column(db.DateTime, nullable=True)
+    mikrotik_sync_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(
+        db.DateTime,
+        server_default=db.func.current_timestamp(),
+        onupdate=db.func.current_timestamp(),
+    )
+
+    customer = db.relationship('Customer', back_populates='wireguard_peer')
+    server = db.relationship('WireGuardServer', back_populates='peers')
+    isp = db.relationship('ISP')
+
+    def __repr__(self):
+        return f"<WireGuardPeer customer={self.customer_id} ip={self.assigned_ip}>"
+
+
 # =========================
 #   EAP Profile Model
 # =========================
@@ -1373,6 +1463,7 @@ class ISP(db.Model):
     service_plans = db.relationship('ServicePlan', back_populates='isp')
     radius_sessions = db.relationship('RadiusSession', back_populates='isp')
     network_zones = db.relationship('NetworkZone', back_populates='isp')
+    wireguard_servers = db.relationship('WireGuardServer', back_populates='isp')
     
     def __repr__(self):
         return f"<ISP {self.name} ({self.company_name})>"

@@ -19,7 +19,8 @@ COPY Pipfile Pipfile.lock ./
 
 # Install pipenv and dependencies
 RUN pip install pipenv && \
-    pipenv install --system --deploy
+    pipenv install --system --deploy && \
+    pip install gunicorn==21.2.0
 
 # Copy application code
 COPY . .

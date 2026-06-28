@@ -1,0 +1,89 @@
+# Infora ISP billing — FreeRADIUS default virtual server (SQL auth + accounting)
+
+server default {
+    listen {
+        type = auth
+        ipaddr = *
+        port = 0
+        limit {
+            max_connections = 16
+            lifetime = 0
+            idle_timeout = 30
+        }
+    }
+
+    listen {
+        type = acct
+        ipaddr = *
+        port = 0
+        limit {
+            max_connections = 16
+            lifetime = 0
+            idle_timeout = 30
+        }
+    }
+
+    authorize {
+        filter_username
+        preprocess
+        chap
+        mschap
+        digest
+        suffix
+        eap {
+            ok = return
+        }
+        sql
+        expiration
+        logintime
+        pap
+    }
+
+    authenticate {
+        Auth-Type PAP {
+            pap
+        }
+        Auth-Type CHAP {
+            chap
+        }
+        Auth-Type MS-CHAP {
+            mschap
+        }
+    }
+
+    preacct {
+        preprocess
+        acct_unique
+        suffix
+        files
+    }
+
+    accounting {
+        detail
+        sql
+        attr_filter.accounting_response
+    }
+
+    session {
+        sql
+    }
+
+    post-auth {
+        update {
+            &reply: += &session-state:
+        }
+        remove_reply_message_if_eap
+        Post-Auth-Type REJECT {
+            attr_filter.access_reject
+            eap
+            remove_reply_message_if_eap
+        }
+    }
+
+    pre-proxy {
+    }
+
+    post-proxy {
+        eap
+    }
+}

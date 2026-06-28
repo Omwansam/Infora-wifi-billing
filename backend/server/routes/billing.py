@@ -154,6 +154,7 @@ def create_customer():
             return jsonify({'ok': False, 'message': 'ISP context required'}), 400
 
         password = data.get('password') or secrets.token_urlsafe(8)
+        connection_type = plan.plan_type if plan.plan_type in ('hotspot', 'pppoe', 'wireguard') else 'pppoe'
 
         customer = Customer(
             full_name=data['full_name'],
@@ -164,16 +165,26 @@ def create_customer():
             status=CustomerStatus.ACTIVE,
             service_plan_id=plan.id,
             isp_id=target_isp.id if target_isp else plan.isp_id,
+            connection_type=connection_type,
             subscription_start=datetime.utcnow(),
-            subscription_end=datetime.utcnow() + timedelta(days=30),
         )
+        from services.portal_service import plan_subscription_end
+        customer.subscription_end = plan_subscription_end(plan)
         set_customer_radius_password(customer, password)
 
         db.session.add(customer)
         db.session.flush()
 
+        radius_provisioned = False
+        wireguard_provisioned = False
         if target_isp:
-            provision_customer_radius(customer, plan, target_isp, password=password)
+            if plan.plan_type == 'wireguard':
+                from services.wireguard_provisioning import provision_customer_wireguard
+                provision_customer_wireguard(customer, plan, target_isp)
+                wireguard_provisioned = True
+            else:
+                provision_customer_radius(customer, plan, target_isp, password=password)
+                radius_provisioned = True
 
         db.session.commit()
         
@@ -184,9 +195,11 @@ def create_customer():
                 'id': customer.id,
                 'full_name': customer.full_name,
                 'email': customer.email,
-                'password': password,  # Return generated password
+                'password': password,
                 'plan_name': plan.name,
-                'status': customer.status.value
+                'status': customer.status.value,
+                'radius_provisioned': radius_provisioned,
+                'wireguard_provisioned': wireguard_provisioned,
             }
         }), 201
         

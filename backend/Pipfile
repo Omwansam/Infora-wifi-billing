@@ -18,6 +18,7 @@ cryptography = "*"
 netaddr = "*"
 paramiko = "*"
 psycopg2-binary = "*"
+qrcode = {extras = ["pil"], version = "*"}
 
 [dev-packages]
 

@@ -16,10 +16,19 @@ import {
   Package,
   ShieldCheck,
   FileText,
+  Shield,
+  Pause,
+  Play,
+  Download,
+  QrCode,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
+import wireguardService from '../../services/wireguardService';
+import { getAccessToken } from '../../utils/authToken';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { isSubscriptionExpired, subscriptionStatusLabel, subscriptionStatusTone } from '../../lib/subscriptionUtils';
 import KycStatusBadge from './KycStatusBadge';
+import { clientSpeedLabel } from '../../lib/clientUtils';
 import toast from 'react-hot-toast';
 
 export default function CustomerDetail() {
@@ -29,6 +38,20 @@ export default function CustomerDetail() {
   const [loading, setLoading] = useState(true);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [wgQrUrl, setWgQrUrl] = useState(null);
+
+  const authBlobDownload = async (url, filename) => {
+    const token = getAccessToken();
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error('Download failed');
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
 
   useEffect(() => {
     loadCustomer();
@@ -43,23 +66,57 @@ export default function CustomerDetail() {
         setCustomer(result.data);
       } else {
         toast.error(result.error || 'Failed to load customer details');
-        navigate('/customers');
+        navigate('/clients');
       }
     } catch (error) {
       console.error('Error loading customer:', error);
       toast.error('Failed to load customer details');
-      navigate('/customers');
+      navigate('/clients');
     } finally {
       setLoading(false);
     }
   };
 
   const handleEdit = () => {
-    navigate(`/customers/${customerId}/edit`);
+    navigate(`/clients/${customerId}/edit`);
   };
 
   const handleDelete = () => {
     setDeleteModalOpen(true);
+  };
+
+  const handleDisconnect = async () => {
+    try {
+      setAccessLoading(true);
+      const result = await customerService.disconnectClient(customerId);
+      if (result.success) {
+        toast.success('Client disconnected — internet access removed');
+        loadCustomer();
+      } else {
+        toast.error(result.error || result.data?.error || 'Disconnect failed');
+      }
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setAccessLoading(false);
+    }
+  };
+
+  const handleConnect = async () => {
+    try {
+      setAccessLoading(true);
+      const result = await customerService.connectClient(customerId);
+      if (result.success) {
+        toast.success('Client connected — internet provisioned at plan speed');
+        loadCustomer();
+      } else {
+        toast.error(result.error || result.data?.error || 'Connect failed');
+      }
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setAccessLoading(false);
+    }
   };
 
   const confirmDelete = async () => {
@@ -69,7 +126,7 @@ export default function CustomerDetail() {
       
       if (result.success) {
         toast.success('Customer deleted successfully');
-        navigate('/customers');
+        navigate('/clients');
       } else {
         toast.error(result.error || 'Failed to delete customer');
       }
@@ -96,9 +153,16 @@ export default function CustomerDetail() {
     );
   };
 
+  const listPath =
+    customer?.connection_type === 'pppoe'
+      ? '/clients/pppoe'
+      : customer?.connection_type === 'hotspot'
+        ? '/clients/hotspot'
+        : '/clients';
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-6">
+      <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -111,12 +175,12 @@ export default function CustomerDetail() {
 
   if (!customer) {
     return (
-      <div className="min-h-screen bg-gray-50 p-6">
+      <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
         <div className="max-w-4xl mx-auto">
           <div className="text-center">
             <h1 className="text-2xl font-bold text-gray-900 mb-4">Customer Not Found</h1>
             <Link
-              to="/customers"
+              to="/clients"
               className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -129,7 +193,7 @@ export default function CustomerDetail() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
@@ -140,19 +204,40 @@ export default function CustomerDetail() {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <Link
-                to="/customers"
-                className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Customers
-              </Link>
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">Customer Details</h1>
-                <p className="text-gray-600 mt-2">View and manage customer information</p>
-              </div>
+            <Link
+              to={listPath}
+              className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to clients
+            </Link>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Client details</h1>
+              <p className="text-gray-600 mt-2">
+                {customer.connection_type === 'pppoe' ? 'PPPoE subscriber' : customer.connection_type === 'hotspot' ? 'Hotspot user' : 'Subscriber'} · {clientSpeedLabel(customer)}
+              </p>
+            </div>
             </div>
             <div className="flex items-center space-x-3">
+              {customer.status === 'active' ? (
+                <button
+                  onClick={handleDisconnect}
+                  disabled={accessLoading}
+                  className="inline-flex items-center px-4 py-2 border border-rose-300 rounded-lg text-sm font-medium text-rose-800 bg-rose-50 hover:bg-rose-100 disabled:opacity-50"
+                >
+                  <Pause className="h-4 w-4 mr-2" />
+                  Disconnect
+                </button>
+              ) : (
+                <button
+                  onClick={handleConnect}
+                  disabled={accessLoading}
+                  className="inline-flex items-center px-4 py-2 border border-emerald-300 rounded-lg text-sm font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
+                >
+                  <Play className="h-4 w-4 mr-2" />
+                  Connect
+                </button>
+              )}
               <button
                 onClick={handleEdit}
                 className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
@@ -218,7 +303,7 @@ export default function CustomerDetail() {
                 <div className="flex items-center gap-3">
                   <KycStatusBadge status={customer.kyc_status || 'pending'} size="lg" />
                   <Link
-                    to="/customers/kyc"
+                    to="/clients/kyc"
                     className="inline-flex items-center px-3 py-2 rounded-xl text-sm font-medium text-teal-700 bg-teal-50 hover:bg-teal-100"
                   >
                     <FileText className="h-4 w-4 mr-1.5" />
@@ -290,6 +375,15 @@ export default function CustomerDetail() {
                     </div>
                   </div>
                   <div className="flex items-center">
+                    <Calendar className="h-4 w-4 text-gray-400 mr-3" />
+                    <div>
+                      <p className="text-sm text-gray-500">Subscription ends</p>
+                      <p className={`text-sm font-medium ${isSubscriptionExpired(customer.subscription_end) ? 'text-rose-600' : 'text-gray-900'}`}>
+                        {customer.subscription_end ? formatDate(customer.subscription_end) : 'Not set'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center">
                     <Wifi className="h-4 w-4 text-gray-400 mr-3" />
                     <div>
                       <p className="text-sm text-gray-500">Devices</p>
@@ -299,6 +393,149 @@ export default function CustomerDetail() {
                 </div>
               </div>
             </div>
+
+            {/* RADIUS / Network access */}
+            <div className="mt-8 pt-8 border-t border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <Shield className="h-5 w-5 mr-2 text-indigo-600" />
+                RADIUS & Network Access
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
+                  <p className="text-xs font-medium text-indigo-600 uppercase">PPPoE Username</p>
+                  <p className="font-mono text-sm text-slate-900 mt-1">{customer.radius_username || customer.email}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <p className="text-xs font-medium text-slate-500 uppercase">Connection</p>
+                  <p className="text-sm font-medium text-slate-900 mt-1 capitalize">{customer.connection_type || 'pppoe'}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <p className="text-xs font-medium text-slate-500 uppercase">Access</p>
+                  <span className={`inline-flex mt-1 px-2 py-0.5 rounded-full text-xs font-semibold ${subscriptionStatusTone(customer)}`}>
+                    {subscriptionStatusLabel(customer)}
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 mt-3">
+                Suspend removes radcheck entries immediately. Activate re-provisions after payment or manual activation.
+              </p>
+            </div>
+
+            {(customer.connection_type === 'wireguard' || customer.wireguard_peer) && (
+            <div className="mt-8 pt-8 border-t border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <Shield className="h-5 w-5 mr-2 text-emerald-600" />
+                WireGuard VPN
+              </h3>
+              {customer.wireguard_peer ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                      <p className="text-xs font-medium text-emerald-700 uppercase">Assigned IP</p>
+                      <p className="font-mono text-sm text-slate-900 mt-1">{customer.wireguard_peer.assigned_ip}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-4">
+                      <p className="text-xs font-medium text-slate-500 uppercase">Last handshake</p>
+                      <p className="text-sm font-medium text-slate-900 mt-1">
+                        {customer.wireguard_peer.last_handshake ? formatDate(customer.wireguard_peer.last_handshake) : 'Never'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-4">
+                      <p className="text-xs font-medium text-slate-500 uppercase">Data</p>
+                      <p className="text-sm font-medium text-slate-900 mt-1">
+                        ↓ {(customer.wireguard_peer.rx_bytes / 1e6).toFixed(1)} MB · ↑ {(customer.wireguard_peer.tx_bytes / 1e6).toFixed(1)} MB
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-4">
+                      <p className="text-xs font-medium text-slate-500 uppercase">MikroTik sync</p>
+                      <p className={`text-sm font-medium mt-1 ${customer.wireguard_peer.mikrotik_sync_error ? 'text-rose-600' : 'text-emerald-700'}`}>
+                        {customer.wireguard_peer.mikrotik_sync_error
+                          ? 'Sync error'
+                          : customer.wireguard_peer.mikrotik_synced_at
+                            ? `Synced ${formatDate(customer.wireguard_peer.mikrotik_synced_at)}`
+                            : 'Not synced'}
+                      </p>
+                      {customer.wireguard_peer.bandwidth_limit_mbps && (
+                        <p className="text-xs text-slate-500 mt-1">Queue: {customer.wireguard_peer.bandwidth_limit_mbps} Mbps</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => authBlobDownload(wireguardService.downloadConfigUrl(customerId), `wg-${customerId}.conf`).catch((e) => toast.error(e.message))}
+                      className="inline-flex items-center px-3 py-2 rounded-lg bg-slate-900 text-white text-sm"
+                    >
+                      <Download className="h-4 w-4 mr-2" /> Download .conf
+                    </button>
+                    <button
+                      type="button"
+                      disabled={accessLoading}
+                      onClick={async () => {
+                        try {
+                          setAccessLoading(true);
+                          await wireguardService.syncPeerMikrotik(getAccessToken(), customer.wireguard_peer.id);
+                          toast.success('Pushed to MikroTik');
+                          loadCustomer();
+                        } catch (e) {
+                          toast.error(e.message);
+                        } finally {
+                          setAccessLoading(false);
+                        }
+                      }}
+                      className="inline-flex items-center px-3 py-2 rounded-lg border border-emerald-200 text-emerald-800 text-sm disabled:opacity-50"
+                    >
+                      Push to MikroTik
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const token = getAccessToken();
+                          const res = await fetch(wireguardService.qrcodeUrl(customerId), {
+                            headers: { Authorization: `Bearer ${token}` },
+                          });
+                          if (!res.ok) throw new Error('QR failed');
+                          const blob = await res.blob();
+                          setWgQrUrl(URL.createObjectURL(blob));
+                        } catch (e) {
+                          toast.error(e.message);
+                        }
+                      }}
+                      className="inline-flex items-center px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700"
+                    >
+                      <QrCode className="h-4 w-4 mr-2" /> QR code
+                    </button>
+                  </div>
+                  {wgQrUrl && (
+                    <img src={wgQrUrl} alt="WireGuard QR" className="max-w-[200px] rounded-lg border border-slate-200 p-2 bg-white" />
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <p className="text-sm text-slate-600">No peer provisioned yet.</p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        setAccessLoading(true);
+                        await wireguardService.provisionCustomer(getAccessToken(), customerId);
+                        toast.success('WireGuard peer provisioned');
+                        loadCustomer();
+                      } catch (e) {
+                        toast.error(e.message);
+                      } finally {
+                        setAccessLoading(false);
+                      }
+                    }}
+                    className="text-sm text-indigo-600 font-medium hover:underline"
+                  >
+                    Provision now
+                  </button>
+                </div>
+              )}
+            </div>
+            )}
 
             {/* Financial Information */}
             <div className="mt-8 pt-8 border-t border-gray-200">

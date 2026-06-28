@@ -8,12 +8,16 @@ services:
     environment:
       POSTGRES_DB: infora_billing
       POSTGRES_USER: infora_user
-      POSTGRES_PASSWORD: infora_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-infora_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/server/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infora_user -d infora_billing"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - infora_network
 
@@ -26,20 +30,28 @@ services:
     environment:
       FLASK_APP: server/app.py
       FLASK_ENV: development
-      DATABASE_URL: postgresql://infora_user:infora_password@postgres:5432/infora_billing
+      DATABASE_URL: postgresql://infora_user:${POSTGRES_PASSWORD:-infora_password}@postgres:5432/infora_billing
       JWT_SECRET_KEY: your-super-secret-jwt-key-change-in-production
       RADIUS_SECRET: radius_secret_key
-      LDAP_BIND_PASSWORD: admin_password
-      WIREGUARD_SERVER_PUBKEY: sample_public_key
+      FREERADIUS_HOST: freeradius
+      PUBLIC_SERVER_HOST: ${PUBLIC_SERVER_HOST:-10.0.0.10}
+      WIREGUARD_CONFIG_DIR: /app/wireguard_configs
+      WIREGUARD_MIKROTIK_AUTO_PUSH: "true"
+      RADIUS_CLIENTS_CONF_PATH: /config/freeradius/clients.conf
     volumes:
       - ./backend:/app
       - ./certs:/app/certs
+      - wireguard_configs:/app/wireguard_configs
+      - ./config/freeradius/clients.conf:/config/freeradius/clients.conf
     ports:
       - "5000:5000"
     depends_on:
-      - postgres
-      - freeradius
-      - openldap
+      postgres:
+        condition: service_healthy
+      freeradius:
+        condition: service_started
+      openldap:
+        condition: service_started
     networks:
       - infora_network
     command: >
@@ -49,26 +61,22 @@ services:
 
   # FreeRADIUS Server
   freeradius:
-    image: freeradius/freeradius-server:latest
+    build:
+      context: ./config/freeradius
+      dockerfile: Dockerfile
     container_name: infora_freeradius
     environment:
       RADIUS_SECRET: radius_secret_key
-    volumes:
-      - ./config/freeradius/clients.conf:/etc/freeradius/3.0/clients.conf
-      - ./config/freeradius/users:/etc/freeradius/3.0/mods-config/files/authorize
-      - ./config/freeradius/ldap:/etc/freeradius/3.0/mods-available/ldap
-      - ./config/freeradius/sql:/etc/freeradius/3.0/mods-available/sql
     ports:
       - "1812:1812/udp"
       - "1813:1813/udp"
+    volumes:
+      - ./config/freeradius/clients.conf:/etc/freeradius/3.0/clients.conf:ro
     depends_on:
-      - postgres
-      - openldap
+      postgres:
+        condition: service_healthy
     networks:
       - infora_network
-    command: >
-      sh -c "echo 'radius_secret_key' > /etc/freeradius/3.0/clients.conf &&
-             freeradius -X"
 
   # OpenLDAP Server
   openldap:
@@ -103,19 +111,46 @@ services:
     networks:
       - infora_network
 
-  # Frontend (React/Vite)
+  # WireGuard VPN (Linux server mode — configs from Flask)
+  wireguard:
+    image: linuxserver/wireguard:latest
+    container_name: infora_wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Africa/Nairobi
+    volumes:
+      - wireguard_configs:/config
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "51820:51820/udp"
+      - "51821:51821/udp"
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks:
+      - infora_network
+    depends_on:
+      - flask_app
+
+  # Frontend (React/Vite) — dev only; use npm run build + nginx in production
   frontend:
+    profiles:
+      - dev
     build:
-      context: ./frontend/infora_billing
+      context: ./FRONTEND/infora_billing
       dockerfile: Dockerfile
     container_name: infora_frontend
     ports:
       - "5173:5173"
     volumes:
-      - ./frontend/infora_billing:/app
+      - ./FRONTEND/infora_billing:/app
       - /app/node_modules
     environment:
-      VITE_API_URL: http://localhost:5000/api
+      VITE_API_BASE_URL: http://localhost:5000
+      VITE_RADIUS_SERVER: ${PUBLIC_SERVER_HOST:-10.0.0.10}
     depends_on:
       - flask_app
     networks:
@@ -126,6 +161,7 @@ volumes:
   postgres_data:
   ldap_data:
   ldap_config:
+  wireguard_configs:
 
 networks:
   infora_network:

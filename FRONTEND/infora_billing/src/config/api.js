@@ -12,17 +12,24 @@ export const API_ENDPOINTS = {
   CHANGE_PASSWORD: `${API_BASE_URL}/api/auth/change-password`,
   USERS: `${API_BASE_URL}/api/auth/users`,
   
-  // Customer endpoints
+  // Customer endpoints (RADIUS-aware via legacy hooks on /api/customers)
   CUSTOMERS: `${API_BASE_URL}/api/customers`,
-  
+  CUSTOMERS_ACTIVE_SESSIONS: `${API_BASE_URL}/api/customers/sessions/active`,
+  BILLING_CUSTOMERS: `${API_BASE_URL}/api/billing/customers`,
+  BILLING_RADIUS_STATUS: `${API_BASE_URL}/api/billing/radius/status`,
+
   // Invoice endpoints
   INVOICES: `${API_BASE_URL}/api/invoices`,
-  
+
   // Plans endpoints
   PLANS: `${API_BASE_URL}/api/plans`,
   
   // Device endpoints
   DEVICES: `${API_BASE_URL}/api/devices`,
+  deviceRadiusScript: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/radius-script`,
+  deviceManagementTunnelScript: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/management-tunnel-script`,
+  HEALTH_DEPLOYMENT: `${API_BASE_URL}/api/health/deployment`,
+  HEALTH_RADIUS_USER: `${API_BASE_URL}/api/health/radius-user`,
   DEVICE_STATS: `${API_BASE_URL}/api/devices/stats`,
   DEVICE_CONNECT: `${API_BASE_URL}/api/devices/connect`,
   DEVICE_DISCONNECT: `${API_BASE_URL}/api/devices/disconnect`,
@@ -63,6 +70,24 @@ export const API_ENDPOINTS = {
   VPN_CLIENTS: `${API_BASE_URL}/api/vpn/clients`,
   VPN_STATUS: `${API_BASE_URL}/api/vpn/status`,
   VPN_GENERATE: `${API_BASE_URL}/api/vpn/generate`,
+
+  // WireGuard (billing-integrated)
+  WIREGUARD_SERVERS: `${API_BASE_URL}/api/wireguard/servers`,
+  WIREGUARD_SYNC_STATS: `${API_BASE_URL}/api/wireguard/sync-stats`,
+  wireguardServerPeers: (id) => `${API_BASE_URL}/api/wireguard/servers/${id}/peers`,
+  wireguardServerConfig: (id) => `${API_BASE_URL}/api/wireguard/servers/${id}/config`,
+  wireguardMikrotikScript: (id) => `${API_BASE_URL}/api/wireguard/servers/${id}/mikrotik-script`,
+  wireguardProvisionCustomer: (id) => `${API_BASE_URL}/api/wireguard/customers/${id}/provision`,
+  wireguardCustomerConfig: (id) => `${API_BASE_URL}/api/wireguard/customers/${id}/config`,
+  wireguardCustomerQrcode: (id) => `${API_BASE_URL}/api/wireguard/customers/${id}/qrcode`,
+  wireguardCustomerPeer: (id) => `${API_BASE_URL}/api/wireguard/customers/${id}/peer`,
+  wireguardPeer: (id) => `${API_BASE_URL}/api/wireguard/peers/${id}`,
+  wireguardPeerSyncMikrotik: (id) => `${API_BASE_URL}/api/wireguard/peers/${id}/sync-mikrotik`,
+  wireguardServerSyncMikrotik: (id) => `${API_BASE_URL}/api/wireguard/servers/${id}/sync-mikrotik`,
+
+  PORTAL_WIREGUARD_LOOKUP: `${API_BASE_URL}/api/portal/wireguard/lookup`,
+  PORTAL_WIREGUARD_CONFIG: `${API_BASE_URL}/api/portal/wireguard/config`,
+  PORTAL_WIREGUARD_QRCODE: `${API_BASE_URL}/api/portal/wireguard/qrcode`,
   
   // EAP endpoints
   EAP_PROFILES: `${API_BASE_URL}/api/eap/profiles`,
@@ -89,6 +114,7 @@ export const API_ENDPOINTS = {
 
   // Dashboard & tickets
   DASHBOARD_STATS: `${API_BASE_URL}/api/dashboard/stats`,
+  FUP_MONITOR: `${API_BASE_URL}/api/monitoring/fup`,
   FINANCE_LEADS: `${API_BASE_URL}/api/finance/leads`,
   FINANCE_EXPENSES: `${API_BASE_URL}/api/finance/expenses`,
   FINANCE_SUMMARY: `${API_BASE_URL}/api/finance/summary`,

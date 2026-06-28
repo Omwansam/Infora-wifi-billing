@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { Home, Loader2, Mail, Phone, Router } from 'lucide-react';
+import { Home, Loader2, Mail, Phone, Router, Shield } from 'lucide-react';
 import portalService from '../../services/portalService';
 import { BRAND, portalCompanyName, sanitizeBrandText } from '../../lib/brand';
 import LumenLogo from '../brand/LumenLogo';
@@ -17,6 +17,7 @@ export function usePortalContext() {
 const NAV_ITEMS = [
   { id: 'home', label: 'Home', short: 'Home', to: '/portal', icon: Home },
   { id: 'pppoe', label: 'My Account', short: 'Account', to: '/portal/pppoe', icon: Router },
+  { id: 'wireguard', label: 'WireGuard', short: 'VPN', to: '/portal/wireguard', icon: Shield },
 ];
 
 export default function PortalShell({ children, activeTab = 'home' }) {

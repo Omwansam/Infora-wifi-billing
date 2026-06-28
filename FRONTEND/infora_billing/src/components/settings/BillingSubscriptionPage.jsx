@@ -17,7 +17,7 @@ const BillingSubscriptionPage = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
       <div className="max-w-6xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: -20 }}

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BRAND } from '../../lib/brand';
+import { useTheme } from '../../contexts/ThemeContext';
 import { motion } from 'framer-motion';
 import {
   Settings,
@@ -20,7 +21,7 @@ import {
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('profile');
   const [showPassword, setShowPassword] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
+  const { isDark, toggleTheme } = useTheme();
   const [notifications, setNotifications] = useState({
     email: true,
     sms: false,
@@ -277,14 +278,16 @@ export default function SettingsPage() {
               <p className="text-sm text-gray-500">Switch to dark theme</p>
             </div>
             <button
-              onClick={() => setDarkMode(!darkMode)}
+              onClick={toggleTheme}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                darkMode ? 'bg-blue-600' : 'bg-gray-200'
+                isDark ? 'bg-blue-600' : 'bg-gray-200'
               }`}
+              aria-pressed={isDark}
+              aria-label="Toggle dark mode"
             >
               <span
                 className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  darkMode ? 'translate-x-6' : 'translate-x-1'
+                  isDark ? 'translate-x-6' : 'translate-x-1'
                 }`}
               />
             </button>
@@ -425,8 +428,8 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-4xl">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -434,13 +437,13 @@ export default function SettingsPage() {
           transition={{ duration: 0.5 }}
           className="mb-8"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-              <p className="text-gray-600 mt-2">Manage your account and system preferences</p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white sm:text-3xl">Settings</h1>
+              <p className="mt-2 text-gray-600 dark:text-slate-400">Manage your account and system preferences</p>
             </div>
-            <button className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
-              <Save className="h-4 w-4 mr-2" />
+            <button className="inline-flex w-full shrink-0 items-center justify-center rounded-lg border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-auto">
+              <Save className="mr-2 h-4 w-4" />
               Save Changes
             </button>
           </div>
@@ -454,15 +457,15 @@ export default function SettingsPage() {
           className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"
         >
           {/* Tabs */}
-          <div className="border-b border-gray-200">
-            <nav className="flex space-x-8 px-6" aria-label="Tabs">
+          <div className="border-b border-gray-200 dark:border-slate-800">
+            <nav className="flex gap-4 overflow-x-auto px-4 scrollbar-none sm:gap-8 sm:px-6" aria-label="Tabs">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
+                    className={`flex shrink-0 items-center space-x-2 border-b-2 px-1 py-4 text-sm font-medium transition-colors ${
                       activeTab === tab.id
                         ? 'border-blue-500 text-blue-600'
                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'

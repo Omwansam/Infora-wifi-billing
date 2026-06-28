@@ -183,10 +183,10 @@ export default function CustomerKycPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-7xl">
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
-          <Link to="/customers" className="inline-flex items-center text-sm text-slate-600 hover:text-slate-900 mb-4">
+          <Link to="/clients" className="inline-flex items-center text-sm text-slate-600 hover:text-slate-900 mb-4">
             <ArrowLeft className="h-4 w-4 mr-1.5" />
             Back to Customers
           </Link>
@@ -353,7 +353,7 @@ export default function CustomerKycPage() {
                     <div className="flex flex-wrap items-center gap-2 mb-3">
                       <KycStatusBadge status={selected.kyc_status} size="lg" />
                       <button
-                        onClick={() => navigate(`/customers/${selected.id}`)}
+                        onClick={() => navigate(`/clients/${selected.id}`)}
                         className="inline-flex items-center text-sm text-teal-700 hover:text-teal-800"
                       >
                         View customer

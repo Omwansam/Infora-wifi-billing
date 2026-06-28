@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 from auth_utils import get_current_user
@@ -10,6 +10,13 @@ from services.mikrotik_sync import (
     sync_device_stats,
     test_device_connection as mikrotik_test_connection,
     bulk_sync_devices,
+)
+from services.radius_clients_export import sync_radius_clients_conf
+from services.wireguard_management import (
+    build_mikrotik_management_tunnel_script,
+    deprovision_device_management_tunnel,
+    provision_device_management_tunnel,
+    resolve_radius_host_for_device,
 )
 
 devices_bp = Blueprint('devices', __name__, url_prefix='/api/devices')
@@ -37,6 +44,8 @@ def serialize_device(device):
             'notes': device.notes,
             'last_synced': device.last_synced.isoformat() if device.last_synced else None,
             'is_active': device.is_active,
+            'management_wg_enabled': bool(getattr(device, 'management_wg_enabled', False)),
+            'management_wg_ip': getattr(device, 'management_wg_ip', None),
             'created_at': device.created_at.isoformat() if device.created_at else None,
             'updated_at': device.updated_at.isoformat() if device.updated_at else None,
             'zone_id': device.zone_id,
@@ -196,11 +205,22 @@ def create_device():
             notes=data.get('notes', ''),
             is_active=data.get('is_active', True),
             zone_id=data.get('zone_id'),
-            isp_id=isp_id
+            isp_id=isp_id,
+            management_wg_enabled=bool(data.get('management_wg_enabled', False)),
         )
         
         db.session.add(device)
+        db.session.flush()
+
+        if device.management_wg_enabled:
+            provision_device_management_tunnel(device)
+
         db.session.commit()
+
+        try:
+            sync_radius_clients_conf()
+        except OSError as sync_err:
+            current_app.logger.warning('Failed to sync RADIUS clients.conf: %s', sync_err)
         
         return jsonify({
             'message': 'Device created successfully',
@@ -257,8 +277,22 @@ def update_device(device_id):
             device.is_active = data['is_active']
         if 'zone_id' in data:
             device.zone_id = data['zone_id']
+
+        if 'management_wg_enabled' in data:
+            want_mgmt = bool(data['management_wg_enabled'])
+            if want_mgmt and not device.management_wg_enabled:
+                provision_device_management_tunnel(device)
+            elif not want_mgmt and device.management_wg_enabled:
+                deprovision_device_management_tunnel(device)
+            else:
+                device.management_wg_enabled = want_mgmt
         
         db.session.commit()
+
+        try:
+            sync_radius_clients_conf()
+        except OSError as sync_err:
+            current_app.logger.warning('Failed to sync RADIUS clients.conf: %s', sync_err)
         
         return jsonify({
             'message': 'Device updated successfully',
@@ -276,8 +310,16 @@ def delete_device(device_id):
     try:
         device = MikrotikDevice.query.get_or_404(device_id)
         
+        if device.management_wg_enabled:
+            deprovision_device_management_tunnel(device)
+
         db.session.delete(device)
         db.session.commit()
+
+        try:
+            sync_radius_clients_conf()
+        except OSError as sync_err:
+            current_app.logger.warning('Failed to sync RADIUS clients.conf: %s', sync_err)
         
         return jsonify({'message': 'Device deleted successfully'}), 200
         
@@ -530,3 +572,71 @@ def reboot_device_alias(device_id):
 @jwt_required()
 def update_device_alias(device_id):
     return sync_device(device_id)
+
+
+@devices_bp.route('/<int:device_id>/radius-script', methods=['GET'])
+@jwt_required()
+def download_radius_script(device_id):
+    """Return MikroTik .rsc script with device-specific RADIUS settings."""
+    import os
+
+    device = MikrotikDevice.query.get_or_404(device_id)
+    isp = ISP.query.get(device.isp_id) if device.isp_id else None
+    if not isp or not isp.radius_secret:
+        return jsonify({'error': 'ISP has no RADIUS secret configured'}), 400
+
+    radius_host = resolve_radius_host_for_device(device)
+    radius_secret = isp.radius_secret
+
+    template_path = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), '..', '..', '..', 'config', 'mikrotik', 'radius-provision.rsc'
+    ))
+    with open(template_path, 'r', encoding='utf-8') as fh:
+        script = fh.read()
+
+    if device.management_wg_enabled:
+        script = (
+            '# Import management tunnel first: GET /api/devices/'
+            f'{device.id}/management-tunnel-script\n\n'
+            + script
+        )
+
+    script = script.replace(':local RADIUS_SERVER "10.0.0.10"', f':local RADIUS_SERVER "{radius_host}"')
+    script = script.replace(':local RADIUS_SECRET "radius_secret_key"', f':local RADIUS_SECRET "{radius_secret}"')
+
+    filename = f'infora-radius-{device.device_name.replace(" ", "-")}.rsc'
+    return Response(
+        script,
+        mimetype='text/plain',
+        headers={'Content-Disposition': f'attachment; filename={filename}'},
+    )
+
+
+@devices_bp.route('/<int:device_id>/management-tunnel-script', methods=['GET'])
+@jwt_required()
+def download_management_tunnel_script(device_id):
+    """Return MikroTik .rsc for management WireGuard tunnel to billing host."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    if not device.management_wg_enabled:
+        provision_device_management_tunnel(device)
+        try:
+            sync_radius_clients_conf()
+        except OSError as sync_err:
+            current_app.logger.warning('Failed to sync RADIUS clients.conf: %s', sync_err)
+        db.session.commit()
+
+    try:
+        script = build_mikrotik_management_tunnel_script(device)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    filename = f'infora-mgmt-tunnel-{device.device_name.replace(" ", "-")}.rsc'
+    return Response(
+        script,
+        mimetype='text/plain',
+        headers={'Content-Disposition': f'attachment; filename={filename}'},
+    )

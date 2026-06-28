@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, User, Mail, Phone, MapPin, Wifi, DollarSign } from 'lucide-react';
+import { ArrowLeft, Save, User, Mail, Phone, MapPin, Wifi, DollarSign, Shield } from 'lucide-react';
 import { customerService } from '../../services/customerService';
+import { getActivePlans } from '../../services/planService';
 import toast from 'react-hot-toast';
 
 export default function CustomerEdit() {
@@ -10,21 +11,33 @@ export default function CustomerEdit() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [plans, setPlans] = useState([]);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     address: '',
-    package: 'Basic WiFi',
+    service_plan_id: '',
     status: 'active',
     balance: 0.00,
     usage_percentage: 0,
     device_count: 1
   });
+  const [initialStatus, setInitialStatus] = useState('active');
 
   useEffect(() => {
+    loadPlans();
     loadCustomer();
   }, [customerId]);
+
+  const loadPlans = async () => {
+    try {
+      const result = await getActivePlans();
+      if (result.success) setPlans(result.data.plans || []);
+    } catch {
+      /* plans optional for display */
+    }
+  };
 
   const loadCustomer = async () => {
     try {
@@ -38,20 +51,21 @@ export default function CustomerEdit() {
           email: customer.email || '',
           phone: customer.phone || '',
           address: customer.address || '',
-          package: customer.package || 'Basic WiFi',
+          service_plan_id: customer.service_plan_id ? String(customer.service_plan_id) : '',
           status: customer.status || 'active',
           balance: customer.balance || 0.00,
           usage_percentage: customer.usage_percentage || 0,
           device_count: customer.device_count || 1
         });
+        setInitialStatus(customer.status || 'active');
       } else {
         toast.error(result.error || 'Failed to load customer details');
-        navigate('/customers');
+        navigate('/clients');
       }
     } catch (error) {
       console.error('Error loading customer:', error);
       toast.error('Failed to load customer details');
-      navigate('/customers');
+      navigate('/clients');
     } finally {
       setLoading(false);
     }
@@ -70,15 +84,28 @@ export default function CustomerEdit() {
     setSaving(true);
 
     try {
-      console.log('Updating customer data:', formData);
-      
-      const result = await customerService.updateCustomer(customerId, formData);
+      const { status, ...rest } = formData;
+      const payload = {
+        ...rest,
+        service_plan_id: rest.service_plan_id ? Number(rest.service_plan_id) : undefined,
+      };
+
+      if (status !== initialStatus && (status === 'active' || status === 'suspended')) {
+        const statusResult = await customerService.updateCustomerStatus(customerId, status);
+        if (!statusResult.success) {
+          toast.error(statusResult.error || 'Failed to update access status');
+          return;
+        }
+      } else if (status !== initialStatus) {
+        payload.status = status;
+      }
+
+      const result = await customerService.updateCustomer(customerId, payload);
       
       if (result.success) {
         toast.success('Customer updated successfully!');
-        navigate(`/customers/${customerId}`);
+        navigate(`/clients/${customerId}`);
       } else {
-        console.error('Failed to update customer:', result.error);
         toast.error(result.error || 'Failed to update customer');
       }
     } catch (error) {
@@ -91,7 +118,7 @@ export default function CustomerEdit() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-6">
+      <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -103,7 +130,7 @@ export default function CustomerEdit() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
@@ -115,7 +142,7 @@ export default function CustomerEdit() {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <Link
-                to={`/customers/${customerId}`}
+                to={`/clients/${customerId}`}
                 className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
@@ -228,23 +255,29 @@ export default function CustomerEdit() {
                 Service Information
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div>
-                  <label htmlFor="package" className="block text-sm font-medium text-gray-700 mb-2">
-                    Service Package *
+                <div className="md:col-span-2">
+                  <label htmlFor="service_plan_id" className="block text-sm font-medium text-gray-700 mb-2">
+                    Service Plan *
                   </label>
                   <select
-                    id="package"
-                    name="package"
-                    value={formData.package}
+                    id="service_plan_id"
+                    name="service_plan_id"
+                    value={formData.service_plan_id}
                     onChange={handleChange}
                     required
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="Basic WiFi">Basic WiFi</option>
-                    <option value="Standard WiFi">Standard WiFi</option>
-                    <option value="Premium WiFi">Premium WiFi</option>
-                    <option value="Business WiFi">Business WiFi</option>
+                    <option value="">Select plan</option>
+                    {plans.map((plan) => (
+                      <option key={plan.id} value={plan.id}>
+                        {plan.name} — {plan.speed}
+                      </option>
+                    ))}
                   </select>
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                    <Shield className="h-3 w-3" />
+                    Plan changes re-provision RADIUS rate limits
+                  </p>
                 </div>
                 <div>
                   <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-2">
@@ -256,7 +289,7 @@ export default function CustomerEdit() {
                     value={formData.status}
                     onChange={handleChange}
                     required
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="active">Active</option>
                     <option value="pending">Pending</option>
@@ -324,7 +357,7 @@ export default function CustomerEdit() {
             {/* Form Actions */}
             <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">
               <Link
-                to={`/customers/${customerId}`}
+                to={`/clients/${customerId}`}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
               >
                 Cancel

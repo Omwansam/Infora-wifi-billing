@@ -11,6 +11,8 @@ export function mapMikrotikDevice(device) {
     uptime: device.uptime,
     lastSynced: device.last_synced,
     isActive: device.is_active,
+    management_wg_enabled: Boolean(device.management_wg_enabled),
+    management_wg_ip: device.management_wg_ip,
     ispName: device.isp_name,
     zoneName: device.zone_name,
     notes: device.notes,

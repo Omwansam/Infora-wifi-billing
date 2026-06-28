@@ -5,28 +5,25 @@ import { Link } from 'react-router-dom';
 
 export default function PlaceholderPage({ title, description, icon: Icon = Construction }) {
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
+    <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-4xl">
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           className="mb-8"
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Link
-                to="/dashboard"
-                className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Dashboard
-              </Link>
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">{title}</h1>
-                <p className="text-gray-600 mt-2">{description}</p>
-              </div>
+          <div className="flex flex-col gap-4">
+            <Link
+              to="/"
+              className="inline-flex w-fit items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Dashboard
+            </Link>
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">{title}</h1>
+              <p className="mt-2 text-gray-600">{description}</p>
             </div>
           </div>
         </motion.div>
@@ -79,7 +76,7 @@ export default function PlaceholderPage({ title, description, icon: Icon = Const
               Dashboard
             </Link>
             <Link
-              to="/customers"
+              to="/clients"
               className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
             >
               Customers

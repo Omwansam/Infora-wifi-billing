@@ -33,6 +33,7 @@ import {
   BarChart3,
   Globe,
   ShieldCheck,
+  Gauge,
   Key,
   Monitor,
   Bell,
@@ -90,7 +91,7 @@ function NavItem({ to, icon: Icon, label, collapsed, isActive, badge, onNavigate
   );
 }
 
-function NavSection({ title, icon: Icon, section, items, collapsed, expandedSections, toggleSection, isActive }) {
+function NavSection({ title, icon: Icon, section, items, collapsed, expandedSections, toggleSection, isActive, onNavigate }) {
   const [flyoutOpen, setFlyoutOpen] = useState(false);
   const isExpanded = expandedSections[section];
   const hasActiveChild = items?.some((item) => isActive(item.url));
@@ -132,7 +133,10 @@ function NavSection({ title, icon: Icon, section, items, collapsed, expandedSect
                   <Link
                     key={subItem.url}
                     to={subItem.url}
-                    onClick={() => setFlyoutOpen(false)}
+                    onClick={() => {
+                      setFlyoutOpen(false);
+                      onNavigate?.();
+                    }}
                     className={cn(
                       'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
                       isActive(subItem.url)
@@ -191,6 +195,7 @@ function NavSection({ title, icon: Icon, section, items, collapsed, expandedSect
                 <Link
                   key={subItem.url}
                   to={subItem.url}
+                  onClick={onNavigate}
                   className={cn(
                     'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors duration-200',
                     isActive(subItem.url)
@@ -211,7 +216,11 @@ function NavSection({ title, icon: Icon, section, items, collapsed, expandedSect
 }
 
 const AppSidebar = () => {
-  const { collapsed, toggleCollapsed } = useSidebar();
+  const { collapsed, toggleCollapsed, isMobile, mobileOpen, closeMobile } = useSidebar();
+  const sidebarCollapsed = isMobile ? false : collapsed;
+  const handleNavigate = () => {
+    if (isMobile) closeMobile();
+  };
   const [expandedSections, setExpandedSections] = useState({
     billing: true,
     finance: false,
@@ -234,13 +243,25 @@ const AppSidebar = () => {
 
   const isActive = (url) => {
     if (url === '/') return location.pathname === '/';
+    if (url === '/clients') {
+      return (
+        location.pathname === '/clients' ||
+        (location.pathname.startsWith('/clients/') && !location.pathname.startsWith('/clients/online'))
+      );
+    }
+    if (url === '/clients/online') {
+      return location.pathname.startsWith('/clients/online');
+    }
     return location.pathname.startsWith(url);
   };
 
   const navigation = useMemo(
     () => [
       { type: 'link', title: 'Dashboard', url: '/', icon: Home },
-      { type: 'link', title: 'Customers', url: '/customers', icon: Users },
+      { type: 'link', title: 'Clients', url: '/clients', icon: Users },
+      { type: 'link', title: 'Online Users', url: '/clients/online', icon: Activity },
+      { type: 'link', title: 'Packages', url: '/plans', icon: Package },
+      { type: 'link', title: 'FUP Monitor', url: '/fup', icon: Gauge },
       {
         type: 'section',
         title: 'Billing',
@@ -255,7 +276,6 @@ const AppSidebar = () => {
           { title: 'Reports', url: '/billing/reports', icon: BarChart3 },
         ],
       },
-      { type: 'link', title: 'Service Plans', url: '/plans', icon: Package },
       ...(user?.is_admin
         ? [
             {
@@ -331,7 +351,7 @@ const AppSidebar = () => {
                 { title: 'Billing', url: '/reports/billing', icon: Receipt },
                 { title: 'Network', url: '/reports/network', icon: Network },
                 { title: 'Devices', url: '/reports/devices', icon: Server },
-                { title: 'Customers', url: '/reports/customers', icon: Users },
+                { title: 'Clients', url: '/reports/customers', icon: Users },
                 { title: 'Analytics', url: '/reports/analytics', icon: TrendingUp },
               ],
             },
@@ -348,39 +368,68 @@ const AppSidebar = () => {
       : user?.email?.split('@')[0] || 'User';
 
   return (
+    <>
+      {isMobile && mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation menu"
+          className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm lg:hidden"
+          onClick={closeMobile}
+        />
+      )}
     <motion.aside
       initial={false}
-      animate={{ width: collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED }}
+      animate={
+        isMobile
+          ? undefined
+          : { width: collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED }
+      }
+      style={isMobile ? { width: SIDEBAR_WIDTH_EXPANDED } : undefined}
       transition={sidebarTransition}
-      className="fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-slate-800/80 bg-slate-950 text-white shadow-xl"
+      className={cn(
+        'fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-slate-800/80 bg-slate-950 text-white shadow-xl',
+        isMobile && 'transition-transform duration-300 ease-out',
+        isMobile && (mobileOpen ? 'translate-x-0' : '-translate-x-full'),
+        'lg:translate-x-0'
+      )}
     >
       {/* Brand header */}
-      <div className={cn('flex shrink-0 items-center border-b border-slate-800/80', collapsed ? 'justify-center p-3' : 'gap-3 p-4')}>
-        {collapsed ? (
+      <div className={cn('flex shrink-0 items-center border-b border-slate-800/80', sidebarCollapsed ? 'justify-center p-3' : 'gap-3 p-4')}>
+        {sidebarCollapsed ? (
           <LumenLogo size="sm" />
         ) : (
           <LumenLogo size="md" showText theme="dark" subtitle={BRAND.tagline} className="min-w-0 flex-1" />
         )}
-        {!collapsed && (
+        {!sidebarCollapsed && (
           <button
             type="button"
             onClick={toggleCollapsed}
-            className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-white"
+            className="hidden rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-white lg:inline-flex"
             aria-label="Collapse sidebar"
           >
             <PanelLeftClose className="h-4 w-4" />
           </button>
         )}
+        {isMobile && (
+          <button
+            type="button"
+            onClick={closeMobile}
+            className="ml-auto rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white lg:hidden"
+            aria-label="Close menu"
+          >
+            <PanelLeftClose className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* User strip */}
-      <div className={cn('shrink-0 border-b border-slate-800/80', collapsed ? 'p-2' : 'p-3')}>
-        <div className={cn('flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
+      <div className={cn('shrink-0 border-b border-slate-800/80', sidebarCollapsed ? 'p-2' : 'p-3')}>
+        <div className={cn('flex items-center', sidebarCollapsed ? 'justify-center' : 'gap-3')}>
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-violet-600 ring-2 ring-slate-800">
             <User className="h-4 w-4 text-white" />
           </div>
           <AnimatePresence initial={false}>
-            {!collapsed && (
+            {!sidebarCollapsed && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -401,8 +450,8 @@ const AppSidebar = () => {
 
       {/* Navigation */}
       <nav className="sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-3">
-        <div className={cn('space-y-1', collapsed ? 'px-2' : 'px-3')}>
-          {!collapsed && (
+        <div className={cn('space-y-1', sidebarCollapsed ? 'px-2' : 'px-3')}>
+          {!sidebarCollapsed && (
             <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-600">
               Main Menu
             </p>
@@ -414,9 +463,10 @@ const AppSidebar = () => {
                 to={item.url}
                 icon={item.icon}
                 label={item.title}
-                collapsed={collapsed}
+                collapsed={sidebarCollapsed}
                 isActive={isActive(item.url)}
                 badge={item.badge}
+                onNavigate={handleNavigate}
               />
             ) : (
               <NavSection
@@ -425,10 +475,11 @@ const AppSidebar = () => {
                 icon={item.icon}
                 section={item.section}
                 items={item.items}
-                collapsed={collapsed}
+                collapsed={sidebarCollapsed}
                 expandedSections={expandedSections}
                 toggleSection={toggleSection}
                 isActive={isActive}
+                onNavigate={handleNavigate}
               />
             )
           )}
@@ -436,8 +487,8 @@ const AppSidebar = () => {
       </nav>
 
       {/* Footer actions */}
-      <div className={cn('shrink-0 space-y-1 border-t border-slate-800/80', collapsed ? 'p-2' : 'p-3')}>
-        {collapsed && (
+      <div className={cn('shrink-0 space-y-1 border-t border-slate-800/80', sidebarCollapsed ? 'p-2' : 'p-3')}>
+        {sidebarCollapsed && !isMobile && (
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -452,8 +503,9 @@ const AppSidebar = () => {
           to="/settings"
           icon={Settings}
           label="Settings"
-          collapsed={collapsed}
+          collapsed={sidebarCollapsed}
           isActive={isActive('/settings')}
+          onNavigate={handleNavigate}
         />
         <button
           type="button"
@@ -461,15 +513,15 @@ const AppSidebar = () => {
             await logout();
             navigate('/login');
           }}
-          title={collapsed ? 'Logout' : undefined}
+          title={sidebarCollapsed ? 'Logout' : undefined}
           className={cn(
             'group relative flex w-full items-center rounded-lg text-sm font-medium text-slate-400 transition-colors duration-200 hover:bg-rose-950/40 hover:text-rose-400',
-            collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5'
+            sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5'
           )}
         >
-          <LogOut className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-[18px] w-[18px]')} />
+          <LogOut className={cn('shrink-0', sidebarCollapsed ? 'h-5 w-5' : 'h-[18px] w-[18px]')} />
           <AnimatePresence initial={false}>
-            {!collapsed && (
+            {!sidebarCollapsed && (
               <motion.span
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -480,7 +532,7 @@ const AppSidebar = () => {
               </motion.span>
             )}
           </AnimatePresence>
-          {collapsed && (
+          {sidebarCollapsed && !isMobile && (
             <span className="pointer-events-none absolute left-full z-50 ml-3 hidden whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg ring-1 ring-slate-700 group-hover:block">
               Logout
             </span>
@@ -488,6 +540,7 @@ const AppSidebar = () => {
         </button>
       </div>
     </motion.aside>
+    </>
   );
 };
 

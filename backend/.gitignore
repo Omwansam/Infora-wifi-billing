@@ -13,6 +13,12 @@ __pycache__/
 venv/
 .venv/
 env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Flask instance folder & local SQLite
 instance/
@@ -24,4 +30,6 @@ server/uploads/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store

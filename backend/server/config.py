@@ -45,6 +45,45 @@ class Config:
         MPESA_AUTH_URL = 'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials'
         MPESA_STK_PUSH_URL = 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest'
     
+    # Subscription expiry (optional background thread; prefer cron: flask enforce-expiry)
+    SUBSCRIPTION_ENFORCEMENT_INTERVAL = int(os.getenv('SUBSCRIPTION_ENFORCEMENT_INTERVAL', '0') or '0')
+    SUBSCRIPTION_GRACE_HOURS = int(os.getenv('SUBSCRIPTION_GRACE_HOURS', '0') or '0')
+    RADIUS_SECRET = os.getenv('RADIUS_SECRET', 'radius_secret_key')
+    FREERADIUS_HOST = os.getenv('FREERADIUS_HOST', '10.0.0.10')
+    WIREGUARD_CONFIG_DIR = os.getenv(
+        'WIREGUARD_CONFIG_DIR',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wireguard_configs'),
+    )
+    WIREGUARD_MIKROTIK_AUTO_PUSH = os.getenv('WIREGUARD_MIKROTIK_AUTO_PUSH', 'true').lower() in ('1', 'true', 'yes')
+    # Public IP/hostname shown in MikroTik scripts and WireGuard client configs
+    PUBLIC_SERVER_HOST = os.getenv('PUBLIC_SERVER_HOST', os.getenv('FREERADIUS_HOST', ''))
+    RADIUS_CLIENTS_CONF_PATH = os.getenv(
+        'RADIUS_CLIENTS_CONF_PATH',
+        os.path.abspath(
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                '..',
+                '..',
+                'config',
+                'freeradius',
+                'clients.conf',
+            )
+        ),
+    )
+    # Management WireGuard tunnel (MikroTik → billing host, distinct from customer VPN)
+    WIREGUARD_MGMT_SUBNET = os.getenv('WIREGUARD_MGMT_SUBNET', '10.250.0.0/24')
+    WIREGUARD_MGMT_SERVER_IP = os.getenv('WIREGUARD_MGMT_SERVER_IP', '10.250.0.1')
+    WIREGUARD_MGMT_PORT = int(os.getenv('WIREGUARD_MGMT_PORT', '51821'))
+    WIREGUARD_MGMT_ENDPOINT = os.getenv('WIREGUARD_MGMT_ENDPOINT', os.getenv('PUBLIC_SERVER_HOST', ''))
+    CORS_ORIGINS = [
+        o.strip()
+        for o in os.getenv(
+            'CORS_ORIGINS',
+            'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174',
+        ).split(',')
+        if o.strip()
+    ]
+    
     # File upload configuration
     UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size

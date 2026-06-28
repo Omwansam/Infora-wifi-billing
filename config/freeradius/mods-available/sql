@@ -1,0 +1,17 @@
+# FreeRADIUS SQL module — PostgreSQL backend for Infora billing
+sql {
+    driver = "rlm_sql_postgresql"
+    dialect = "postgresql"
+
+    server = "postgres"
+    port = 5432
+    login = "infora_user"
+    password = "infora_password"
+    radius_db = "infora_billing"
+
+    read_groups = yes
+    group_attribute = "SQL-Group"
+    group_membership_query = "SELECT groupname FROM radusergroup WHERE username = '%{SQL-User-Name}' ORDER BY priority"
+
+    $INCLUDE ${modconfdir}/sql/main/${dialect}/queries.conf
+}

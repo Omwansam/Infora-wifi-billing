@@ -1,8 +1,16 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
-from models import ServicePlan, User, Customer, Invoice
+from models import ServicePlan, User, Customer, Invoice, ISP
 from routes.customers import serialize_customer
+from services.radius_provisioning import ensure_plan_group, reprovision_plan_customers
+from services.mikrotik_wireguard import reprovision_plan_wireguard_peers
+from services.plan_utils import (
+    get_plan_speed_mbps,
+    format_plan_speed_hint,
+    format_plan_data_cap_display,
+    extract_package_policy,
+)
 
 plans_bp = Blueprint('plans', __name__, url_prefix='/api/plans')
 
@@ -52,16 +60,28 @@ def serialize_plan(plan):
                     features_list.append(f"{key.replace('_', ' ').title()}: {value}")
             features = features_list
         
+        speeds = get_plan_speed_mbps(plan)
         result = {
             'id': plan.id,
             'name': plan.name,
             'speed': plan.speed,
             'description': getattr(plan, 'description', None),
             'bandwidth_limit': getattr(plan, 'bandwidth_limit', None),
+            'upload_mbps': speeds['upload_mbps'],
+            'download_mbps': speeds['download_mbps'],
+            'speed_display': format_plan_speed_hint(plan),
+            'data_cap_display': format_plan_data_cap_display(plan),
+            'package_policy': extract_package_policy(plan),
             'data_limit': getattr(plan, 'data_limit', None),
             'static_ip': getattr(plan, 'static_ip', None),
             'session_timeout': getattr(plan, 'session_timeout', None),
             'idle_timeout': getattr(plan, 'idle_timeout', None),
+            'plan_type': getattr(plan, 'plan_type', 'pppoe'),
+            'duration_hours': getattr(plan, 'duration_hours', None),
+            'billing_cycle_days': getattr(plan, 'billing_cycle_days', None),
+            'wireguard_dns': getattr(plan, 'wireguard_dns', None),
+            'wireguard_allowed_ips': getattr(plan, 'wireguard_allowed_ips', None),
+            'wireguard_server_id': getattr(plan, 'wireguard_server_id', None),
             'price': float(plan.price) if plan.price else 0.0,
             'features': features,
             'popular': plan.popular,
@@ -116,8 +136,12 @@ def get_plans():
         is_active = request.args.get('is_active')
         popular = request.args.get('popular')
         search = request.args.get('search')
+        plan_type = request.args.get('plan_type')
         
         query = ServicePlan.query
+        
+        if plan_type:
+            query = query.filter_by(plan_type=plan_type)
         
         # Filter by active status
         if is_active is not None:
@@ -182,6 +206,12 @@ def create_plan():
         except ValueError:
             return jsonify({'error': 'Invalid price format'}), 400
         
+        # Validate plan type
+        plan_type = (data.get('plan_type') or 'pppoe').strip().lower()
+        allowed_types = ('pppoe', 'hotspot', 'trial', 'bundle', 'wireguard')
+        if plan_type not in allowed_types:
+            return jsonify({'error': f'Invalid plan_type. Use one of: {", ".join(allowed_types)}'}), 400
+
         # Create plan
         plan = ServicePlan(
             name=data['name'],
@@ -189,7 +219,15 @@ def create_plan():
             price=price,
             features=data.get('features', []),
             popular=data.get('popular', False),
-            is_active=data.get('is_active', True)
+            is_active=data.get('is_active', True),
+            plan_type=plan_type,
+            bandwidth_limit=data.get('bandwidth_limit'),
+            data_limit=data.get('data_limit'),
+            static_ip=data.get('static_ip'),
+            session_timeout=data.get('session_timeout'),
+            idle_timeout=data.get('idle_timeout'),
+            duration_hours=data.get('duration_hours'),
+            billing_cycle_days=data.get('billing_cycle_days', 30),
         )
         
         db.session.add(plan)
@@ -212,11 +250,20 @@ def update_plan(plan_id):
         plan = ServicePlan.query.get_or_404(plan_id)
         data = request.get_json()
         
+        radius_fields = (
+            'bandwidth_limit', 'data_limit', 'static_ip',
+            'session_timeout', 'idle_timeout', 'speed', 'features', 'plan_type',
+            'duration_hours', 'billing_cycle_days',
+            'wireguard_dns', 'wireguard_allowed_ips', 'wireguard_server_id',
+        )
+        radius_changed = False
+
         # Update fields
         if 'name' in data:
             plan.name = data['name']
         if 'speed' in data:
             plan.speed = data['speed']
+            radius_changed = True
         if 'price' in data:
             try:
                 price = float(data['price'])
@@ -227,11 +274,25 @@ def update_plan(plan_id):
                 return jsonify({'error': 'Invalid price format'}), 400
         if 'features' in data:
             plan.features = data['features']
+            radius_changed = True
         if 'popular' in data:
             plan.popular = data['popular']
         if 'is_active' in data:
             plan.is_active = data['is_active']
-        
+        for field in radius_fields:
+            if field in data and field not in ('speed', 'features'):
+                setattr(plan, field, data[field])
+                radius_changed = True
+
+        if radius_changed:
+            isp = ISP.query.get(plan.isp_id)
+            if isp:
+                if plan.plan_type == 'wireguard':
+                    reprovision_plan_wireguard_peers(plan)
+                else:
+                    ensure_plan_group(plan, isp)
+                    reprovision_plan_customers(plan)
+
         db.session.commit()
         
         return jsonify({
@@ -318,7 +379,11 @@ def toggle_plan_popular(plan_id):
 def get_active_plans():
     """Get all active service plans"""
     try:
-        plans = ServicePlan.query.filter_by(is_active=True).order_by(ServicePlan.price.asc()).all()
+        query = ServicePlan.query.filter_by(is_active=True)
+        plan_type = request.args.get('plan_type')
+        if plan_type:
+            query = query.filter_by(plan_type=plan_type)
+        plans = query.order_by(ServicePlan.price.asc()).all()
         
         return jsonify({
             'plans': [serialize_plan(plan) for plan in plans]

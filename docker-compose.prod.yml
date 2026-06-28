@@ -1,0 +1,100 @@
+# Production overlay for Contabo VPS + Cloudflare
+# Usage:
+#   cp config/deployment/production.env.example .env   # edit secrets + CONTABO_IP
+#   ./scripts/deploy-contabo.sh
+#
+# Stack: nginx (web) + flask (gunicorn) + postgres + freeradius + wireguard
+
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: config/nginx/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://ruirufactorymabati.com}
+        VITE_RADIUS_SERVER: ${PUBLIC_SERVER_HOST}
+        VITE_FREERADIUS_HOST: ${PUBLIC_SERVER_HOST}
+    container_name: infora_web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./certs/nginx:/etc/nginx/ssl:ro
+    depends_on:
+      flask_app:
+        condition: service_started
+    networks:
+      - infora_network
+    restart: unless-stopped
+
+  flask_app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      PUBLIC_SERVER_HOST: ${PUBLIC_SERVER_HOST}
+      FREERADIUS_HOST: ${FREERADIUS_HOST:-freeradius}
+      RADIUS_SECRET: ${RADIUS_SECRET}
+      RADIUS_CLIENTS_CONF_PATH: /config/freeradius/clients.conf
+      WIREGUARD_CONFIG_DIR: /app/wireguard_configs
+      WIREGUARD_MIKROTIK_AUTO_PUSH: ${WIREGUARD_MIKROTIK_AUTO_PUSH:-true}
+      WIREGUARD_MGMT_ENDPOINT: ${WIREGUARD_MGMT_ENDPOINT:-${PUBLIC_SERVER_HOST}}
+      WIREGUARD_MGMT_PORT: ${WIREGUARD_MGMT_PORT:-51821}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}
+      MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
+      MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
+      MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
+      MPESA_PASSKEY: ${MPESA_PASSKEY:-}
+      MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
+    volumes:
+      - wireguard_configs:/app/wireguard_configs
+      - ./config/freeradius/clients.conf:/config/freeradius/clients.conf
+      - ./certs:/app/certs
+    expose:
+      - "5000"
+    command: >
+      sh -c "flask db upgrade &&
+             flask initdb &&
+             gunicorn --bind 0.0.0.0:5000 --workers 4 --threads 2 --timeout 120 'server.app:app'"
+    restart: unless-stopped
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports: []
+    restart: unless-stopped
+
+  freeradius:
+    environment:
+      RADIUS_SECRET: ${RADIUS_SECRET}
+    restart: unless-stopped
+
+  wireguard:
+    ports:
+      - "51820:51820/udp"
+      - "51821:51821/udp"
+    volumes:
+      - wireguard_configs:/config
+      - /lib/modules:/lib/modules:ro
+      - ./config/wireguard/custom-cont-init.d:/custom-cont-init.d:ro
+    restart: unless-stopped
+
+  openldap:
+    restart: unless-stopped
+    ports: []
+
+  ldap_admin:
+    profiles:
+      - dev
+
+  frontend:
+    profiles:
+      - dev

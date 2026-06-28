@@ -20,6 +20,7 @@ export default function RadiusPage() {
   const [clients, setClients] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [stats, setStats] = useState({});
+  const [billingRadius, setBillingRadius] = useState(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -31,14 +32,16 @@ export default function RadiusPage() {
     try {
       setLoading(true);
       const token = getAccessToken();
-      const [clientsRes, sessionsRes, statsRes] = await Promise.all([
+      const [clientsRes, sessionsRes, statsRes, billingRes] = await Promise.all([
         radiusService.getRadiusClients(token),
         radiusService.getRadiusSessions(token, { per_page: 50, search: searchTerm || undefined }),
         radiusService.getRadiusStats(token).catch(() => null),
+        radiusService.getBillingRadiusStatus(token).catch(() => null),
       ]);
       setClients(unwrapList(clientsRes));
       setSessions(unwrapList(sessionsRes));
       if (statsRes?.data) setStats(statsRes.data);
+      if (billingRes?.data) setBillingRadius(billingRes.data);
     } catch {
       toast.error('Failed to load RADIUS data');
     } finally {
@@ -142,6 +145,28 @@ export default function RadiusPage() {
         </div>
       }
     >
+      {billingRadius && (
+        <div className="mb-6 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-violet-50 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Auth backend</p>
+              <p className="text-lg font-bold text-slate-900 mt-1">{billingRadius.auth_mode || 'freeradius_postgresql'}</p>
+              <p className="text-sm text-slate-600 mt-1">
+                {billingRadius.total_users ?? 0} provisioned users · {billingRadius.active_sessions ?? 0} live sessions
+              </p>
+            </div>
+            <div className="flex gap-3 text-sm">
+              <span className={`px-3 py-1.5 rounded-full font-medium ${billingRadius.radius_secret_configured ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                {billingRadius.radius_secret_configured ? 'RADIUS secret OK' : 'Secret not set'}
+              </span>
+              <span className="px-3 py-1.5 rounded-full bg-white border border-indigo-200 text-indigo-800 font-medium">
+                {billingRadius.isp_name || 'ISP'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         {statsCards.map((stat, index) => (
           <motion.div key={stat.title} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }} className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm">

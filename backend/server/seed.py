@@ -30,7 +30,7 @@ from models import (
     MikrotikDevice, Ticket, TicketMessage, CustomerDevice, 
     CustomerNote, CustomerDocument, Notification, Voucher,
     Transaction, SystemLog, RevenueData, RadiusSession,
-    RadiusCheck, RadiusReply, RadiusGroup, RadiusUserGroup,
+    RadiusCheck, RadiusReply, RadiusGroup, RadiusUserGroup, RadAcct,
     NetworkInfrastructure, NetworkZone, BillingCycle, TaxRate,
     Discount, InvoiceDiscount, AuditLog, BackupSchedule, SystemSetting,
     ISP,
@@ -1615,6 +1615,78 @@ def seed_website_settings():
     print("✅ Website settings seeded successfully!")
 
 
+def seed_fup_monitor_data():
+    """Enable FUP on sample plans and seed RADIUS usage for the FUP monitor."""
+    print("🌱 Seeding FUP monitor demo data...")
+
+    premium = ServicePlan.query.filter_by(name='Premium 100Mbps').first()
+    basic = ServicePlan.query.filter_by(name='Basic 50Mbps').first()
+    device = MikrotikDevice.query.filter_by(is_active=True).first()
+
+    if premium:
+        features = dict(premium.features or {})
+        features.update({
+            'fup_enabled': True,
+            'fup_threshold_gb': 50,
+            'fup_throttled_speed': '2M',
+            'fup_reset_cycle': 'monthly',
+        })
+        premium.features = features
+        premium.data_limit = 50
+
+    if basic:
+        basic.data_limit = 30
+        features = dict(basic.features or {})
+        features['data_cap'] = '30 GB'
+        basic.features = features
+
+    db.session.flush()
+
+    if RadAcct.query.count() > 0:
+        db.session.commit()
+        print("  ↳ RADIUS accounting rows already present — updated plan FUP settings only")
+        return
+
+    nas_ip = device.device_ip if device else '192.168.1.1'
+    device_id = device.id if device else None
+    now = datetime.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    GB = 1024 ** 3
+
+    demo_sessions = [
+        ('john.smith@email.com', 1, 42 * GB, True),
+        ('grace.wanjiku@email.com', 6, 52 * GB, False),
+        ('sarah.j@email.com', 2, 28 * GB, False),
+        ('peter.otieno@email.com', 7, 12 * GB, False),
+    ]
+
+    for idx, (email, customer_id, total_bytes, is_live) in enumerate(demo_sessions):
+        customer = Customer.query.get(customer_id)
+        if not customer:
+            continue
+        download = int(total_bytes * 0.75)
+        upload = int(total_bytes * 0.25)
+        session_id = f'fup-demo-{customer_id}-{idx}'
+        db.session.add(RadAcct(
+            acctsessionid=session_id,
+            acctuniqueid=f'uniq-{session_id}',
+            username=email.strip().lower(),
+            nasipaddress=nas_ip,
+            acctstarttime=month_start + timedelta(hours=idx + 1),
+            acctstoptime=None if is_live else month_start + timedelta(days=idx + 2),
+            acctsessiontime=3600 * (idx + 1),
+            acctinputoctets=upload,
+            acctoutputoctets=download,
+            framedipaddress=f'10.10.0.{10 + idx}',
+            isp_id=customer.isp_id,
+            customer_id=customer.id,
+            mikrotik_device_id=device_id,
+        ))
+
+    db.session.commit()
+    print("  ↳ FUP plans configured and RADIUS usage records added")
+
+
 def main():
     """Main seeding function"""
     print("🚀 Starting database seeding...")
@@ -1646,6 +1718,7 @@ def main():
             seed_finance_data()
             seed_kyc_data()
             seed_network_data()
+            seed_fup_monitor_data()
             seed_system_settings()
             apply_lumen_branding()
             seed_website_settings()

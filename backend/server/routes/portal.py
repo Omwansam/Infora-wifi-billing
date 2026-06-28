@@ -1,16 +1,22 @@
 """Public captive portal API (no admin JWT required)."""
-from flask import Blueprint, jsonify, request
+import io
 
+from flask import Blueprint, jsonify, request, send_file
+
+from models import WireGuardPeer
 from services.portal_service import (
     get_portal_config,
     get_portal_payment_status,
     list_portal_plans,
     lookup_pppoe_customer,
+    lookup_wireguard_customer,
     purchase_hotspot_package,
     renew_pppoe_package,
     serialize_portal_plan,
     serialize_pppoe_status,
+    serialize_wireguard_status,
 )
+from services.wireguard_provisioning import build_client_config
 
 portal_bp = Blueprint('portal', __name__, url_prefix='/api/portal')
 
@@ -28,7 +34,7 @@ def portal_config():
 def portal_plans():
     isp_id = request.args.get('isp_id', type=int)
     plan_type = request.args.get('type', 'hotspot')
-    if plan_type not in ('hotspot', 'pppoe'):
+    if plan_type not in ('hotspot', 'pppoe', 'wireguard'):
         return jsonify({'ok': False, 'message': 'Invalid plan type'}), 400
 
     plans = list_portal_plans(isp_id, plan_type)
@@ -101,3 +107,69 @@ def portal_payment_status(checkout_request_id):
     if error:
         return jsonify({'ok': False, 'message': error}), 404
     return jsonify({'ok': True, 'data': payload}), 200
+
+
+@portal_bp.route('/wireguard/lookup', methods=['POST'])
+def portal_wireguard_lookup():
+    data = request.get_json() or {}
+    account = data.get('account') or data.get('email')
+    isp_id = data.get('isp_id')
+
+    customer, error = lookup_wireguard_customer(isp_id, account)
+    if error:
+        return jsonify({'ok': False, 'message': error}), 404
+
+    return jsonify({'ok': True, 'data': serialize_wireguard_status(customer)}), 200
+
+
+@portal_bp.route('/wireguard/config', methods=['POST'])
+def portal_wireguard_config():
+    """Download .conf for customer self-service (email + isp_id verification)."""
+    data = request.get_json() or {}
+    account = data.get('account') or data.get('email')
+    isp_id = data.get('isp_id')
+
+    customer, error = lookup_wireguard_customer(isp_id, account)
+    if error:
+        return jsonify({'ok': False, 'message': error}), 404
+
+    peer = WireGuardPeer.query.filter_by(customer_id=customer.id, is_active=True).first()
+    if not peer:
+        return jsonify({'ok': False, 'message': 'WireGuard not provisioned'}), 404
+
+    content = build_client_config(peer, peer.server, customer.service_plan)
+    filename = f'infora-wg-{customer.id}.conf'
+    return send_file(
+        io.BytesIO(content.encode('utf-8')),
+        mimetype='text/plain',
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@portal_bp.route('/wireguard/qrcode', methods=['POST'])
+def portal_wireguard_qrcode():
+    data = request.get_json() or {}
+    account = data.get('account') or data.get('email')
+    isp_id = data.get('isp_id')
+
+    customer, error = lookup_wireguard_customer(isp_id, account)
+    if error:
+        return jsonify({'ok': False, 'message': error}), 404
+
+    peer = WireGuardPeer.query.filter_by(customer_id=customer.id, is_active=True).first()
+    if not peer:
+        return jsonify({'ok': False, 'message': 'WireGuard not provisioned'}), 404
+
+    try:
+        import qrcode
+    except ImportError:
+        return jsonify({'ok': False, 'message': 'QR code unavailable'}), 503
+
+    config_text = build_client_config(peer, peer.server, customer.service_plan)
+    img = qrcode.make(config_text)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return send_file(buf, mimetype='image/png', download_name=f'wg-qr-{customer.id}.png')
+

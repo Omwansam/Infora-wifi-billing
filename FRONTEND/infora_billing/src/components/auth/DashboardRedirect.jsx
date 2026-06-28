@@ -14,7 +14,7 @@ export default function DashboardRedirect() {
         navigate('/', { replace: true });
       } else {
         // Support users go to customers page
-        navigate('/customers', { replace: true });
+        navigate('/clients', { replace: true });
       }
     } else if (!loading && !user) {
       // No user, redirect to login
