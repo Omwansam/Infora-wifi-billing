@@ -1,5 +1,5 @@
 # Production overlay for Contabo VPS + Cloudflare
-# Usage:
+# Usage (on VPS at /srv/infora-billing):
 #   cp config/deployment/production.env.example .env   # edit secrets + CONTABO_IP
 #   ./scripts/deploy-contabo.sh
 #

@@ -41,7 +41,7 @@ CORS_ORIGINS=https://ruirufactorymabati.com,https://www.ruirufactorymabati.com
 ### Recommended (Full strict)
 
 1. Cloudflare → SSL/TLS → Origin Server → **Create certificate** (15-year origin cert).
-2. Save as `certs/nginx/origin.pem` and `certs/nginx/origin.key` on the VPS.
+2. Save on the VPS under `/srv/infora-billing/certs/nginx/` as `origin.pem` and `origin.key`.
 3. Uncomment the `listen 443 ssl` server block in `config/nginx/conf.d/billing.conf`.
 4. Cloudflare → SSL/TLS → **Full (strict)**.
 5. Rebuild web: `docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && docker compose ... up -d web`

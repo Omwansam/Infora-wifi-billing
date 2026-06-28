@@ -1,6 +1,15 @@
 # Manual deployment — Contabo VPS + Cloudflare (ruirufactorymabati.com)
 
-Complete step-by-step guide. Do everything by hand on the VPS and in Cloudflare.
+Complete step-by-step guide to deploy by hand on a fresh Contabo VPS. Use this checklist start to finish.
+
+**Deploy directory (this guide):** `/srv/infora-billing`  
+Use this path so the stack does not clash with anything already under `/opt` on the same server.
+
+```bash
+export DEPLOY_DIR=/srv/infora-billing
+```
+
+All commands below assume you are in `$DEPLOY_DIR` unless stated otherwise.
 
 ---
 
@@ -8,80 +17,121 @@ Complete step-by-step guide. Do everything by hand on the VPS and in Cloudflare.
 
 You need:
 
-- Contabo VPS (Ubuntu 22.04+ recommended) with a **public IPv4**
-- Domain **ruirufactorymabati.com** (registrar access)
-- Cloudflare account (free tier is fine)
-- SSH access to the VPS as root or sudo user
-- This repository on the VPS (git clone or upload)
+| Item | Notes |
+|------|--------|
+| Contabo VPS | Ubuntu 22.04+ recommended, **public IPv4** |
+| Domain | `ruirufactorymabati.com` (registrar access) |
+| Cloudflare | Free tier is fine |
+| SSH | Root or sudo user on the VPS |
+| Docker | Already installed on your VPS (see Part 3.2) |
+| Git access | To clone this repository |
 
-Write down your **Contabo public IP** — you will use it everywhere MikroTik and WireGuard connect (not the Cloudflare proxy).
+Write down your **Contabo public IPv4** — MikroTik RADIUS and WireGuard must reach this IP directly (not through Cloudflare’s HTTP proxy).
+
+Example: `203.0.113.50` → replace with yours everywhere you see `YOUR_CONTABO_IP`.
 
 ---
 
-## Part 2 — Cloudflare (domain + DNS)
+## Part 2 — Avoid conflicts with an existing `/opt` deployment
 
-### 2.1 Add the site
+If you already run another project under `/opt`, **do not deploy this stack there**. This guide uses `/srv/infora-billing` instead.
+
+Even in a separate folder, Docker **ports and container names** can still conflict. This stack uses:
+
+| Resource | Value |
+|----------|--------|
+| Host ports | `80`, `443`, `1812/udp`, `1813/udp`, `51820/udp`, `51821/udp` |
+| Container names | `infora_web`, `infora_flask`, `infora_postgres`, `infora_freeradius`, `infora_wireguard`, `infora_openldap` |
+
+**Before starting the new stack**, on the VPS:
+
+```bash
+# See what is listening on required ports
+ss -tulpn | grep -E ':80 |:443 |:1812 |:1813 |:51820 |:51821 '
+
+# List running containers that might conflict
+docker ps --format 'table {{.Names}}\t{{.Ports}}\t{{.Status}}'
+```
+
+If the old `/opt` project binds the same ports or uses the same container names, **stop that stack first** (from its own directory):
+
+```bash
+cd /opt/<old-project>
+docker compose down
+```
+
+Leave the old files in `/opt`; only stop the containers. The new billing stack will run entirely from `/srv/infora-billing`.
+
+---
+
+## Part 3 — Cloudflare (domain + DNS)
+
+### 3.1 Add the site
 
 1. Log in at https://dash.cloudflare.com
 2. **Add a site** → enter `ruirufactorymabati.com`
-3. Choose the Free plan
+3. Choose the **Free** plan
 4. Cloudflare shows two nameservers (e.g. `ada.ns.cloudflare.com`)
-5. At your **domain registrar**, replace the old nameservers with Cloudflare’s
-6. Wait until Cloudflare shows the site as **Active** (can take up to 24 hours, often minutes)
+5. At your **domain registrar**, replace old nameservers with Cloudflare’s
+6. Wait until Cloudflare shows the site as **Active** (often minutes, up to 24 h)
 
-### 2.2 Remove old website records
+### 3.2 Remove old website records
 
 If the domain pointed to another host:
 
 1. Cloudflare → **DNS** → **Records**
-2. Delete old **A**, **AAAA**, and **CNAME** records for `@`, `www`, or anything pointing to the old server
+2. Delete old **A**, **AAAA**, and **CNAME** for `@`, `www`, or anything pointing to the old server
 3. **Caching** → **Configuration** → **Purge Everything** (optional, after cutover)
 
-### 2.3 Create DNS records
+### 3.3 Create DNS records
 
 Replace `YOUR_CONTABO_IP` with your VPS IPv4.
 
-| Type | Name   | Content           | Proxy status   | Why |
-|------|--------|-------------------|----------------|-----|
-| A    | `@`    | YOUR_CONTABO_IP   | **Proxied** (orange cloud) | Admin UI, API, captive portal |
-| A    | `www`  | YOUR_CONTABO_IP   | **Proxied**    | Same as apex |
-| A    | `wg`   | YOUR_CONTABO_IP   | **DNS only** (grey cloud) | WireGuard — UDP cannot use HTTP proxy |
-| A    | `radius` | YOUR_CONTABO_IP | **DNS only**   | Optional label for MikroTik documentation |
+| Type | Name | Content | Proxy | Why |
+|------|------|---------|-------|-----|
+| A | `@` | YOUR_CONTABO_IP | **Proxied** (orange) | Admin UI, API, captive portal |
+| A | `www` | YOUR_CONTABO_IP | **Proxied** | Same as apex |
+| A | `wg` | YOUR_CONTABO_IP | **DNS only** (grey) | WireGuard — UDP cannot use HTTP proxy |
+| A | `radius` | YOUR_CONTABO_IP | **DNS only** | Optional label for MikroTik docs |
 
-**Rule:** Orange cloud = web only. Grey cloud or raw IP = RADIUS and WireGuard.
+**Rule:** Orange cloud = web (HTTP/HTTPS) only. Grey cloud or raw IP = RADIUS and WireGuard.
 
-### 2.4 SSL/TLS (pick one)
+### 3.4 SSL/TLS mode (choose one now)
 
-**Option A — Flexible (fastest, no cert on VPS)**
+| Mode | When to use | Cert on VPS? |
+|------|-------------|--------------|
+| **Flexible** (Part 4A) | Fastest first deploy | No |
+| **Full (strict)** (Part 4B) | Recommended long-term | Yes — Cloudflare Origin Certificate |
 
-1. Cloudflare → **SSL/TLS** → Overview → **Flexible**
-2. **SSL/TLS** → **Edge Certificates** → turn on **Always Use HTTPS**
-
-Visitors see HTTPS. Your VPS only needs port **80** open for Nginx.
-
-**Option B — Full (strict) (recommended long-term)**
-
-1. Cloudflare → **SSL/TLS** → **Origin Server** → **Create Certificate**
-2. Hostnames: `ruirufactorymabati.com`, `*.ruirufactorymabati.com`
-3. Save the certificate as `origin.pem` and private key as `origin.key`
-4. On the VPS, place them in:
-   - `certs/nginx/origin.pem`
-   - `certs/nginx/origin.key`
-5. Edit `config/nginx/conf.d/billing.conf` — uncomment the entire `listen 443 ssl` server block (lines 21–30)
-6. Cloudflare → **SSL/TLS** → Overview → **Full (strict)**
-7. After deploy, rebuild only the web container (see Part 5.4)
+You can start with Flexible and switch to Full (strict) later using Part 4B.
 
 ---
 
-## Part 3 — VPS preparation (Contabo)
+## Part 4 — VPS preparation
 
-### 3.1 SSH into the VPS
+### 4.1 SSH into the VPS
 
 ```bash
 ssh root@YOUR_CONTABO_IP
 ```
 
-### 3.2 Install Docker
+### 4.2 Confirm Docker (already installed)
+
+Docker is expected to be on the server. Verify:
+
+```bash
+docker --version
+docker compose version
+```
+
+If `docker compose` is missing but Docker works:
+
+```bash
+apt update
+apt install -y docker-compose-v2 git
+```
+
+Only if Docker is **not** installed at all:
 
 ```bash
 apt update
@@ -90,26 +140,46 @@ systemctl enable docker
 systemctl start docker
 ```
 
-(Optional) Allow your user to run Docker without sudo:
+(Optional) Run Docker without sudo:
 
 ```bash
 usermod -aG docker YOUR_USERNAME
 # log out and SSH back in
 ```
 
-### 3.3 Clone the project
+### 4.3 Create deploy directory and clone the project
 
 ```bash
-mkdir -p /opt/infora-billing
-cd /opt/infora-billing
+export DEPLOY_DIR=/srv/infora-billing
+mkdir -p "$DEPLOY_DIR"
+cd "$DEPLOY_DIR"
 git clone <YOUR_REPO_URL> .
 ```
 
-Or upload the project with `scp` / SFTP into `/opt/infora-billing`.
+Or upload from your machine (run on your **local** PC):
 
-### 3.4 Open firewall ports
+```bash
+rsync -avz --exclude node_modules --exclude .git \
+  /path/to/Infora-wifi-billing/ root@YOUR_CONTABO_IP:/srv/infora-billing/
+```
 
-**On the VPS (UFW example):**
+Confirm layout:
+
+```bash
+cd /srv/infora-billing
+ls docker-compose.yml docker-compose.prod.yml config/nginx/conf.d/billing.conf
+```
+
+### 4.4 Open firewall ports
+
+**On the VPS** — either run the script:
+
+```bash
+cd /srv/infora-billing
+sudo ./scripts/setup-firewall.sh
+```
+
+Or configure UFW manually:
 
 ```bash
 ufw allow 22/tcp
@@ -123,57 +193,57 @@ ufw enable
 ufw status
 ```
 
-**In Contabo control panel:** if there is a separate VPS firewall, allow the same ports there too.
+**In the Contabo control panel:** if the VPS has a separate firewall, allow the same ports there too.
 
-| Port  | Protocol | Service |
-|-------|----------|---------|
-| 22    | TCP      | SSH |
-| 80    | TCP      | Nginx (Cloudflare → origin) |
-| 443   | TCP      | Nginx HTTPS (if using Full strict) |
-| 1812  | UDP      | RADIUS authentication |
-| 1813  | UDP      | RADIUS accounting |
-| 51820 | UDP      | Customer WireGuard VPN |
-| 51821 | UDP      | Management WireGuard (MikroTik tunnel) |
+| Port | Protocol | Service |
+|------|----------|---------|
+| 22 | TCP | SSH |
+| 80 | TCP | Nginx (Cloudflare → origin) |
+| 443 | TCP | Nginx HTTPS (Full strict) |
+| 1812 | UDP | RADIUS authentication |
+| 1813 | UDP | RADIUS accounting |
+| 51820 | UDP | Customer WireGuard VPN |
+| 51821 | UDP | Management WireGuard (MikroTik tunnel) |
 
 Do **not** expose PostgreSQL (5432) to the public internet.
 
 ---
 
-## Part 4 — Environment file (`.env`)
+## Part 5 — Environment file (`.env`)
 
-### 4.1 Create `.env`
+### 5.1 Create `.env`
 
 ```bash
-cd /opt/infora-billing
+cd /srv/infora-billing
 cp config/deployment/production.env.example .env
 nano .env
 ```
 
-### 4.2 Generate secrets
+### 5.2 Generate secrets
 
 On the VPS:
 
 ```bash
-openssl rand -hex 32    # use for SECRET_KEY
-openssl rand -hex 32    # use for JWT_SECRET_KEY
-openssl rand -hex 32    # use for ENCRYPTION_KEY
-openssl rand -hex 32    # use for RADIUS_SECRET
-openssl rand -hex 24    # use for POSTGRES_PASSWORD
+openssl rand -hex 32    # SECRET_KEY
+openssl rand -hex 32    # JWT_SECRET_KEY
+openssl rand -hex 32    # ENCRYPTION_KEY
+openssl rand -hex 32    # RADIUS_SECRET
+openssl rand -hex 24    # POSTGRES_PASSWORD
 ```
 
-### 4.3 Fill in `.env` (example)
+### 5.3 Fill in `.env`
 
-Replace every placeholder with real values. `POSTGRES_PASSWORD` in `DATABASE_URL` must match `POSTGRES_PASSWORD`.
+Replace every placeholder. `POSTGRES_PASSWORD` inside `DATABASE_URL` must match `POSTGRES_PASSWORD`.
 
 ```bash
-CONTABO_PUBLIC_IP=203.0.113.50
+CONTABO_PUBLIC_IP=YOUR_CONTABO_IP
 
 APP_DOMAIN=ruirufactorymabati.com
 VITE_API_BASE_URL=https://ruirufactorymabati.com
 CORS_ORIGINS=https://ruirufactorymabati.com,https://www.ruirufactorymabati.com
 
-PUBLIC_SERVER_HOST=203.0.113.50
-FREERADIUS_HOST=203.0.113.50
+PUBLIC_SERVER_HOST=YOUR_CONTABO_IP
+FREERADIUS_HOST=YOUR_CONTABO_IP
 WIREGUARD_MGMT_ENDPOINT=wg.ruirufactorymabati.com
 WIREGUARD_MGMT_PORT=51821
 
@@ -189,7 +259,7 @@ FLASK_ENV=production
 WIREGUARD_CONFIG_DIR=/app/wireguard_configs
 WIREGUARD_MIKROTIK_AUTO_PUSH=true
 
-VITE_RADIUS_SERVER=203.0.113.50
+VITE_RADIUS_SERVER=YOUR_CONTABO_IP
 
 MPESA_ENVIRONMENT=production
 MPESA_CALLBACK_URL=https://ruirufactorymabati.com/api/payments/mpesa/callback
@@ -199,11 +269,163 @@ Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X` in nano).
 
 ---
 
-## Part 5 — Build and start Docker
+## Part 6 — SSL certificates (Cloudflare)
 
-All commands from `/opt/infora-billing`.
+Skip to **Part 7** if you chose **Flexible** SSL (Part 4A below).  
+Complete this part **before** the first `docker compose build` if you want **Full (strict)** from day one.
 
-### 5.1 Build images
+### 6A — Option A: Flexible SSL (no cert on VPS)
+
+Do this in Cloudflare only — no files on the server.
+
+1. Cloudflare → **SSL/TLS** → **Overview** → select **Flexible**
+2. **SSL/TLS** → **Edge Certificates** → enable **Always Use HTTPS**
+3. Deploy the stack (Part 7). Nginx only needs port **80** on the VPS.
+
+Visitors see HTTPS; Cloudflare talks to your origin over HTTP on port 80.
+
+### 6B — Option B: Full (strict) with Origin Certificate (recommended)
+
+End-to-end encryption between Cloudflare and your VPS.
+
+#### Step 1 — Create the origin certificate in Cloudflare
+
+1. Cloudflare → select `ruirufactorymabati.com`
+2. **SSL/TLS** → **Origin Server**
+3. **Create Certificate**
+4. Let Cloudflare generate a private key and CSR
+5. Hostnames (defaults are fine):
+   - `ruirufactorymabati.com`
+   - `*.ruirufactorymabati.com`
+6. Certificate validity: **15 years**
+7. Click **Create**
+8. Copy **Origin Certificate** (PEM) — you will paste this into `origin.pem`
+9. Copy **Private Key** (PEM) — you will paste this into `origin.key`
+10. Click **OK**
+
+Keep the Cloudflare tab open until both files are saved on the VPS.
+
+#### Step 2 — Place certificate files on the VPS
+
+On the VPS:
+
+```bash
+cd /srv/infora-billing
+mkdir -p certs/nginx
+chmod 755 certs/nginx
+```
+
+**Origin certificate:**
+
+```bash
+nano certs/nginx/origin.pem
+```
+
+Paste the full **Origin Certificate** from Cloudflare, including lines:
+
+```
+-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+```
+
+Save and exit.
+
+**Private key:**
+
+```bash
+nano certs/nginx/origin.key
+```
+
+Paste the full **Private Key** from Cloudflare, including lines:
+
+```
+-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----
+```
+
+Save and exit.
+
+Lock down the key:
+
+```bash
+chmod 600 certs/nginx/origin.key
+chmod 644 certs/nginx/origin.pem
+ls -la certs/nginx/
+```
+
+Expected:
+
+```
+-rw-r--r-- 1 root root  ... origin.pem
+-rw------- 1 root root  ... origin.key
+-rw-r--r-- 1 root root  ... README.md
+```
+
+**Alternative — upload from your laptop:**
+
+```bash
+scp origin.pem origin.key root@YOUR_CONTABO_IP:/srv/infora-billing/certs/nginx/
+ssh root@YOUR_CONTABO_IP 'chmod 600 /srv/infora-billing/certs/nginx/origin.key'
+```
+
+#### Step 3 — Enable HTTPS in Nginx config
+
+On the VPS:
+
+```bash
+nano /srv/infora-billing/config/nginx/conf.d/billing.conf
+```
+
+Uncomment the entire HTTPS `server { ... }` block (lines 21–30). It should look like:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name ruirufactorymabati.com www.ruirufactorymabati.com;
+
+    ssl_certificate     /etc/nginx/ssl/origin.pem;
+    ssl_certificate_key /etc/nginx/ssl/origin.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    include /etc/nginx/snippets/billing-locations.conf;
+}
+```
+
+Save and exit. The HTTP server on port 80 stays enabled (Cloudflare and health checks use it).
+
+`docker-compose.prod.yml` already mounts `./certs/nginx` → `/etc/nginx/ssl` inside the web container.
+
+#### Step 4 — Set Cloudflare to Full (strict)
+
+1. Cloudflare → **SSL/TLS** → **Overview** → **Full (strict)**
+2. **SSL/TLS** → **Edge Certificates** → enable **Always Use HTTPS**
+
+#### Step 5 — Rebuild web after cert or nginx change
+
+After placing certs or editing `billing.conf`, rebuild **only** the web image (Part 7.4).
+
+#### Verify certs inside the container (after deploy)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec web \
+  ls -la /etc/nginx/ssl/
+```
+
+You should see `origin.pem` and `origin.key`.
+
+---
+
+## Part 7 — Build and start Docker
+
+All commands from `/srv/infora-billing`:
+
+```bash
+cd /srv/infora-billing
+```
+
+### 7.1 Build images
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
@@ -211,52 +433,75 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 
 This builds:
 
-- **web** — React frontend + Nginx (`config/nginx/Dockerfile`)
-- **flask_app** — API with gunicorn
-- **freeradius** — RADIUS server
-- Uses existing images for postgres, wireguard, openldap
+| Service | Image |
+|---------|--------|
+| **web** | React frontend + Nginx (`config/nginx/Dockerfile`) |
+| **flask_app** | API with gunicorn |
+| **freeradius** | RADIUS server |
+
+Uses upstream images for postgres, wireguard, openldap.
 
 First build can take several minutes.
 
-### 5.2 Start all services
+### 7.2 Start all services
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-### 5.3 Check containers are running
+### 7.3 Check containers are running
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
 
-You should see `infora_web`, `infora_flask`, `infora_postgres`, `infora_freeradius`, `infora_wireguard` (and openldap) with state **running**.
+Expected state **running**:
 
-### 5.4 Rebuild web only (after SSL cert or frontend env change)
+- `infora_web`
+- `infora_flask`
+- `infora_postgres`
+- `infora_freeradius`
+- `infora_wireguard`
+- `infora_openldap`
+
+### 7.4 Rebuild web only (after SSL cert or frontend env change)
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build web
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d web
 ```
 
-### 5.5 View logs if something fails
+Rebuild **web** whenever you change `VITE_*` variables in `.env` or nginx SSL config.
+
+### 7.5 View logs if something fails
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs flask_app
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs web
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs freeradius
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs wireguard
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs postgres
 ```
 
 Flask on first start runs `flask db upgrade` and `flask initdb` automatically.
 
+### 7.6 Optional: use the deploy script
+
+Same steps as 7.1–7.2 plus RADIUS client sync:
+
+```bash
+cd /srv/infora-billing
+./scripts/deploy-contabo.sh
+```
+
 ---
 
-## Part 6 — FreeRADIUS NAS clients (MikroTik)
+## Part 8 — FreeRADIUS NAS clients (MikroTik)
 
 After you register MikroTik devices in the admin UI, sync `clients.conf`:
 
 ```bash
+cd /srv/infora-billing
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec flask_app flask generate-radius-clients
 ```
 
@@ -266,13 +511,13 @@ Restart FreeRADIUS so it reloads the file (mounted from `./config/freeradius/cli
 docker compose -f docker-compose.yml -f docker-compose.prod.yml restart freeradius
 ```
 
-Repeat these two commands whenever you add a router or regenerate an ISP RADIUS secret.
+Repeat whenever you add a router or regenerate an ISP RADIUS secret.
 
 ---
 
-## Part 7 — Verify the web stack
+## Part 9 — Verify the deployment
 
-### 7.1 From the VPS
+### 9.1 From the VPS (localhost)
 
 ```bash
 curl -s http://localhost/api/test
@@ -281,10 +526,16 @@ curl -s http://localhost/api/test
 Expected: `{"message":"Backend is working!"}`
 
 ```bash
-curl -s http://localhost/api/health/deployment | head -c 500
+curl -s http://localhost/api/health/deployment | python3 -m json.tool
 ```
 
-### 7.2 From your browser
+If using Full (strict) and HTTPS is enabled:
+
+```bash
+curl -sk https://localhost/api/test
+```
+
+### 9.2 From your browser
 
 | URL | Expected |
 |-----|----------|
@@ -292,16 +543,29 @@ curl -s http://localhost/api/health/deployment | head -c 500
 | https://ruirufactorymabati.com/portal | Captive portal |
 | https://ruirufactorymabati.com/api/health/deployment | JSON deployment checklist |
 
-If the site does not load: check Cloudflare DNS (proxied A record), port 80 on VPS/Contabo firewall, and `docker compose ... logs web`.
+### 9.3 Troubleshoot “site not loading”
+
+1. Cloudflare DNS: `@` and `www` A records → YOUR_CONTABO_IP, **proxied**
+2. VPS firewall: ports 80 (and 443 if Full strict) open
+3. Contabo panel firewall: same ports
+4. No other stack on the host using port 80/443 (`ss -tulpn | grep ':80 '`)
+5. `docker compose ... ps` — `infora_web` must be **running**
+6. `docker compose ... logs web` — no nginx SSL errors
+
+| Cloudflare error | Likely cause |
+|------------------|--------------|
+| 521 | Nginx not running or port 80 closed |
+| 522 | VPS unreachable / firewall |
+| 525 / SSL errors | Full (strict) but missing or wrong `origin.pem` / `origin.key` |
 
 ---
 
-## Part 8 — First-time admin setup
+## Part 10 — First-time admin setup
 
-1. Open https://ruirufactorymabati.com/signup or use seeded admin (if `flask initdb` created one — check logs)
-2. Create an **ISP** — note that `radius_secret` is auto-generated
+1. Open https://ruirufactorymabati.com/signup or use seeded admin (check `flask_app` logs after `flask initdb`)
+2. Create an **ISP** — note the auto-generated `radius_secret`
 3. **Devices → MikroTik** — register each router (NAS IP = what FreeRADIUS sees)
-4. Run Part 6 again to update `clients.conf`
+4. Run Part 8 again to update `clients.conf`
 5. Download **RADIUS .rsc** from the device row (never copy placeholder commands from the UI)
 6. **Clients** — create an active PPPoE customer with a plan → save the one-time RADIUS password
 
@@ -313,67 +577,65 @@ curl "https://ruirufactorymabati.com/api/health/radius-user?email=customer@examp
 
 ---
 
-## Part 9 — MikroTik (manual)
+## Part 11 — MikroTik (manual)
 
-### 9.1 Direct RADIUS (router can reach Contabo IP on UDP 1812)
+### 11.1 Direct RADIUS (router reaches Contabo IP on UDP 1812)
 
 1. Admin UI → Devices → MikroTik → **Download RADIUS .rsc**
 2. Upload to MikroTik: Winbox → Files → upload → Terminal: `/import file-name=infora-radius-....rsc`
-3. RADIUS server in the file should be your **Contabo IP** and **ISP radius_secret**
+3. RADIUS server in the file = your **Contabo IP** and **ISP radius_secret**
 
-### 9.2 Router behind NAT (management WireGuard tunnel)
+### 11.2 Router behind NAT (management WireGuard tunnel)
 
 1. When adding the device, enable **Management WireGuard tunnel**
 2. Download **management tunnel .rsc** first → import on MikroTik
 3. Download **RADIUS .rsc** → import second
 4. RADIUS server in script = `10.250.0.1` (tunnel IP on billing server)
-5. WireGuard peer endpoint on router = `wg.ruirufactorymabati.com:51821` (DNS only)
+5. WireGuard peer endpoint on router = `wg.ruirufactorymabati.com:51821` (DNS only, grey cloud)
 
-### 9.3 On the router (API for monitoring)
-
-Enable API so the billing server can sync stats (from Winbox terminal):
+### 11.3 On the router (API for monitoring)
 
 ```
 /ip service enable api
 /ip service set api port=8728 disabled=no
 ```
 
-### 9.4 Test PPPoE
+### 11.4 Test PPPoE
 
 Create a PPPoE secret on MikroTik with the customer email (lowercase) and password from the admin UI. Connect a client — session should authenticate via RADIUS.
 
 ---
 
-## Part 10 — WireGuard on the server
+## Part 12 — WireGuard on the server
 
 The `wireguard` container shares a volume with Flask:
 
-- Customer VPN configs: `/config/isp_*/server_*/wg0.conf`
-- Management tunnel: `/config/mgmt/wg-mgmt.conf`
+| Path in container | Purpose |
+|-------------------|---------|
+| `/config/isp_*/server_*/wg0.conf` | Customer VPN |
+| `/config/mgmt/wg-mgmt.conf` | Management tunnel (MikroTik) |
 
-UDP **51820** — customer VPN  
-UDP **51821** — management tunnel (MikroTik)
+| Port | Purpose |
+|------|---------|
+| UDP 51820 | Customer VPN |
+| UDP 51821 | Management tunnel |
 
-After provisioning peers in the admin UI, restart WireGuard if needed:
+After provisioning peers in the admin UI:
 
 ```bash
+cd /srv/infora-billing
 docker compose -f docker-compose.yml -f docker-compose.prod.yml restart wireguard
-```
-
-Check logs:
-
-```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs wireguard
 ```
 
 ---
 
-## Part 11 — Updates (manual)
+## Part 13 — Updates (manual)
 
 When you pull new code:
 
 ```bash
-cd /opt/infora-billing
+cd /srv/infora-billing
 git pull
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
@@ -384,22 +646,38 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec flask_app f
 docker compose -f docker-compose.yml -f docker-compose.prod.yml restart freeradius wireguard
 ```
 
+If nginx or SSL config changed, also rebuild web (Part 7.4).
+
 ---
 
-## Part 12 — Troubleshooting
+## Part 14 — Troubleshooting
 
 | Problem | What to check |
 |---------|----------------|
 | Site 522/521 on Cloudflare | VPS down, port 80 closed, or `infora_web` not running |
-| Login works locally but not via domain | `CORS_ORIGINS` in `.env` must include `https://ruirufactorymabati.com` — rebuild **web** and restart **flask_app** |
+| SSL 525 / origin cert errors | `origin.pem` / `origin.key` in `certs/nginx/`, HTTPS block uncommented in `billing.conf`, rebuild **web** |
+| Login works locally but not via domain | `CORS_ORIGINS` in `.env` must include `https://ruirufactorymabati.com` — rebuild **web**, restart **flask_app** |
+| Port already in use | Old `/opt` stack still running — `docker compose down` in that project |
+| Container name already in use | Stop old `infora_*` containers: `docker rm -f infora_web ...` or stop the other compose project |
 | PPPoE Access-Reject | `clients.conf` has router IP + correct secret; `radcheck` row exists; UDP 1812 open |
 | Wrong RADIUS secret on MikroTik | Re-download `.rsc` from API; ISP must have `radius_secret` |
 | WireGuard won't connect | `wg` DNS record grey-cloud; UDP 51820/51821 open; endpoint = `wg.ruirufactorymabati.com` |
-| M-Pesa callback fails | `MPESA_CALLBACK_URL` must be `https://ruirufactorymabati.com/api/payments/mpesa/callback` |
+| M-Pesa callback fails | `MPESA_CALLBACK_URL` = `https://ruirufactorymabati.com/api/payments/mpesa/callback` |
 
 ---
 
-## Quick reference — containers
+## Quick reference
+
+**Deploy path:** `/srv/infora-billing` (not `/opt`)
+
+**Compose command** (use for every docker operation):
+
+```bash
+cd /srv/infora-billing
+docker compose -f docker-compose.yml -f docker-compose.prod.yml <command>
+```
+
+**Containers:**
 
 | Container | Role |
 |-----------|------|
@@ -408,9 +686,23 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml restart freeradi
 | `infora_postgres` | Database (internal only in prod) |
 | `infora_freeradius` | RADIUS 1812/1813 UDP |
 | `infora_wireguard` | WireGuard 51820/51821 UDP |
+| `infora_openldap` | LDAP (internal) |
 
-Compose files used together:
+**Cert files (Full strict):**
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml <command>
 ```
+/srv/infora-billing/certs/nginx/origin.pem
+/srv/infora-billing/certs/nginx/origin.key
+```
+
+**Deploy checklist (copy/paste order):**
+
+1. [ ] Cloudflare DNS records (Part 3)
+2. [ ] Stop conflicting `/opt` containers if needed (Part 2)
+3. [ ] Clone to `/srv/infora-billing` (Part 4.3)
+4. [ ] Firewall ports (Part 4.4)
+5. [ ] Create `.env` with secrets (Part 5)
+6. [ ] SSL: Flexible **or** origin certs + nginx HTTPS (Part 6)
+7. [ ] `docker compose ... build && up -d` (Part 7)
+8. [ ] Verify health URLs (Part 9)
+9. [ ] Admin + ISP + MikroTik (Parts 10–11)
