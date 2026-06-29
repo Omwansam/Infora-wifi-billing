@@ -25,6 +25,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: infora_flask
+    cap_add:
+      - NET_ADMIN
     environment:
       FLASK_APP: server/app.py
       FLASK_ENV: development
@@ -127,6 +129,7 @@ services:
       - "51821:51821/udp"
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv4.ip_forward=1
     networks:
       - infora_network
     depends_on:

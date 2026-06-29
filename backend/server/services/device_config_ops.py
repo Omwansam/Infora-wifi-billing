@@ -72,28 +72,46 @@ def _detect_router_info(client):
 def get_provision_status(device):
     """Return whether the router fetched its script and is reachable.
 
-    When reachable, also auto-detects the router model/version so the operator
-    never has to type them in (they are read straight off the device).
+    The wizard advances to Step 3 when ``online`` is True.  We set ``online``
+    when **either** the router is SSH-reachable **or** the provisioning script
+    was fetched recently (within 10 minutes).  The second condition handles the
+    common case where the WG tunnel is up from the router's side but the Docker
+    routing from Flask → WireGuard container isn't established yet.
+
+    When SSH-reachable, also auto-detects the router model/version.
     """
+    from datetime import datetime, timedelta
+
     fetched = bool(device.provision_fetch_count and device.provision_fetch_count > 0)
     host = connection_host(device)
     reachable = False
     error = None
     detected = {}
-    try:
-        with MikroTikClient(_ssh_config(device, timeout=5)) as client:
-            reachable = bool(client.connect())
-            if reachable:
-                detected = _detect_router_info(client)
-    except Exception as exc:  # connection refused / timeout / auth — all "not reachable yet"
-        error = str(exc)
+
+    if fetched:
+        try:
+            with MikroTikClient(_ssh_config(device, timeout=5)) as client:
+                reachable = bool(client.connect())
+                if reachable:
+                    detected = _detect_router_info(client)
+        except Exception as exc:
+            error = str(exc)
+
+    # Consider the device "online" if script was fetched recently even when
+    # SSH isn't reachable (tunnel routing may still be converging).
+    recently_fetched = (
+        fetched
+        and device.provision_last_fetched_at
+        and (datetime.now() - device.provision_last_fetched_at) < timedelta(minutes=10)
+    )
+    online = reachable or recently_fetched
 
     return {
         'fetched': fetched,
         'fetch_count': device.provision_fetch_count or 0,
         'last_fetched_at': device.provision_last_fetched_at.isoformat() if device.provision_last_fetched_at else None,
         'reachable': reachable,
-        'online': reachable,
+        'online': online,
         'host': host,
         'management_wg_ip': device.management_wg_ip,
         'detected': detected,
