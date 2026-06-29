@@ -5,6 +5,7 @@ Single source of truth used by both the authenticated download route
 (/api/provision/<token>/script).
 """
 import ipaddress
+import socket
 
 from flask import current_app
 
@@ -31,6 +32,31 @@ def resolve_provision_base_url():
     return base.rstrip('/')
 
 
+def _is_ip_address(value):
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_endpoint_ip(endpoint):
+    """Return a literal IP for the WireGuard endpoint.
+
+    MikroTik routers frequently have no working DNS resolver, so a hostname
+    endpoint (e.g. wg.example.com) never resolves on the router and the tunnel
+    never initiates a handshake. We resolve the hostname here on the server and
+    embed the literal IP in the script so the router needs no DNS at all.
+    """
+    endpoint = (endpoint or '').strip()
+    if not endpoint or _is_ip_address(endpoint):
+        return endpoint
+    try:
+        return socket.gethostbyname(endpoint)
+    except OSError:
+        return endpoint
+
+
 def _build_wireguard_tunnel_lines(device):
     """RouterOS commands to set up the management WireGuard tunnel."""
     if not device.management_wg_enabled or not device.management_wg_ip:
@@ -45,7 +71,7 @@ def _build_wireguard_tunnel_lines(device):
     prefix = network.prefixlen
     tunnel_ip = device.management_wg_ip.split('/')[0]
     server_ip = state['server_ip'].split('/')[0]
-    endpoint = (
+    endpoint = _resolve_endpoint_ip(
         current_app.config.get('WIREGUARD_MGMT_ENDPOINT')
         or current_app.config.get('PUBLIC_SERVER_HOST')
         or current_app.config.get('FREERADIUS_HOST', '')
