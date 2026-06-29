@@ -54,7 +54,7 @@ def build_radius_script(device, snmp_community='infora'):
         '',
         '# --- 1. RADIUS client (idempotent) ---',
         ':if ([:len [/radius find comment="infora-billing"]] > 0) do={ /radius remove [find comment="infora-billing"] }',
-        f'/radius add address="{radius_host}" secret="{radius_secret}" service=ppp,hotspot,dhcp timeout=3000 comment="infora-billing"',
+        f'/radius add address="{radius_host}" secret="{radius_secret}" service=ppp,hotspot,dhcp timeout=3s comment="infora-billing"',
         '/radius incoming set accept=yes',
         '',
         '# --- 2. PPPoE AAA via RADIUS ---',

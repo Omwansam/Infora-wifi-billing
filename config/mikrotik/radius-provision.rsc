@@ -9,7 +9,7 @@
 
 :local RADIUS_SERVER "10.0.0.10"
 :local RADIUS_SECRET "radius_secret_key"
-:local RADIUS_TIMEOUT 3000
+:local RADIUS_TIMEOUT 3s
 :local SNMP_COMMUNITY "infora"
 :local ROUTER_TZ "Africa/Nairobi"
 

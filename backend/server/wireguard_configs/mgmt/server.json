@@ -1,0 +1,7 @@
+{
+  "private_key": "ALmGCVdv4yNz3a+ggmBQhG1HBUklmUV3ft3J0fNXfE0=",
+  "public_key": "BlCZY6cjZTn6CNzFErIsEQKEtzY2cn7UaY7Bl2duAjA=",
+  "subnet": "10.250.0.0/24",
+  "server_ip": "10.250.0.1",
+  "port": 51821
+}
