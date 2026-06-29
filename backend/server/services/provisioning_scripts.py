@@ -4,11 +4,17 @@ Single source of truth used by both the authenticated download route
 (/api/devices/<id>/radius-script) and the public token route
 (/api/provision/<token>/script).
 """
+import ipaddress
+
 from flask import current_app
 
 from models import ISP
 from services.encryption import decrypt_value
-from services.wireguard_management import resolve_radius_host_for_device
+from services.wireguard_management import (
+    ensure_management_server,
+    get_device_management_private_key,
+    resolve_radius_host_for_device,
+)
 
 
 def resolve_provision_base_url():
@@ -25,14 +31,55 @@ def resolve_provision_base_url():
     return base.rstrip('/')
 
 
-def build_radius_script(device, snmp_community='infora'):
-    """Hardened, idempotent RouterOS RADIUS/PPPoE provisioning script.
+def _build_wireguard_tunnel_lines(device):
+    """RouterOS commands to set up the management WireGuard tunnel."""
+    if not device.management_wg_enabled or not device.management_wg_ip:
+        return []
 
-    Adds the lessons learned from commercial systems:
-      - connectivity pre-check (abort if no internet)
-      - FastTrack removal (otherwise queues + RADIUS accounting are bypassed)
-      - idempotent NAT/masquerade and RADIUS client (safe to re-run)
-      - SNMP enable + timezone for accurate monitoring/accounting
+    private_key = get_device_management_private_key(device)
+    if not private_key:
+        return []
+
+    state = ensure_management_server()
+    network = ipaddress.ip_network(state['subnet'], strict=False)
+    prefix = network.prefixlen
+    tunnel_ip = device.management_wg_ip.split('/')[0]
+    server_ip = state['server_ip'].split('/')[0]
+    endpoint = (
+        current_app.config.get('WIREGUARD_MGMT_ENDPOINT')
+        or current_app.config.get('PUBLIC_SERVER_HOST')
+        or current_app.config.get('FREERADIUS_HOST', '')
+    )
+    port = state['port']
+
+    return [
+        '',
+        '# --- Management WireGuard tunnel (router → billing server) ---',
+        ':do { /interface wireguard remove [find name="wg-mgmt"] } on-error={}',
+        '/interface wireguard add name=wg-mgmt listen-port=51822 disabled=no comment="infora-mgmt-tunnel"',
+        f'/interface wireguard set wg-mgmt private-key="{private_key}"',
+        f':do {{ /ip address remove [find comment="infora-mgmt-tunnel"] }} on-error={{}}',
+        f'/ip address add address={tunnel_ip}/{prefix} interface=wg-mgmt comment="infora-mgmt-tunnel"',
+        '/interface wireguard peers remove [find interface=wg-mgmt]',
+        (
+            f'/interface wireguard peers add interface=wg-mgmt '
+            f'public-key="{state["public_key"]}" '
+            f'endpoint-address={endpoint} endpoint-port={port} '
+            f'allowed-address={server_ip}/32 persistent-keepalive=25 '
+            f'comment="infora-billing-mgmt"'
+        ),
+        f':do {{ /ip route remove [find comment="infora-radius-via-tunnel"] }} on-error={{}}',
+        f'/ip route add dst-address={server_ip}/32 gateway=wg-mgmt comment="infora-radius-via-tunnel"',
+        ':log info "Infora management WireGuard tunnel configured"',
+    ]
+
+
+def build_radius_script(device, snmp_community='infora'):
+    """Full RouterOS provisioning script: WG tunnel + RADIUS + management user.
+
+    When management_wg_enabled is set, the script includes the WireGuard tunnel
+    commands so the billing server can reach back to the router for service
+    configuration (Step 3 of the wizard).
     """
     isp = ISP.query.get(device.isp_id) if device.isp_id else None
     if not isp or not isp.radius_secret:
@@ -51,6 +98,12 @@ def build_radius_script(device, snmp_community='infora'):
         '    :log error "Infora: no internet connectivity, aborting"',
         '    :error "Infora provisioning aborted: no connectivity"',
         '}',
+    ]
+
+    # WireGuard management tunnel (must come before RADIUS so the route exists)
+    lines += _build_wireguard_tunnel_lines(device)
+
+    lines += [
         '',
         '# --- 1. RADIUS client (idempotent) ---',
         ':if ([:len [/radius find comment="infora-billing"]] > 0) do={ /radius remove [find comment="infora-billing"] }',
@@ -76,7 +129,7 @@ def build_radius_script(device, snmp_community='infora'):
         f':do {{ /system clock set time-zone-name={timezone} }} on-error={{}}',
     ]
 
-    # --- 7. Billing management user + remote access (so the server can push service config) ---
+    # --- 7. Billing management user + remote access ---
     mgmt_user = (device.username or '').strip()
     mgmt_pass = decrypt_value(device.password) if device.password else None
     if mgmt_user and mgmt_pass:
@@ -94,12 +147,6 @@ def build_radius_script(device, snmp_community='infora'):
         ':log info "Infora provisioning applied"',
         ':put "Infora provisioning completed successfully."',
     ]
-
-    if device.management_wg_enabled:
-        lines.insert(
-            2,
-            f'# Import management tunnel first: /api/devices/{device.id}/management-tunnel-script',
-        )
 
     return '\n'.join(lines) + '\n'
 
