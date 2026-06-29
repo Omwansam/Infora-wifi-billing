@@ -15,18 +15,28 @@ from services.encryption import decrypt_value
 
 
 def device_connection_config(device, connection_type=None):
-    conn_type = connection_type or device.connection_type or 'api'
+    # NAT routers are only reachable over the management WireGuard tunnel, and
+    # only via SSH (the public device_ip is unroutable from the server). Force
+    # SSH-over-tunnel for those so sync/stats work once the tunnel is up.
+    use_tunnel = bool(device.management_wg_enabled and device.management_wg_ip)
+    conn_type = 'ssh' if use_tunnel else (connection_type or device.connection_type or 'api')
     password = decrypt_value(device.password)
-    port = device.api_port if conn_type == 'api' else (device.ssh_port or 22)
+
+    if use_tunnel:
+        host = device.management_wg_ip.split('/')[0]
+        port = device.ssh_port or 22
+    else:
+        host = device.device_ip
+        port = device.api_port if conn_type == 'api' else (device.ssh_port or 22)
 
     return MikroTikConnectionConfig(
-        host=device.device_ip,
+        host=host,
         port=port,
         username=device.username,
         password=password,
         api_key=device.api_key,
         connection_type=ConnectionType.API if conn_type == 'api' else ConnectionType.SSH,
-        timeout=15,
+        timeout=6,
         verify_ssl=device.use_ssl if device.use_ssl is not None else True,
     )
 

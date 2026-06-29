@@ -30,6 +30,7 @@ from services.mikrotik_sync import (
     test_device_connection as mikrotik_test_connection,
     bulk_sync_devices,
 )
+from mikrotik_client import MikroTikAPIError, MikroTikSSHError
 from services.radius_clients_export import sync_radius_clients_conf
 from services.wireguard_management import (
     build_mikrotik_management_tunnel_script,
@@ -458,7 +459,23 @@ def sync_device(device_id):
             'device': serialize_device(device),
             'sync_details': details,
         }), 200
-        
+
+    except (MikroTikAPIError, MikroTikSSHError) as conn_err:
+        # Router unreachable is an expected operational state (e.g. tunnel not
+        # up yet) — report it as "offline" with 200 so the UI shows status
+        # instead of throwing on a 500.
+        db.session.rollback()
+        device = MikrotikDevice.query.get(device_id)
+        if device:
+            device.device_status = DeviceStatus.OFFLINE
+            db.session.commit()
+        return jsonify({
+            'message': 'Device is unreachable',
+            'reachable': False,
+            'device': serialize_device(device) if device else None,
+            'error': str(conn_err),
+        }), 200
+
     except Exception as e:
         db.session.rollback()
         device = MikrotikDevice.query.get(device_id)

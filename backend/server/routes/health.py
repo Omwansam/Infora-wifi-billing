@@ -1,6 +1,7 @@
 """Deployment and connectivity health checks for MikroTik + WireGuard."""
 import os
 import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -12,12 +13,21 @@ from services.rate_limit import rate_limit
 health_bp = Blueprint('health', __name__, url_prefix='/api/health')
 
 
-def _check_tcp(host, port, timeout=3):
+def _check_tcp(host, port, timeout=2):
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except OSError:
         return False
+
+
+def _probe_host_port(device):
+    """Pick the reachable host/port for a device: tunnel IP+SSH for NAT routers."""
+    if getattr(device, 'management_wg_enabled', False) and getattr(device, 'management_wg_ip', None):
+        return device.management_wg_ip.split('/')[0], (device.ssh_port or 22), 'ssh'
+    prefer = device.connection_type or 'api'
+    port = (device.api_port or 8728) if prefer == 'api' else (device.ssh_port or 22)
+    return device.device_ip, port, prefer
 
 
 def build_deployment_report():
@@ -51,26 +61,41 @@ def build_deployment_report():
     elif radius_host == 'freeradius':
         radius_reachable = _check_tcp('freeradius', 1812)
 
-    device_checks = []
+    # Build the device metadata in the main thread (DB access is not
+    # thread-safe), then probe TCP reachability concurrently with a short
+    # timeout so the health check stays responsive when routers are down.
+    isp_secret_map = {i.id: bool(i.radius_secret) for i in isps}
+    device_meta = []
     for device in devices:
-        api_port = device.api_port or 8728
-        ssh_port = device.ssh_port or 22
-        prefer = device.connection_type or 'api'
-        port = api_port if prefer == 'api' else ssh_port
-        reachable = _check_tcp(device.device_ip, port) if device.device_ip else False
-        isp = ISP.query.get(device.isp_id) if device.isp_id else None
-        device_checks.append({
+        host, port, prefer = _probe_host_port(device)
+        device_meta.append({
             'id': device.id,
             'name': device.device_name,
             'ip': device.device_ip,
+            'probe_host': host,
             'management_wg_enabled': bool(getattr(device, 'management_wg_enabled', False)),
             'management_wg_ip': getattr(device, 'management_wg_ip', None),
             'connection_type': prefer,
             'port': port,
-            'api_reachable': reachable,
-            'has_radius_secret': bool(isp and isp.radius_secret),
+            'has_radius_secret': isp_secret_map.get(device.isp_id, False),
             'status': device.device_status.value if device.device_status else 'unknown',
         })
+
+    def _probe_reachable(meta):
+        return meta['id'], (_check_tcp(meta['probe_host'], meta['port']) if meta['probe_host'] else False)
+
+    reachable_map = {}
+    if device_meta:
+        with ThreadPoolExecutor(max_workers=min(8, len(device_meta))) as pool:
+            futures = [pool.submit(_probe_reachable, m) for m in device_meta]
+            for fut in as_completed(futures):
+                dev_id, ok = fut.result()
+                reachable_map[dev_id] = ok
+
+    device_checks = []
+    for meta in device_meta:
+        meta['api_reachable'] = reachable_map.get(meta['id'], False)
+        device_checks.append(meta)
 
     server_checks = []
     for server in servers:
