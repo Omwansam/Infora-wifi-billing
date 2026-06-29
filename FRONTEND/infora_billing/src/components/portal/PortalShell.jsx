@@ -4,6 +4,7 @@ import { Home, Loader2, Mail, Phone, Router, Ticket, Wifi } from 'lucide-react';
 import portalService from '../../services/portalService';
 import { portalCompanyName, sanitizeBrandText } from '../../lib/brand';
 import { resolvePortalTheme } from '../../lib/portalThemes';
+import { accentForeground, buildAccentCssVars } from '../../lib/portalColor';
 import { PortalThemeProvider, portalClasses } from './PortalThemeContext';
 import { PortalBackground, PortalFadeIn } from './PortalUI';
 import PortalAnnouncements from './PortalAnnouncements';
@@ -63,6 +64,8 @@ export default function PortalShell({ children, activeTab = 'home' }) {
   const theme = resolvePortalTheme(themeKey);
   const isLight = theme.mode === 'light';
   const accent = config?.theme_color || '#1BA449';
+  const accentFg = accentForeground(accent);
+  const accentVars = useMemo(() => buildAccentCssVars(accent), [accent]);
   const cx = portalClasses(isLight);
   const navItems = useMemo(() => buildNavItems(config?.modules), [config?.modules]);
 
@@ -71,17 +74,16 @@ export default function PortalShell({ children, activeTab = 'home' }) {
   const portalTagline = sanitizeBrandText(config?.tagline, '');
   const supportEmail = sanitizeBrandText(config?.support_email || config?.email, '');
 
-  const themeValue = useMemo(() => ({ isLight, accent, theme: themeKey }), [isLight, accent, themeKey]);
-
-  const activeNavClass = isLight
-    ? 'bg-emerald-600 text-white shadow-sm'
-    : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20';
+  const themeValue = useMemo(
+    () => ({ isLight, accent, accentFg, theme: themeKey }),
+    [isLight, accent, accentFg, themeKey],
+  );
 
   return (
     <PortalThemeProvider value={themeValue}>
       <div
         className={`relative min-h-screen overflow-x-hidden ${theme.pageBg}`}
-        style={{ '--portal-accent': accent }}
+        style={accentVars}
       >
         {!isLight && <PortalBackground />}
 
@@ -98,8 +100,8 @@ export default function PortalShell({ children, activeTab = 'home' }) {
                   />
                 ) : (
                   <div
-                    className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-bold text-white"
-                    style={{ backgroundColor: accent }}
+                    className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-bold"
+                    style={{ backgroundColor: accent, color: accentFg }}
                   >
                     {(displayName || 'W')[0]}
                   </div>
@@ -117,7 +119,7 @@ export default function PortalShell({ children, activeTab = 'home' }) {
                   href={`tel:${config.support_phone || config.phone}`}
                   className={`hidden shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium sm:inline-flex ${
                     isLight
-                      ? 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                      ? 'border-slate-200 bg-white text-slate-700 hover:border-[color:var(--portal-accent)] hover:bg-[color:var(--portal-accent-softer)]'
                       : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
                   }`}
                 >
@@ -127,9 +129,13 @@ export default function PortalShell({ children, activeTab = 'home' }) {
               )}
             </div>
 
-            {/* Tab navigation — Reatech-style pills */}
+            {/* Tab navigation — accent-driven pills */}
             {!loading && !error && config && (
-              <nav className={`mt-4 inline-flex flex-wrap gap-1 rounded-xl p-1 ${isLight ? 'bg-slate-100' : 'bg-black/25 border border-white/10'}`}>
+              <nav
+                className={`mt-4 inline-flex flex-wrap gap-1 rounded-xl p-1 ${
+                  isLight ? 'bg-slate-100' : 'bg-black/25 border border-white/10'
+                }`}
+              >
                 {navItems.map((tab) => {
                   const Icon = tab.icon;
                   const active = activeTab === tab.id;
@@ -138,9 +144,13 @@ export default function PortalShell({ children, activeTab = 'home' }) {
                       key={tab.id}
                       to={`${tab.to}${query}`}
                       className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
-                        active ? activeNavClass : cx.navInactive
+                        active ? 'shadow-sm' : cx.navInactive
                       }`}
-                      style={active && isLight ? { backgroundColor: accent } : undefined}
+                      style={
+                        active
+                          ? { backgroundColor: accent, color: accentFg }
+                          : undefined
+                      }
                     >
                       <Icon className="h-4 w-4" />
                       {tab.label}
@@ -162,7 +172,11 @@ export default function PortalShell({ children, activeTab = 'home' }) {
 
           {!loading && error && (
             <PortalFadeIn>
-              <div className={`mx-auto max-w-lg rounded-2xl border p-8 text-center ${isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-400/25 bg-red-500/10 text-red-100'}`}>
+              <div
+                className={`mx-auto max-w-lg rounded-2xl border p-8 text-center ${
+                  isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-400/25 bg-red-500/10 text-red-100'
+                }`}
+              >
                 <p className="text-lg font-semibold">Portal unavailable</p>
                 <p className="mt-2 text-sm opacity-80">{error}</p>
               </div>
@@ -184,7 +198,11 @@ export default function PortalShell({ children, activeTab = 'home' }) {
 
         {/* Mobile bottom nav */}
         {!loading && !error && config && (
-          <nav className={`fixed bottom-0 left-0 right-0 z-50 border-t md:hidden ${isLight ? 'border-slate-200 bg-white/95' : 'border-white/10 bg-slate-950/95'} backdrop-blur-xl`}>
+          <nav
+            className={`fixed bottom-0 left-0 right-0 z-50 border-t md:hidden ${
+              isLight ? 'border-slate-200 bg-white/95' : 'border-white/10 bg-slate-950/95'
+            } backdrop-blur-xl`}
+          >
             <div className="mx-auto flex max-w-lg justify-around px-1 py-1.5">
               {navItems.map((tab) => {
                 const Icon = tab.icon;
@@ -218,20 +236,30 @@ export default function PortalShell({ children, activeTab = 'home' }) {
                 </div>
                 <div className="space-y-2 text-sm">
                   {(config.support_phone || config.phone) && (
-                    <a href={`tel:${config.support_phone || config.phone}`} className={`flex items-center gap-2 ${cx.textMuted} hover:opacity-80`}>
+                    <a
+                      href={`tel:${config.support_phone || config.phone}`}
+                      className={`flex items-center gap-2 ${cx.textMuted} hover:opacity-80`}
+                    >
                       <Phone className="h-4 w-4" style={{ color: accent }} />
                       {config.support_phone || config.phone}
                     </a>
                   )}
                   {supportEmail && (
-                    <a href={`mailto:${supportEmail}`} className={`flex items-center gap-2 ${cx.textMuted} hover:opacity-80`}>
+                    <a
+                      href={`mailto:${supportEmail}`}
+                      className={`flex items-center gap-2 ${cx.textMuted} hover:opacity-80`}
+                    >
                       <Mail className="h-4 w-4" style={{ color: accent }} />
                       {supportEmail}
                     </a>
                   )}
                 </div>
               </div>
-              <p className={`mt-6 border-t pt-4 text-center text-xs ${cx.textSubtle} ${isLight ? 'border-slate-100' : 'border-white/8'}`}>
+              <p
+                className={`mt-6 border-t pt-4 text-center text-xs ${cx.textSubtle} ${
+                  isLight ? 'border-slate-100' : 'border-white/8'
+                }`}
+              >
                 © {new Date().getFullYear()} {displayName}
               </p>
             </div>

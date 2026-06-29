@@ -48,7 +48,10 @@ function AccessLookup({ ispId }) {
     <PortalFadeIn className="mx-auto max-w-lg space-y-5">
       <PortalGlassCard>
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl" style={{ backgroundColor: `${accent}18` }}>
+          <div
+            className="flex h-11 w-11 items-center justify-center rounded-xl"
+            style={{ backgroundColor: 'var(--portal-accent-soft)' }}
+          >
             <Wifi className="h-5 w-5" style={{ color: accent }} />
           </div>
           <div>
@@ -91,7 +94,11 @@ function AccessLookup({ ispId }) {
             </div>
             {status.remaining_seconds != null && status.access?.has_internet && (
               <span
-                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${isLight ? 'bg-emerald-50 text-emerald-700' : 'bg-emerald-500/20 text-emerald-200'}`}
+                className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold"
+                style={{
+                  backgroundColor: 'var(--portal-accent-soft)',
+                  color: 'var(--portal-accent)',
+                }}
               >
                 <Clock className="h-3.5 w-3.5" />
                 {formatRemaining(status.remaining_seconds)}

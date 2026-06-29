@@ -61,7 +61,10 @@ function VoucherRedeem({ config, ispId, routerId }) {
     <PortalFadeIn className="mx-auto max-w-lg">
       <PortalGlassCard>
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl" style={{ backgroundColor: `${accent}18` }}>
+          <div
+            className="flex h-11 w-11 items-center justify-center rounded-xl"
+            style={{ backgroundColor: 'var(--portal-accent-soft)' }}
+          >
             <Ticket className="h-5 w-5" style={{ color: accent }} />
           </div>
           <div>

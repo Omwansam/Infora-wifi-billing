@@ -14,7 +14,7 @@ import {
 const CONNECT_STEPS = [
   { icon: Wifi, title: 'Pay & get credentials', text: 'After M-Pesa confirms, copy your username and password.' },
   { icon: Check, title: 'Open hotspot login', text: 'The router login page appears when you try to browse.' },
-  { icon: Sparkles, title: 'Start browsing', text: 'Enter your details once — enjoy internet for your package duration.' },
+  { icon: Sparkles, title: 'Start browsing', text: 'Use your details once — enjoy internet for the package duration.' },
 ];
 
 function planFeatures(plan) {
@@ -30,8 +30,15 @@ function planFeatures(plan) {
 }
 
 function PlanCard({ plan, features, isPopular, onSelect, delay }) {
-  const { isLight, accent } = usePortalTheme();
+  const { isLight, accent, accentFg } = usePortalTheme();
   const cx = portalClasses(isLight);
+
+  const cardStyle = isPopular
+    ? {
+        borderColor: accent,
+        boxShadow: `0 18px 40px -18px var(--portal-accent-glow)`,
+      }
+    : undefined;
 
   return (
     <PortalFadeIn delay={delay}>
@@ -41,17 +48,18 @@ function PlanCard({ plan, features, isPopular, onSelect, delay }) {
         className={`group relative flex h-full w-full flex-col rounded-2xl border p-5 text-left transition duration-200 hover:-translate-y-0.5 ${
           isPopular
             ? isLight
-              ? 'border-emerald-300 bg-emerald-50/50 shadow-md ring-1 ring-emerald-200'
-              : 'border-emerald-400/35 bg-gradient-to-b from-emerald-500/20 via-teal-500/10 to-transparent shadow-xl shadow-emerald-500/10'
+              ? 'bg-white shadow-md'
+              : 'bg-white/[0.06] shadow-xl'
             : isLight
-              ? 'border-slate-200 bg-white shadow-sm hover:border-emerald-300 hover:shadow-md'
-              : 'border-white/10 bg-white/[0.04] hover:border-emerald-400/25 hover:bg-white/[0.06]'
+              ? 'border-slate-200 bg-white shadow-sm hover:shadow-md hover:border-[color:var(--portal-accent)]'
+              : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.06] hover:border-[color:var(--portal-accent-ring)]'
         }`}
+        style={cardStyle}
       >
         {isPopular && (
           <span
-            className="absolute -top-2.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full px-3 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow"
-            style={{ backgroundColor: accent }}
+            className="absolute -top-2.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full px-3 py-0.5 text-[10px] font-bold uppercase tracking-wide shadow"
+            style={{ backgroundColor: accent, color: accentFg }}
           >
             <Sparkles className="h-3 w-3" />
             Popular
@@ -61,12 +69,16 @@ function PlanCard({ plan, features, isPopular, onSelect, delay }) {
         <div className="mb-4 flex items-start justify-between gap-3">
           <div
             className="flex h-10 w-10 items-center justify-center rounded-xl"
-            style={{ backgroundColor: `${accent}18` }}
+            style={{ backgroundColor: 'var(--portal-accent-soft)' }}
           >
             <Wifi className="h-5 w-5" style={{ color: accent }} />
           </div>
           {plan.duration_label && (
-            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${isLight ? 'bg-slate-100 text-slate-600' : 'bg-black/30 text-white/60'}`}>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+                isLight ? 'bg-slate-100 text-slate-600' : 'bg-black/30 text-white/65'
+              }`}
+            >
               <Clock className="h-3 w-3" />
               {plan.duration_label}
             </span>
@@ -89,7 +101,11 @@ function PlanCard({ plan, features, isPopular, onSelect, delay }) {
           </p>
         )}
 
-        <ul className={`mt-4 flex-1 space-y-1.5 border-t pt-4 ${isLight ? 'border-slate-100' : 'border-white/8'}`}>
+        <ul
+          className={`mt-4 flex-1 space-y-1.5 border-t pt-4 ${
+            isLight ? 'border-slate-100' : 'border-white/8'
+          }`}
+        >
           {features.map((feature) => (
             <li key={feature} className={`flex items-start gap-2 text-sm ${cx.textMuted}`}>
               <Check className="mt-0.5 h-4 w-4 shrink-0" style={{ color: accent }} />
@@ -99,11 +115,11 @@ function PlanCard({ plan, features, isPopular, onSelect, delay }) {
         </ul>
 
         <span
-          className={`mt-5 inline-flex w-full items-center justify-center rounded-xl py-2.5 text-sm font-semibold transition ${
-            isLight
-              ? 'bg-slate-100 text-slate-800 group-hover:bg-[color:var(--portal-accent)] group-hover:text-white'
-              : 'bg-white/5 text-emerald-200 ring-1 ring-white/10 group-hover:bg-emerald-500 group-hover:text-white group-hover:ring-emerald-400/30'
-          }`}
+          className="mt-5 inline-flex w-full items-center justify-center rounded-xl py-2.5 text-sm font-semibold transition group-hover:shadow"
+          style={{
+            backgroundColor: isPopular ? accent : 'var(--portal-accent-soft)',
+            color: isPopular ? accentFg : accent,
+          }}
         >
           Buy with M-Pesa
         </span>
@@ -196,7 +212,11 @@ export default function HotspotPackagesSection({ config, ispId, routerId, sectio
 
       {!loadingPlans && plansError && (
         <PortalFadeIn>
-          <div className={`mx-auto max-w-lg rounded-2xl border p-6 text-center text-sm ${isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-400/25 bg-red-500/10 text-red-100'}`}>
+          <div
+            className={`mx-auto max-w-lg rounded-2xl border p-6 text-center text-sm ${
+              isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-400/25 bg-red-500/10 text-red-100'
+            }`}
+          >
             {plansError}
           </div>
         </PortalFadeIn>

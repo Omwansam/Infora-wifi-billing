@@ -16,9 +16,14 @@ from auth_utils import get_current_user
 from models import ISP, MikrotikDevice, NotificationSetting, PortalAnnouncement
 from services.rate_limit import rate_limit
 from services import notification_events as nev
+from services.portal_urls import portal_entry_url, portal_frontend_base_url
 from datetime import datetime
 
+import re
+
 settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
+
+_HEX_COLOR = re.compile(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +87,6 @@ def _public_base_url():
     return request.host_url.rstrip('/')
 
 
-def _portal_base_url():
-    return _public_base_url()
-
-
 def serialize_general(isp):
     return {
         'isp_name': isp.name,
@@ -100,7 +101,7 @@ def serialize_general(isp):
         'hotspot_username_prefix': isp.hotspot_username_prefix,
         'hotspot_password_length': isp.hotspot_password_length,
         'custom_domain': isp.custom_domain,
-        'current_portal_url': isp.custom_domain or _portal_base_url(),
+        'current_portal_url': portal_entry_url(isp.id, isp=isp) or portal_frontend_base_url() or _public_base_url(),
     }
 
 
@@ -382,10 +383,6 @@ def get_portal():
     if err:
         return err, status
 
-    base = isp.custom_domain or _portal_base_url()
-    if isp.custom_domain and not base.startswith('http'):
-        base = f'https://{base}'
-
     routers = []
     for d in MikrotikDevice.query.filter_by(isp_id=isp.id).order_by(MikrotikDevice.device_name.asc()).all():
         routers.append({
@@ -393,7 +390,7 @@ def get_portal():
             'name': d.device_name,
             'ip': getattr(d, 'device_ip', None),
             'theme': d.portal_theme or isp.default_portal_theme or 'clean',
-            'portal_url': f'{base}/portal?router_id={d.id}',
+            'portal_url': portal_entry_url(isp.id, d.id, isp=isp),
         })
 
     announcements = [
@@ -405,6 +402,12 @@ def get_portal():
     return jsonify({
         'default_portal_theme': isp.default_portal_theme or 'clean',
         'after_login_redirect_url': isp.after_login_redirect_url or 'https://www.google.com',
+        'theme_color': isp.theme_color or '#1BA449',
+        'hotspot_name': isp.hotspot_name or isp.name,
+        'logo_url': isp.logo_url,
+        'isp_name': isp.name,
+        'isp_id': isp.id,
+        'preview_portal_url': portal_entry_url(isp.id, isp=isp),
         'themes': PORTAL_THEMES,
         'routers': routers,
         'announcements': announcements,
@@ -426,6 +429,11 @@ def update_portal():
     if 'after_login_redirect_url' in data:
         url = (data['after_login_redirect_url'] or '').strip()
         isp.after_login_redirect_url = url or None
+    if 'theme_color' in data:
+        color = (data['theme_color'] or '').strip()
+        if color and not _HEX_COLOR.match(color):
+            return jsonify({'error': 'Theme color must be a valid hex value (e.g. #1BA449)'}), 400
+        isp.theme_color = color or '#1BA449'
     db.session.commit()
     return jsonify({'message': 'Captive portal settings saved'}), 200
 

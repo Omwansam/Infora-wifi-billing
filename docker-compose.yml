@@ -28,6 +28,7 @@ services:
     environment:
       FLASK_APP: server/app.py
       FLASK_ENV: development
+      PORTAL_BASE_URL: http://localhost:5173
       DATABASE_URL: postgresql://infora_user:${POSTGRES_PASSWORD:-infora_password}@postgres:5432/infora_billing
       JWT_SECRET_KEY: your-super-secret-jwt-key-change-in-production
       RADIUS_SECRET: radius_secret_key

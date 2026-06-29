@@ -140,7 +140,7 @@ export default function GeneralSettings() {
               onChange={(e) => set('website', e.target.value)}
             />
           </Field>
-          <Field label="Theme Color" hint="Used for buttons and accents across your portal">
+          <Field label="Theme Color" hint="Also editable under Settings → Captive Portal with a live preview">
             <div className="flex items-center gap-3">
               <input
                 type="color"

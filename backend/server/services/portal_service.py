@@ -121,7 +121,7 @@ def get_portal_config(isp_id=None, router_id=None):
             'pppoe_enabled': bool(getattr(isp, 'pppoe_enabled', True)),
             'reseller_enabled': bool(getattr(isp, 'reseller_enabled', False)),
         },
-        'portal_url': portal_entry_url(isp.id, device.id if device else router_id),
+        'portal_url': portal_entry_url(isp.id, device.id if device else router_id, isp=isp),
     }
 
 

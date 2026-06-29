@@ -311,6 +311,25 @@ def _start_expiry_scheduler(app):
     thread.start()
 
 
+@app.route('/portal', defaults={'path': ''})
+@app.route('/portal/<path:path>')
+def redirect_portal_to_frontend(path):
+    """Redirect /portal on the API host to the React SPA (dev: Vite on :5173)."""
+    from flask import redirect
+    from services.portal_urls import portal_frontend_base_url
+
+    base = portal_frontend_base_url()
+    if not base:
+        return {'error': 'Portal frontend URL is not configured (set PORTAL_BASE_URL)'}, 404
+
+    target = f'{base}/portal'
+    if path:
+        target = f'{target}/{path}'
+    if request.query_string:
+        target = f'{target}?{request.query_string.decode()}'
+    return redirect(target, code=302)
+
+
 if __name__ == "__main__":
     _start_expiry_scheduler(app)
     app.run(debug=True, port=5000, host='0.0.0.0')
