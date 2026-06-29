@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libsasl2-dev \
     libssl-dev \
     libffi-dev \
+    iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
