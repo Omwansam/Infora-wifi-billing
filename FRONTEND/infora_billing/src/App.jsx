@@ -59,11 +59,29 @@ import HotspotVoucherPage from './components/portal/HotspotVoucherPage';
 import HotspotAccessPage from './components/portal/HotspotAccessPage';
 import CaptivePortalPage from './components/portal/CaptivePortalPage';
 import PppoePortalPage from './components/portal/PppoePortalPage';
+import { DEMO_MODE, DemoLanding } from './demo';
+import { useAuth } from './contexts/AuthContext';
 
 function LegacyClientRedirect({ suffix = '' }) {
   const { customerId } = React.useParams();
   const target = customerId ? `/clients/${customerId}${suffix}` : '/clients';
   return <Navigate to={target} replace />;
+}
+
+// Demo build: signed-out visitors see the fictional ISP landing page at "/";
+// after signing in "/" is the dashboard as usual.
+function HomeRoute() {
+  const { user, loading } = useAuth();
+  if (DEMO_MODE && !loading && !user) {
+    return <DemoLanding />;
+  }
+  return (
+    <ProtectedRoute>
+      <MainLayout>
+        <Dashboard />
+      </MainLayout>
+    </ProtectedRoute>
+  );
 }
 
 // App Routes Component
@@ -85,8 +103,8 @@ function AppRoutes() {
       {/* Dashboard Redirect Route */}
       <Route path="/dashboard" element={<ProtectedRoute><DashboardRedirect /></ProtectedRoute>} />
 
-      {/* Protected Routes - All users can access */}
-      <Route path="/" element={<ProtectedRoute><MainLayout><Dashboard /></MainLayout></ProtectedRoute>} />
+      {/* Protected Routes - All users can access (demo: public ISP landing when signed out) */}
+      <Route path="/" element={<HomeRoute />} />
 
       {/* Client management */}
       <Route path="/clients" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />

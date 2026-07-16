@@ -24,5 +24,14 @@ export const DEMO_USER = {
   is_admin: true,
 };
 
+/**
+ * Credentials shown pre-filled on the demo login page. The mock login
+ * accepts anything — these just make the flow feel like a real sign-in.
+ */
+export const DEMO_CREDENTIALS = {
+  email: DEMO_USER.email,
+  password: 'demo1234',
+};
+
 /** Simulated network latency range (ms) so the UI feels like a real API. */
 export const DEMO_LATENCY = { min: 90, max: 320 };

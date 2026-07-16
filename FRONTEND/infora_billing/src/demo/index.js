@@ -2,38 +2,31 @@
  * Demo mode bootstrap — call setupDemo() before React renders.
  *
  * 1. Patches window.fetch so every /api/* call is served from fixtures.
- * 2. Pre-seeds auth storage so visitors land straight on the dashboard
- *    (no login wall). Logging out and back in with ANY credentials works
- *    too — the mock login always succeeds as the demo admin.
+ * 2. Clears any stored auth so every visit starts at the demo landing
+ *    page → pre-filled login → dashboard, like a real first sign-in.
+ *    The mock login always succeeds as the demo admin, whatever the
+ *    credentials.
  */
-import { STORAGE_KEYS } from '../lib/brand';
-import { DEMO_MODE, DEMO_TOKEN, DEMO_REFRESH_TOKEN, DEMO_USER } from './config';
+import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from '../lib/brand';
+import { DEMO_MODE } from './config';
 import { installDemoInterceptor } from './interceptor';
 
 export { DEMO_MODE } from './config';
 export { default as DemoBanner } from './DemoBanner';
+export { default as DemoLanding } from './DemoLanding';
 
-function seedDemoAuth() {
-  const stored = {
-    id: String(DEMO_USER.id),
-    email: DEMO_USER.email,
-    first_name: DEMO_USER.first_name,
-    last_name: DEMO_USER.last_name,
-    role: DEMO_USER.role,
-    is_admin: DEMO_USER.is_admin,
-    access_token: DEMO_TOKEN,
-    refresh_token: DEMO_REFRESH_TOKEN,
-  };
-  localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(stored));
-  localStorage.setItem('token', DEMO_TOKEN);
-  localStorage.setItem('adminToken', DEMO_TOKEN);
-  localStorage.setItem('adminRefreshToken', DEMO_REFRESH_TOKEN);
+function resetDemoAuth() {
+  localStorage.removeItem(STORAGE_KEYS.user);
+  localStorage.removeItem(LEGACY_STORAGE_KEYS.user);
+  localStorage.removeItem('token');
+  localStorage.removeItem('adminToken');
+  localStorage.removeItem('adminRefreshToken');
 }
 
 export function setupDemo() {
   if (!DEMO_MODE) return;
   installDemoInterceptor();
-  seedDemoAuth();
+  resetDemoAuth();
   // eslint-disable-next-line no-console
   console.info(
     '%c Lumen demo mode ',

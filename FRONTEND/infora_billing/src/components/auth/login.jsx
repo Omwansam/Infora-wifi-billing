@@ -7,10 +7,12 @@ import toast from 'react-hot-toast';
 import ConnectionTest from './ConnectionTest';
 import LumenLogo from '../brand/LumenLogo';
 import { BRAND } from '../../lib/brand';
+import { DEMO_MODE, DEMO_CREDENTIALS } from '../../demo/config';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // Demo build: pre-fill the demo account so visitors just click "Sign In".
+  const [email, setEmail] = useState(DEMO_MODE ? DEMO_CREDENTIALS.email : '');
+  const [password, setPassword] = useState(DEMO_MODE ? DEMO_CREDENTIALS.password : '');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -90,6 +92,18 @@ export default function LoginPage() {
           transition={{ duration: 0.5, delay: 0.1 }}
           className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8"
         >
+          {/* Demo account banner — demo build only, never rendered in production */}
+          {DEMO_MODE && (
+            <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-3">
+              <p className="text-sm font-semibold text-blue-700">
+                Demo Account — credentials pre-filled
+              </p>
+              <p className="mt-1 text-xs text-blue-600">
+                Email: {DEMO_CREDENTIALS.email} · Password: {DEMO_CREDENTIALS.password}
+              </p>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Email Field */}
             <div>
@@ -185,42 +199,47 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
+          {/* Production-only helpers — hidden in the demo build */}
+          {!DEMO_MODE && (
+            <>
+              {/* Divider */}
+              <div className="mt-6">
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-300" />
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="px-2 bg-white text-gray-500">Or continue with</span>
+                  </div>
+                </div>
               </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">Or continue with</span>
+
+              {/* Demo Login */}
+              <div className="mt-6">
+                <button
+                  onClick={handleDemoLogin}
+                  disabled={loading}
+                  className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
+                >
+                  Use Demo Credentials
+                </button>
               </div>
-            </div>
-          </div>
 
-          {/* Demo Login */}
-          <div className="mt-6">
-            <button
-              onClick={handleDemoLogin}
-              disabled={loading}
-              className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
-            >
-              Use Demo Credentials
-            </button>
-          </div>
+              {/* Test Credentials Info */}
+              <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                <p className="text-xs text-amber-100/90">
+                  <strong>Demo credentials:</strong><br />
+                  Email: {BRAND.adminEmail}<br />
+                  Password: admin123
+                </p>
+              </div>
 
-          {/* Test Credentials Info */}
-          <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-            <p className="text-xs text-amber-100/90">
-              <strong>Demo credentials:</strong><br />
-              Email: {BRAND.adminEmail}<br />
-              Password: admin123
-            </p>
-          </div>
-
-          {/* Connection Test */}
-          <div className="mt-4">
-            <ConnectionTest />
-          </div>
+              {/* Connection Test */}
+              <div className="mt-4">
+                <ConnectionTest />
+              </div>
+            </>
+          )}
         </motion.div>
 
         {/* Sign Up Link */}
@@ -230,12 +249,20 @@ export default function LoginPage() {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="text-center mt-6"
         >
-          <p className="text-sm text-slate-400">
-            Don't have an account?{' '}
-            <Link to="/signup" className="font-medium text-amber-300 hover:text-amber-200">
-              Sign up here
-            </Link>
-          </p>
+          {DEMO_MODE ? (
+            <p className="text-sm text-slate-400">
+              <Link to="/" className="font-medium text-amber-300 hover:text-amber-200">
+                ← Back to home
+              </Link>
+            </p>
+          ) : (
+            <p className="text-sm text-slate-400">
+              Don't have an account?{' '}
+              <Link to="/signup" className="font-medium text-amber-300 hover:text-amber-200">
+                Sign up here
+              </Link>
+            </p>
+          )}
         </motion.div>
 
         {/* Footer */}
