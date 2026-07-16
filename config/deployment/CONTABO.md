@@ -657,9 +657,11 @@ curl -sk https://localhost/api/test
 
 | URL | Expected |
 |-----|----------|
-| https://ruirufactorymabati.com/login | Admin login page |
-| https://ruirufactorymabati.com/portal | Captive portal |
-| https://ruirufactorymabati.com/api/health/deployment | JSON deployment checklist |
+| https://ruirufactorymabati.com | Lumen marketing website (main site) |
+| https://billing.ruirufactorymabati.com/login | Admin login page |
+| https://billing.ruirufactorymabati.com/portal | Captive portal |
+| https://billing.ruirufactorymabati.com/api/health/deployment | JSON deployment checklist |
+| https://demo.ruirufactorymabati.com | Interactive demo (browser-simulated API) |
 
 ### 9.3 Troubleshoot “site not loading”
 

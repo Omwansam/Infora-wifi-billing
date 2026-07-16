@@ -10,7 +10,7 @@ export const DEMO_MODE =
   String(import.meta.env.VITE_DEMO_MODE || '').toLowerCase() === 'true';
 
 export const MARKETING_URL =
-  import.meta.env.VITE_MARKETING_URL || 'https://lumen.ruirufactorymabati.com';
+  import.meta.env.VITE_MARKETING_URL || 'https://ruirufactorymabati.com';
 
 export const DEMO_TOKEN = 'demo-access-token';
 export const DEMO_REFRESH_TOKEN = 'demo-refresh-token';
