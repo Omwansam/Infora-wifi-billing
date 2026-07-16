@@ -39,8 +39,8 @@ export default function NetworkLayout({ title, subtitle, action, children }) {
               to={tab.path}
               className={`inline-flex shrink-0 items-center rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${
                 active
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                  ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
               }`}
             >
               <tab.icon className="mr-2 h-4 w-4" />

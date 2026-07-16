@@ -23,13 +23,10 @@ import {
   ChevronDown,
   User,
   LogOut,
-  Shield,
   Network,
-  Database,
   Lock,
   Activity,
   BarChart3,
-  Globe,
   ShieldCheck,
   Gauge,
   Key,
@@ -221,7 +218,6 @@ const AppSidebar = () => {
     billing: true,
     finance: false,
     devices: false,
-    network: false,
     security: false,
     monitoring: false,
     reports: false,
@@ -251,6 +247,10 @@ const AppSidebar = () => {
     // Devices is a single link but should stay active across all /devices/* tabs.
     if (url === '/devices/mikrotik') {
       return location.pathname.startsWith('/devices');
+    }
+    // Network is a single link too — active across all /network/* tabs.
+    if (url === '/network/isps') {
+      return location.pathname.startsWith('/network');
     }
     return location.pathname.startsWith(url);
   };
@@ -290,20 +290,8 @@ const AppSidebar = () => {
             },
             { type: 'link', title: 'Communication', url: '/communication', icon: MessageSquare },
             { type: 'link', title: 'Devices', url: '/devices/mikrotik', icon: Server },
-            {
-              type: 'section',
-              title: 'Network',
-              icon: Network,
-              section: 'network',
-              items: [
-                { title: 'ISPs', url: '/network/isps', icon: Globe },
-                { title: 'RADIUS', url: '/network/radius', icon: Shield },
-                { title: 'LDAP', url: '/network/ldap', icon: Database },
-                { title: 'SNMP', url: '/network/snmp', icon: Monitor },
-                { title: 'VPN', url: '/network/vpn', icon: Lock },
-                { title: 'EAP', url: '/network/eap', icon: Key },
-              ],
-            },
+            // Single link — switching happens via the in-page tab bar (NetworkLayout)
+            { type: 'link', title: 'Network', url: '/network/isps', icon: Network },
             {
               type: 'section',
               title: 'Security',

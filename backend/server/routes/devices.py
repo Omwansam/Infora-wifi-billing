@@ -185,7 +185,7 @@ def create_device():
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
 
@@ -288,8 +288,8 @@ def update_device(device_id):
         if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
             return jsonify({'error': 'Access denied'}), 403
 
-        data = request.get_json()
-        
+        data = request.get_json(silent=True) or {}
+
         # Update fields
         if 'username' in data:
             device.username = data['username']
@@ -388,7 +388,7 @@ def test_device_connection(device_id):
         if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
             return jsonify({'error': 'Access denied'}), 403
         
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         connection_type = data.get('connection_type', device.connection_type or 'api')
         
         try:
@@ -446,7 +446,7 @@ def sync_device(device_id):
         if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
             return jsonify({'error': 'Access denied'}), 403
         
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         connection_type = data.get('connection_type', device.connection_type or 'api')
         run_async = data.get('async', True)
 
@@ -514,8 +514,8 @@ def update_device_status(device_id):
     """Update device operational status"""
     try:
         device = MikrotikDevice.query.get_or_404(device_id)
-        data = request.get_json()
-        
+        data = request.get_json(silent=True) or {}
+
         if 'status' not in data:
             return jsonify({'error': 'Status is required'}), 400
         

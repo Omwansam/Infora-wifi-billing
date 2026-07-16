@@ -9,6 +9,34 @@ from services.radius_provisioning import radius_username
 logger = logging.getLogger(__name__)
 
 
+def disconnect_username_on_device(username, device):
+    """Kick a single user's live sessions (PPPoE + hotspot) on one router.
+
+    Returns True when the router was reached and the kick commands ran.
+    Used by the RADIUS session terminate endpoint for a targeted disconnect.
+    """
+    if not username or not device:
+        return False
+    try:
+        with MikroTikClient(_ssh_config(device, timeout=6)) as client:
+            if not client.connect():
+                return False
+            for cmd in (
+                f'/ppp active remove [find name="{username}"]',
+                f'/ip hotspot active remove [find user="{username}"]',
+                f'/ip hotspot host remove [find user="{username}"]',
+                f'/ip hotspot cookie remove [find user="{username}"]',
+            ):
+                try:
+                    client.run_cli(cmd)
+                except Exception:
+                    pass
+            return True
+    except Exception as exc:
+        logger.debug('Targeted disconnect skip %s: %s', connection_host(device), exc)
+        return False
+
+
 def disconnect_customer_on_devices(customer, isp):
     """Best-effort kick of active sessions for this user on all ISP routers.
 
