@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, jsonify, request
 from config import Config
 from flask_cors import CORS
 from extensions import db, migrate, jwt
@@ -60,6 +60,13 @@ CORS(app,
 db.init_app(app)
 migrate.init_app(app, db)
 jwt.init_app(app)
+
+
+@jwt.invalid_token_loader
+def _invalid_token(reason):
+    # Legacy tokens (dict `sub`) fail PyJWT >= 2.10 decoding; return 401 instead
+    # of the default 422 so clients treat it as "re-authenticate".
+    return jsonify({'error': 'Invalid session token. Please log in again.', 'msg': reason}), 401
 
 # Register blueprints
 app.register_blueprint(auth_bp)

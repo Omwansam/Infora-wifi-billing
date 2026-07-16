@@ -1,5 +1,18 @@
 import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from '../lib/brand';
 
+/** Remove every stored auth credential (mirrors AuthContext logout). */
+export function clearStoredAuth() {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.user);
+    localStorage.removeItem(LEGACY_STORAGE_KEYS.user);
+    localStorage.removeItem('token');
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('adminRefreshToken');
+  } catch {
+    // storage unavailable — nothing to clear
+  }
+}
+
 /** Shared access token for authenticated API calls. */
 export function getAccessToken() {
   try {

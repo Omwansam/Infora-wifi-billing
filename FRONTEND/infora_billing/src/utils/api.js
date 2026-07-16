@@ -1,9 +1,11 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { clearStoredAuth } from './authToken';
 
 /**
  * Generic API call function with error handling
  */
 export const apiCall = async (endpoint, options = {}) => {
+  let status = 0;
   try {
     console.log('Making API call to:', endpoint);
     console.log('Options:', options);
@@ -18,6 +20,7 @@ export const apiCall = async (endpoint, options = {}) => {
 
     console.log('Response status:', response.status);
     console.log('Response headers:', response.headers);
+    status = response.status;
 
     const contentType = response.headers.get('content-type') || '';
     let data = null;
@@ -42,22 +45,37 @@ export const apiCall = async (endpoint, options = {}) => {
       throw new Error(data?.message || data?.error || `HTTP error! status: ${response.status}`);
     }
 
-    return { success: true, data };
+    return { success: true, status, data };
   } catch (error) {
     console.error('API call failed:', error);
-    
+
     // Provide more specific error messages
     if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-      return { 
-        success: false, 
-        error: 'Cannot connect to server. Please ensure the backend is running on http://localhost:5000' 
+      return {
+        success: false,
+        status,
+        error: 'Cannot connect to server. Please ensure the backend is running on http://localhost:5000'
       };
     }
-    
-    return { 
-      success: false, 
-      error: error.message || 'Network error. Please check your connection.' 
+
+    return {
+      success: false,
+      status,
+      error: error.message || 'Network error. Please check your connection.'
     };
+  }
+};
+
+/**
+ * The server rejected our token (401 unauthorized, or 422 from older backends
+ * that return it for undecodable legacy tokens). Clear the dead credentials
+ * and send the user back to login instead of retrying forever.
+ */
+const handleAuthRejection = (status) => {
+  if (status !== 401 && status !== 422) return;
+  clearStoredAuth();
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.assign('/login');
   }
 };
 
@@ -74,11 +92,15 @@ export const authenticatedApiCall = async (endpoint, token, options = {}) => {
     ...options.headers,
   };
   console.log('Request headers:', headers);
-  
-  return apiCall(endpoint, {
+
+  const result = await apiCall(endpoint, {
     ...options,
     headers,
   });
+  if (!result.success) {
+    handleAuthRejection(result.status);
+  }
+  return result;
 };
 
 /**
@@ -102,6 +124,7 @@ export const authenticatedApiCallText = async (endpoint, token, options = {}) =>
     const text = await response.text();
 
     if (!response.ok) {
+      handleAuthRejection(response.status);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
