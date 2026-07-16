@@ -78,7 +78,7 @@ def _build_wireguard_tunnel_lines(device):
     )
     port = state['port']
 
-    return [
+    lines = [
         '',
         '# --- Management WireGuard tunnel (router → billing server) ---',
         ':do { /interface wireguard remove [find name="wg-mgmt"] } on-error={}',
@@ -96,8 +96,33 @@ def _build_wireguard_tunnel_lines(device):
         ),
         f':do {{ /ip route remove [find comment="infora-radius-via-tunnel"] }} on-error={{}}',
         f'/ip route add dst-address={server_ip}/32 gateway=wg-mgmt comment="infora-radius-via-tunnel"',
+    ]
+
+    # Firewall: allow Winbox/SSH/API from the billing server through the tunnel only,
+    # only, placed above any drop rules. Comment-tagged so the self-check can
+    # verify it (infora-mgmt-access).
+    fw_rule = (
+        'chain=input action=accept protocol=tcp '
+        f'src-address={server_ip}/32 in-interface=wg-mgmt '
+        'dst-port=8291,22,8728,8729 comment="infora-mgmt-access"'
+    )
+    lines += [
+        '',
+        '# --- Management access firewall (billing server via tunnel only) ---',
+        ':do { /ip firewall filter remove [find comment="infora-mgmt-access"] } on-error={}',
+        f':do {{ /ip firewall filter add {fw_rule} place-before=0 }} on-error={{ /ip firewall filter add {fw_rule} }}',
+        '',
+        '# --- WireGuard watchdog (logs when the billing tunnel goes down) ---',
+        ':do { /tool netwatch remove [find comment="infora-wg-watchdog"] } on-error={}',
+        (
+            f'/tool netwatch add host={server_ip} interval=1m timeout=5s '
+            'down-script=":log warning \\"Infora: billing tunnel down\\"" '
+            'up-script=":log info \\"Infora: billing tunnel restored\\"" '
+            'comment="infora-wg-watchdog"'
+        ),
         ':log info "Infora management WireGuard tunnel configured"',
     ]
+    return lines
 
 
 def build_radius_script(device, snmp_community='infora'):
@@ -114,6 +139,13 @@ def build_radius_script(device, snmp_community='infora'):
     radius_host = resolve_radius_host_for_device(device)
     radius_secret = isp.radius_secret
     timezone = current_app.config.get('ROUTER_TIMEZONE', 'Africa/Nairobi')
+
+    # Pin the RADIUS source to the tunnel IP: FreeRADIUS matches this NAS to
+    # its per-device clients.conf entry (per-ISP secret) by source address, so
+    # it must be deterministic rather than derived from the routing table.
+    radius_src = ''
+    if device.management_wg_enabled and device.management_wg_ip:
+        radius_src = f' src-address={device.management_wg_ip.split("/")[0]}'
 
     lines = [
         f'# Infora billing — provisioning for {device.device_name}',
@@ -133,7 +165,7 @@ def build_radius_script(device, snmp_community='infora'):
         '',
         '# --- 1. RADIUS client (idempotent) ---',
         ':if ([:len [/radius find comment="infora-billing"]] > 0) do={ /radius remove [find comment="infora-billing"] }',
-        f'/radius add address="{radius_host}" secret="{radius_secret}" service=ppp,hotspot,dhcp timeout=3s comment="infora-billing"',
+        f'/radius add address="{radius_host}" secret="{radius_secret}" service=ppp,hotspot,dhcp timeout=3s{radius_src} comment="infora-billing"',
         '/radius incoming set accept=yes',
         '',
         '# --- 2. PPPoE AAA via RADIUS ---',
@@ -156,7 +188,11 @@ def build_radius_script(device, snmp_community='infora'):
     ]
 
     # --- 7. Billing management user + remote access ---
+    # Never touch the built-in 'admin' account: the operator is usually pasting
+    # this script from that session, and remove+re-add would drop it mid-run.
     mgmt_user = (device.username or '').strip()
+    if mgmt_user.lower() == 'admin':
+        mgmt_user = ''
     mgmt_pass = decrypt_value(device.password) if device.password else None
     if mgmt_user and mgmt_pass:
         lines += [

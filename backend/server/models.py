@@ -356,6 +356,11 @@ class MikrotikDevice(db.Model):
     provision_fetch_count = db.Column(db.Integer, default=0, nullable=False)
     # JSON blob of applied service config (pppoe/hotspot/bridge ports/subnet)
     service_config = db.Column(db.Text, nullable=True)
+    # JSON list of interface names the operator chose to monitor (wizard Ports step)
+    monitored_interfaces = db.Column(db.Text, nullable=True)
+    # Cached result of the last configuration self-check (JSON) + when it ran
+    self_check_result = db.Column(db.Text, nullable=True)
+    self_check_at = db.Column(db.DateTime, nullable=True)
     # Firmware / RouterOS version tracking (populated by sync + firmware check)
     os_version = db.Column(db.String(50), nullable=True)
     firmware_latest = db.Column(db.String(50), nullable=True)

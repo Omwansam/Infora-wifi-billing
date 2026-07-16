@@ -1,8 +1,10 @@
 """Connect to a registered MikroTik and run provisioning/status operations.
 
 Used by the device onboarding wizard:
-  - get_provision_status(): has the router pulled its script + is it reachable?
-  - list_interfaces(): ethernet ports for the bridge picker.
+  - get_provision_status(): staged progress (fetch → tunnel → reachable → self-check).
+  - run_self_check(): verify every artifact the provisioning script creates.
+  - list_interfaces(): full port map (all interface types + device summary).
+  - set_interface_disabled(): enable/disable a port (uplink guarded).
   - configure_services(): push bridge/pool/DHCP/PPPoE/Hotspot config and
     return an ordered log (rendered live on the "Router is live" screen).
 
@@ -10,6 +12,9 @@ For NAT routers the management WireGuard tunnel IP is used as the connect host;
 otherwise the registered device_ip is used.
 """
 import ipaddress
+import re
+import socket
+import time
 
 from mikrotik_client import (
     ConnectionType,
@@ -22,7 +27,12 @@ from services.encryption import decrypt_value
 DEFAULT_SUBNET = '172.31.0.0/16'
 BRIDGE_NAME = 'infora-bridge'
 POOL_NAME = 'infora-pool'
+PPPOE_POOL_NAME = 'infora-pppoe-pool'
+PPPOE_PROFILE_NAME = 'infora-pppoe'
 DHCP_NAME = 'infora-dhcp'
+MGMT_ACCESS_COMMENT = 'infora-mgmt-access'
+WG_WATCHDOG_COMMENT = 'infora-wg-watchdog'
+INTERFACE_NAME_RE = re.compile(r'^[\w.\-/]+$')
 
 
 def connection_host(device):
@@ -69,17 +79,165 @@ def _detect_router_info(client):
     return detected
 
 
-def get_provision_status(device):
-    """Return whether the router fetched its script and is reachable.
+def probe_tunnel(device, timeout=2):
+    """Check two-way connectivity to the router's management tunnel IP.
 
-    The wizard advances to Step 3 when ``online`` is True.  We set ``online``
-    when **either** the router is SSH-reachable **or** the provisioning script
-    was fetched recently (within 10 minutes).  The second condition handles the
-    common case where the WG tunnel is up from the router's side but the Docker
-    routing from Flask → WireGuard container isn't established yet.
+    A TCP reply through the tunnel proves the WireGuard handshake completed
+    (the packet round-trips inside the encrypted tunnel). Tries SSH, Winbox
+    and the API port so a firewalled service doesn't cause a false negative.
+    """
+    if not (device.management_wg_enabled and device.management_wg_ip):
+        return {'up': False, 'applicable': False, 'detail': 'Management tunnel not enabled'}
+
+    host = device.management_wg_ip.split('/')[0]
+    ports = [device.ssh_port or 22, 8291, device.api_port or 8728]
+    for port in ports:
+        start = time.time()
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                ms = int((time.time() - start) * 1000)
+                return {
+                    'up': True,
+                    'applicable': True,
+                    'detail': f'Reply from {host} in {ms} ms (tcp/{port})',
+                }
+        except OSError:
+            continue
+    return {'up': False, 'applicable': True, 'detail': f'No reply from {host} yet'}
+
+
+def _parse_terse_rows(output):
+    """Parse 'print terse' output into dicts, keeping RouterOS flag letters.
+
+    Terse lines look like ``0  R name=ether1 type=ether …`` where the letters
+    before the first key=value token are flags (R=running, X=disabled, S=slave,
+    D=dynamic). Returns rows with a ``_flags`` string alongside the fields.
+    """
+    rows = []
+    for line in (output or '').splitlines():
+        line = line.strip()
+        if not line or line.startswith(('#', ';;;')):
+            continue
+        flags = ''
+        fields = {}
+        seen_kv = False
+        for token in line.split():
+            if '=' in token:
+                seen_kv = True
+                key, _, value = token.partition('=')
+                fields[key] = value
+            elif not seen_kv and not token.isdigit():
+                flags += token
+        if fields:
+            fields['_flags'] = flags
+            rows.append(fields)
+    return rows
+
+
+def _row_running(row):
+    return 'R' in row.get('_flags', '') or row.get('running') == 'true'
+
+
+def _row_disabled(row):
+    return 'X' in row.get('_flags', '') or row.get('disabled') == 'true'
+
+
+def run_self_check(device):
+    """Verify, on the router, every artifact the provisioning script creates.
+
+    One SSH session, one row per check: {id, label, ok, detail}. Raises
+    RuntimeError when the router cannot be reached at all.
+    """
+    from datetime import datetime
+
+    checks = []
+
+    def add(check_id, label, ok, detail=''):
+        checks.append({'id': check_id, 'label': label, 'ok': bool(ok), 'detail': detail})
+
+    wg_enabled = bool(device.management_wg_enabled and device.management_wg_ip)
+
+    with MikroTikClient(_ssh_config(device, timeout=12)) as client:
+        if not client.connect():
+            raise RuntimeError('Could not connect to router')
+
+        def cli(command):
+            out, _err = client.run_cli(command)
+            return out or ''
+
+        if wg_enabled:
+            add('wg_interface', 'wg-mgmt interface exists',
+                'wg-mgmt' in cli('/interface wireguard print terse'))
+            add('wg_peer', 'Billing server WireGuard peer exists',
+                'infora-billing-mgmt' in cli('/interface wireguard peers print terse'))
+            add('wg_address', 'Tunnel VPN address exists',
+                'infora-mgmt-tunnel' in cli('/ip address print terse'))
+            add('wg_route', 'Route to billing server via tunnel exists',
+                'infora-radius-via-tunnel' in cli('/ip route print terse'))
+
+        add('radius_client', 'RADIUS client entry exists',
+            'infora-billing' in cli('/radius print terse'))
+        incoming = _parse_kv(cli('/radius incoming print'))
+        add('radius_incoming', 'RADIUS incoming (CoA/disconnect) accepted',
+            incoming.get('accept') == 'yes')
+        aaa = _parse_kv(cli('/ppp aaa print'))
+        add('ppp_aaa', 'PPPoE AAA uses RADIUS',
+            aaa.get('use-radius') == 'yes')
+
+        filter_out = cli('/ip firewall filter print terse')
+        add('fasttrack_absent', 'FastTrack removed (accounting integrity)',
+            'fasttrack-connection' not in filter_out)
+        if wg_enabled:
+            add('mgmt_firewall', 'Winbox/API/SSH firewall rule exists (tunnel only)',
+                MGMT_ACCESS_COMMENT in filter_out)
+
+        add('nat_masquerade', 'NAT masquerade rule exists',
+            'infora-masquerade' in cli('/ip firewall nat print terse'))
+
+        snmp = _parse_kv(cli('/snmp print'))
+        add('snmp', 'SNMP monitoring enabled',
+            snmp.get('enabled') in ('yes', 'true'))
+
+        mgmt_user = (device.username or '').strip()
+        if mgmt_user:
+            add('mgmt_user', 'Billing management user exists',
+                f'name={mgmt_user}' in cli('/user print terse'))
+
+        services = {r.get('name'): r for r in _parse_terse_rows(cli('/ip service print terse'))}
+        api_row = services.get('api')
+        api_port = str(device.api_port or 8728)
+        add('api_service', f'API service enabled on port {api_port}',
+            bool(api_row) and not _row_disabled(api_row) and (api_row.get('port') or '8728') == api_port,
+            f"port {api_row.get('port')}" if api_row else 'api service not found')
+        ssh_row = services.get('ssh')
+        add('ssh_service', 'SSH service enabled',
+            bool(ssh_row) and not _row_disabled(ssh_row))
+
+        if wg_enabled:
+            add('wg_watchdog', 'WireGuard watchdog (netwatch) exists',
+                WG_WATCHDOG_COMMENT in cli('/tool netwatch print terse'))
+
+    passed = sum(1 for c in checks if c['ok'])
+    return {
+        'passed': passed,
+        'total': len(checks),
+        'ok': passed == len(checks),
+        'checks': checks,
+        'at': datetime.now().isoformat(),
+    }
+
+
+def get_provision_status(device):
+    """Return staged onboarding progress for the wizard's live checklist.
+
+    Stages: command_generated → script_fetched → tunnel_up → reachable →
+    self_check (cached summary from the device row). ``online`` is kept for
+    backward compatibility: SSH-reachable OR script fetched recently (the WG
+    tunnel may be up from the router's side while Docker routing converges).
 
     When SSH-reachable, also auto-detects the router model/version.
     """
+    import json as _json
     from datetime import datetime, timedelta
 
     fetched = bool(device.provision_fetch_count and device.provision_fetch_count > 0)
@@ -88,7 +246,9 @@ def get_provision_status(device):
     error = None
     detected = {}
 
-    if fetched:
+    tunnel = probe_tunnel(device)
+
+    if fetched or tunnel['up']:
         try:
             with MikroTikClient(_ssh_config(device, timeout=5)) as client:
                 reachable = bool(client.connect())
@@ -106,6 +266,49 @@ def get_provision_status(device):
     )
     online = reachable or recently_fetched
 
+    # Cached self-check summary (run by the route once reachable, or on demand)
+    self_check = None
+    if getattr(device, 'self_check_result', None):
+        try:
+            cached = _json.loads(device.self_check_result)
+            self_check = {
+                'done': True,
+                'ok': cached.get('ok', False),
+                'passed': cached.get('passed', 0),
+                'total': cached.get('total', 0),
+                'checks': cached.get('checks', []),
+                'at': cached.get('at'),
+            }
+        except (ValueError, TypeError):
+            self_check = None
+    if self_check is None:
+        self_check = {'done': False, 'ok': False, 'passed': 0, 'total': 0, 'checks': [], 'at': None}
+
+    stages = {
+        'command_generated': bool(device.provision_token),
+        'script_fetched': {
+            'done': fetched,
+            'count': device.provision_fetch_count or 0,
+            'at': device.provision_last_fetched_at.isoformat() if device.provision_last_fetched_at else None,
+        },
+        'tunnel_up': {
+            'done': tunnel['up'],
+            'applicable': tunnel['applicable'],
+            'detail': tunnel['detail'],
+        },
+        'reachable': {
+            'done': reachable,
+            'detail': f'Connected to {host} via SSH' if reachable else (error or 'Not reachable yet'),
+        },
+        'self_check': self_check,
+    }
+    complete = (
+        fetched
+        and (tunnel['up'] or not tunnel['applicable'])
+        and reachable
+        and self_check['done'] and self_check['ok']
+    )
+
     return {
         'fetched': fetched,
         'fetch_count': device.provision_fetch_count or 0,
@@ -116,6 +319,8 @@ def get_provision_status(device):
         'management_wg_ip': device.management_wg_ip,
         'detected': detected,
         'error': error,
+        'stages': stages,
+        'complete': complete,
     }
 
 
@@ -136,37 +341,169 @@ def _parse_terse(output):
     return rows
 
 
+def _classify_interface(name, itype):
+    """Map a RouterOS interface to a UI kind for the port map."""
+    t = (itype or '').lower()
+    n = (name or '').lower()
+    if n.startswith('sfp') or '-sfp' in n:
+        return 'sfp'
+    if t in ('wlan', 'wifi') or n.startswith(('wlan', 'wifi')):
+        return 'wlan'
+    if t == 'ether':
+        return 'ether'
+    if t == 'bridge':
+        return 'bridge'
+    if t == 'vlan':
+        return 'vlan'
+    if t == 'wg' or n.startswith('wg'):
+        return 'wg'
+    if 'ppp' in t:
+        return 'ppp'
+    return t or 'other'
+
+
 def list_interfaces(device):
-    """Return ethernet interfaces with an uplink hint (ether1 by convention)."""
-    with MikroTikClient(_ssh_config(device, timeout=8)) as client:
+    """Full interface discovery for the wizard's Ports step.
+
+    Returns {'interfaces': [...], 'device': {...}, 'counts': {...}} — every
+    interface (ethernet, SFP, wireless, bridge, vlan, wg…) with running/
+    disabled state, MAC, speed and an uplink hint, plus a summary of the
+    router itself (model, RouterOS version, architecture, port counts).
+    """
+    with MikroTikClient(_ssh_config(device, timeout=10)) as client:
         if not client.connect():
             raise RuntimeError('Could not connect to router')
-        out, _err = client.run_cli('/interface ethernet print terse')
+        all_out, _ = client.run_cli('/interface print terse')
+        eth_out, _ = client.run_cli('/interface ethernet print terse')
+        res_out, _ = client.run_cli('/system resource print')
+
+    eth_rows = {r.get('name'): r for r in _parse_terse_rows(eth_out) if r.get('name')}
 
     interfaces = []
-    for idx, row in enumerate(_parse_terse(out)):
+    ether_seen = 0
+    for row in _parse_terse_rows(all_out):
         name = row.get('name')
         if not name:
             continue
+        kind = _classify_interface(name, row.get('type'))
+        eth = eth_rows.get(name, {})
+        is_uplink = kind == 'ether' and (ether_seen == 0 or name == 'ether1')
+        if kind == 'ether':
+            ether_seen += 1
         interfaces.append({
             'name': name,
-            'running': row.get('running') == 'true',
-            'disabled': row.get('disabled') == 'true',
-            'is_uplink': idx == 0 or name == 'ether1',
+            'type': row.get('type') or '',
+            'kind': kind,
+            'running': _row_running(row),
+            'disabled': _row_disabled(row),
+            'mac': row.get('mac-address') or eth.get('mac-address'),
+            'mtu': row.get('mtu'),
+            'speed': eth.get('speed'),
+            'comment': (row.get('comment') or '').replace('_', ' ') or None,
+            'is_uplink': is_uplink,
         })
-    return interfaces
+
+    res = _parse_kv(res_out)
+    physical = [i for i in interfaces if i['kind'] in ('ether', 'sfp', 'wlan')]
+    counts = {
+        'total': len(interfaces),
+        'physical': len(physical),
+        'ethernet': sum(1 for i in interfaces if i['kind'] == 'ether'),
+        'sfp': sum(1 for i in interfaces if i['kind'] == 'sfp'),
+        'wireless': sum(1 for i in interfaces if i['kind'] == 'wlan'),
+        'active': sum(1 for i in physical if i['running'] and not i['disabled']),
+    }
+    device_summary = {
+        'model': res.get('board-name') or device.device_model,
+        'version': res.get('version'),
+        'architecture': res.get('architecture-name'),
+        'uptime': res.get('uptime'),
+        'cpu_load': res.get('cpu-load'),
+        'ports': counts['physical'],
+    }
+
+    return {'interfaces': interfaces, 'device': device_summary, 'counts': counts}
+
+
+def interface_traffic(device):
+    """Read rx/tx byte counters for every interface in one SSH call.
+
+    Callers poll this twice and derive per-port throughput from the delta —
+    no flow collector needed. Returns {'at': epoch_seconds, 'stats': [...]}.
+    """
+    with MikroTikClient(_ssh_config(device, timeout=8)) as client:
+        if not client.connect():
+            raise RuntimeError('Could not connect to router')
+        out, _err = client.run_cli('/interface print stats terse')
+
+    def _num(value):
+        try:
+            return int(str(value).replace(',', '').strip() or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    stats = []
+    for row in _parse_terse_rows(out):
+        name = row.get('name')
+        if not name:
+            continue
+        stats.append({
+            'name': name,
+            'rx_bytes': _num(row.get('rx-byte')),
+            'tx_bytes': _num(row.get('tx-byte')),
+            'rx_packets': _num(row.get('rx-packet')),
+            'tx_packets': _num(row.get('tx-packet')),
+        })
+    return {'at': time.time(), 'stats': stats}
+
+
+def set_interface_disabled(device, name, disabled):
+    """Enable/disable a router interface. Refuses to disable the uplink."""
+    if not INTERFACE_NAME_RE.match(name or ''):
+        raise ValueError('Invalid interface name')
+
+    discovery = list_interfaces(device)
+    target = next((i for i in discovery['interfaces'] if i['name'] == name), None)
+    if not target:
+        raise ValueError(f'Interface {name} not found on the router')
+    if disabled and target['is_uplink']:
+        raise ValueError('Refusing to disable the uplink port — it carries the internet feed')
+
+    state = 'yes' if disabled else 'no'
+    with MikroTikClient(_ssh_config(device, timeout=8)) as client:
+        if not client.connect():
+            raise RuntimeError('Could not connect to router')
+        _out, err = client.run_cli(f'/interface set [find name="{name}"] disabled={state}')
+        if err and err.strip():
+            raise RuntimeError(err.strip()[:200])
+
+    target['disabled'] = disabled
+    return target
 
 
 def _subnet_params(subnet):
+    """Deterministic address plan inside the bridge subnet.
+
+    Lower half → hotspot/DHCP pool, upper half → PPPoE pool. Both service
+    types can then run on the same bridge without address collisions, and
+    PPPoE sessions always have a pool to draw from (RADIUS Framed-IP-Address
+    still wins for static-IP plans).
+    """
     net = ipaddress.ip_network(subnet, strict=False)
+    if net.prefixlen > 29:
+        raise ValueError(f'Subnet {net} is too small — use /29 or larger')
     gateway = str(net.network_address + 1)
-    pool_start = str(net.network_address + 2)
-    pool_end = str(net.broadcast_address - 1)
+    lower, upper = net.subnets(prefixlen_diff=1)
+    dhcp_start = str(lower.network_address + 2)  # skip network addr + gateway
+    dhcp_end = str(lower.broadcast_address)
+    pppoe_start = str(upper.network_address)
+    pppoe_end = str(upper.broadcast_address - 1)
     return {
         'subnet': str(net),
         'gateway': gateway,
         'gateway_cidr': f'{gateway}/{net.prefixlen}',
-        'pool_range': f'{pool_start}-{pool_end}',
+        'pool_range': f'{dhcp_start}-{dhcp_end}',
+        'pppoe_pool_range': f'{pppoe_start}-{pppoe_end}',
     }
 
 
@@ -218,13 +555,25 @@ def build_services_commands(opts):
         f'/ip dhcp-server network add address={params["subnet"]} gateway={params["gateway"]} dns-server=8.8.8.8,1.1.1.1',
     ))
 
-    # 6. PPPoE server
+    # 6. PPPoE server — dedicated pool + profile so every session gets an
+    # address even when RADIUS replies carry no Framed-IP-Address.
     if opts.get('pppoe'):
+        steps.append((
+            'pppoe-pool',
+            f':do {{/ip pool remove [find name={PPPOE_POOL_NAME}]}} on-error={{}}; '
+            f'/ip pool add name={PPPOE_POOL_NAME} ranges={params["pppoe_pool_range"]}',
+        ))
+        steps.append((
+            'pppoe-profile',
+            f':do {{/ppp profile remove [find name={PPPOE_PROFILE_NAME}]}} on-error={{}}; '
+            f'/ppp profile add name={PPPOE_PROFILE_NAME} local-address={params["gateway"]} '
+            f'remote-address={PPPOE_POOL_NAME} dns-server=8.8.8.8,1.1.1.1 use-encryption=no',
+        ))
         steps.append((
             'pppoe',
             ':do {/interface pppoe-server server remove [find service-name=infora]} on-error={}; '
             f'/interface pppoe-server server add service-name=infora interface={BRIDGE_NAME} '
-            'one-session-per-host=yes disabled=no; '
+            f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no; '
             '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
         ))
 
@@ -236,7 +585,8 @@ def build_services_commands(opts):
             ':do {/ip hotspot remove [find name=infora]} on-error={}; '
             ':do {/ip hotspot profile remove [find name=infora]} on-error={}; '
             '/ip hotspot profile add name=infora hotspot-address='
-            f'{params["gateway"]} use-radius=yes radius-accounting=yes shared-users={shared}; '
+            f'{params["gateway"]} use-radius=yes radius-accounting=yes '
+            f'radius-interim-update=5m login-by=cookie,http-chap,http-pap shared-users={shared}; '
             f'/ip hotspot add name=infora interface={BRIDGE_NAME} address-pool={POOL_NAME} '
             'profile=infora disabled=no',
         ))

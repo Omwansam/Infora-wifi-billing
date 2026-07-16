@@ -28,6 +28,7 @@ import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
 import DevicesLayout from './DevicesLayout';
 import DeviceStatusBadge from './DeviceStatusBadge';
 import AddDeviceWizard from './AddDeviceWizard';
+import DevicePortsPanel from './DevicePortsPanel';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -45,6 +46,7 @@ export default function MikrotikPage() {
   const [actionId, setActionId] = useState(null);
   const [deploymentIssues, setDeploymentIssues] = useState([]);
   const [provisionModal, setProvisionModal] = useState(null);
+  const [portsPanel, setPortsPanel] = useState(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -412,7 +414,11 @@ export default function MikrotikPage() {
                     >
                       <Terminal className="h-4 w-4" />
                     </button>
-                    <button className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100" title="View details">
+                    <button
+                      onClick={() => setPortsPanel(device)}
+                      className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                      title="Ports & live traffic"
+                    >
                       <Eye className="h-4 w-4" />
                     </button>
                     <button
@@ -437,6 +443,10 @@ export default function MikrotikPage() {
             </motion.div>
           ))}
         </div>
+      )}
+
+      {portsPanel && (
+        <DevicePortsPanel device={portsPanel} onClose={() => setPortsPanel(null)} />
       )}
 
       {provisionModal && (

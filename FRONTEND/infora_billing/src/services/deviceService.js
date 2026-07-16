@@ -332,7 +332,7 @@ class DeviceService {
     return data;
   }
 
-  /** List ethernet interfaces for the bridge-port picker (wizard Step 3) */
+  /** Full interface discovery: {interfaces, device, counts, monitored} (wizard Ports step) */
   async getInterfaces(token, deviceId) {
     const response = await fetch(API_ENDPOINTS.deviceInterfaces(deviceId), {
       method: 'GET',
@@ -342,7 +342,66 @@ class DeviceService {
     if (!response.ok) {
       throw new Error(data.error || `Failed (${response.status})`);
     }
-    return data.interfaces || [];
+    return {
+      interfaces: data.interfaces || [],
+      device: data.device || null,
+      counts: data.counts || null,
+      monitored: data.monitored || [],
+    };
+  }
+
+  /** Run the on-router configuration self-check ("Re-run self-check") */
+  async runSelfCheck(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceSelfCheck(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Self-check failed (${response.status})`);
+    }
+    return data;
+  }
+
+  /** Persist which ports the operator chose to monitor */
+  async saveMonitoredInterfaces(token, deviceId, interfaceNames) {
+    const response = await fetch(API_ENDPOINTS.deviceMonitorInterfaces(deviceId), {
+      method: 'PUT',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify({ interfaces: interfaceNames }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data;
+  }
+
+  /** Interface byte counters — poll twice and derive per-port rates */
+  async getInterfaceTraffic(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceInterfaceTraffic(deviceId), {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data;
+  }
+
+  /** Enable/disable a router port (uplink is refused server-side) */
+  async toggleInterface(token, deviceId, interfaceName, disabled) {
+    const response = await fetch(API_ENDPOINTS.deviceToggleInterface(deviceId, interfaceName), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify({ disabled }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data.interface;
   }
 
   /** Check whether a newer RouterOS version is available (persists versions) */

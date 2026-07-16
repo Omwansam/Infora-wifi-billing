@@ -98,6 +98,33 @@ app.register_blueprint(provision_bp)
 app.register_blueprint(settings_bp)
 
 
+def ensure_schema_upgrades():
+    """Idempotent column additions — the image ships no Alembic migrations,
+    and create_all() never alters existing tables."""
+    from sqlalchemy import inspect as sa_inspect, text
+    additions = {
+        'monitored_interfaces': 'TEXT',
+        'self_check_result': 'TEXT',
+        'self_check_at': 'TIMESTAMP',
+    }
+    try:
+        inspector = sa_inspect(db.engine)
+        existing = {col['name'] for col in inspector.get_columns('mikrotik_devices')}
+        missing = {name: ddl for name, ddl in additions.items() if name not in existing}
+        if not missing:
+            return
+        with db.engine.begin() as conn:
+            for column, ddl in missing.items():
+                conn.execute(text(f'ALTER TABLE mikrotik_devices ADD COLUMN {column} {ddl}'))
+        app.logger.info('Schema upgrade: added mikrotik_devices columns %s', ', '.join(missing))
+    except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
+        app.logger.warning('Schema upgrade check skipped: %s', exc)
+
+
+with app.app_context():
+    ensure_schema_upgrades()
+
+
 @app.before_request
 def handle_api_preflight():
     """Return 200 for CORS preflight on all API routes."""

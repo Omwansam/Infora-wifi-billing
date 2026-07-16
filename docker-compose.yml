@@ -64,6 +64,10 @@ services:
       context: ./config/freeradius
       dockerfile: Dockerfile
     container_name: infora_freeradius
+    # NET_ADMIN: install the return route to the MikroTik management tunnel
+    # subnet (see docker-entrypoint.sh) so RADIUS replies reach NAT'd routers.
+    cap_add:
+      - NET_ADMIN
     environment:
       RADIUS_SECRET: radius_secret_key
     ports:

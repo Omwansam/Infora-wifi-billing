@@ -428,6 +428,240 @@ route('POST', /^\/api\/devices$/, ({ body }) => {
   return ok({ device, message: 'Device added (demo)' });
 });
 
+/* ---------- device onboarding wizard (simulated provisioning) ---------- */
+/* The demo walks the full WaveCore-style flow: one-shot command → script
+   fetch → WireGuard tunnel → reachable → self-check, then port discovery.
+   Progress is driven by elapsed time since the provision token was minted. */
+
+const PHYSICAL_KINDS = ['ether', 'sfp', 'wlan'];
+const provisionClock = new Map(); // deviceId -> epoch ms of token mint
+const demoPorts = new Map(); // deviceId -> interfaces (persists toggles)
+const demoTraffic = new Map(); // deviceId -> byte counters per interface
+
+const SELF_CHECK_ITEMS = [
+  ['wg_interface', 'wg-mgmt interface exists'],
+  ['wg_peer', 'Billing server WireGuard peer exists'],
+  ['wg_address', 'Tunnel VPN address exists'],
+  ['wg_route', 'Route to billing server via tunnel exists'],
+  ['radius_client', 'RADIUS client entry exists'],
+  ['radius_incoming', 'RADIUS incoming (CoA/disconnect) accepted'],
+  ['ppp_aaa', 'PPPoE AAA uses RADIUS'],
+  ['fasttrack_absent', 'FastTrack removed (accounting integrity)'],
+  ['mgmt_firewall', 'Winbox/API/SSH firewall rule exists (tunnel only)'],
+  ['nat_masquerade', 'NAT masquerade rule exists'],
+  ['snmp', 'SNMP monitoring enabled'],
+  ['mgmt_user', 'Billing management user exists'],
+  ['api_service', 'API service enabled on port 8728'],
+  ['ssh_service', 'SSH service enabled'],
+  ['wg_watchdog', 'WireGuard watchdog (netwatch) exists'],
+];
+
+const demoSelfCheck = () => ({
+  passed: SELF_CHECK_ITEMS.length,
+  total: SELF_CHECK_ITEMS.length,
+  ok: true,
+  checks: SELF_CHECK_ITEMS.map(([id, label]) => ({ id, label, ok: true, detail: '' })),
+  at: new Date().toISOString(),
+});
+
+function demoInterfaces(deviceId) {
+  if (!demoPorts.has(deviceId)) {
+    const octet = String(deviceId % 100).padStart(2, '0');
+    const ifaces = [];
+    for (let i = 1; i <= 16; i += 1) {
+      ifaces.push({
+        name: `ether${i}`,
+        type: 'ether',
+        kind: 'ether',
+        running: i <= 6,
+        disabled: false,
+        mac: `DC:2C:6E:${octet}:00:${String(i).padStart(2, '0')}`,
+        mtu: '1500',
+        speed: '1Gbps',
+        comment: i === 1 ? 'WAN uplink' : null,
+        is_uplink: i === 1,
+      });
+    }
+    ifaces.push({
+      name: 'sfp-sfpplus1', type: 'ether', kind: 'sfp', running: true, disabled: false,
+      mac: `DC:2C:6E:${octet}:00:11`, mtu: '1500', speed: '10Gbps', comment: 'fibre backhaul', is_uplink: false,
+    });
+    ifaces.push({
+      name: 'sfp-sfpplus2', type: 'ether', kind: 'sfp', running: false, disabled: false,
+      mac: `DC:2C:6E:${octet}:00:12`, mtu: '1500', speed: '10Gbps', comment: null, is_uplink: false,
+    });
+    ifaces.push({
+      name: 'infora-bridge', type: 'bridge', kind: 'bridge', running: true, disabled: false,
+      mac: null, mtu: '1500', speed: null, comment: 'infora-billing', is_uplink: false,
+    });
+    ifaces.push({
+      name: 'wg-mgmt', type: 'wg', kind: 'wg', running: true, disabled: false,
+      mac: null, mtu: '1420', speed: null, comment: 'infora-mgmt-tunnel', is_uplink: false,
+    });
+    demoPorts.set(deviceId, ifaces);
+  }
+  return demoPorts.get(deviceId);
+}
+
+route('POST', /^\/api\/devices\/(\d+)\/provision-token$/, ({ params }) => {
+  const id = Number(params[0]);
+  provisionClock.set(id, Date.now());
+  return ok({
+    one_liner:
+      `/tool fetch url="https://demo.lumen.app/api/provision/demo-${id}-a1b2c3d4e5f6/script" ` +
+      'dst-path=flash/provision.rsc; :delay 3s; /import flash/provision.rsc; :delay 2s; ' +
+      ':do { /file remove [find name~"provision.rsc"] } on-error={}',
+    expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+  });
+});
+route('DELETE', /^\/api\/devices\/(\d+)\/provision-token$/, () =>
+  ok({ message: 'Provision token revoked (demo)' }));
+
+route('GET', /^\/api\/devices\/(\d+)\/provision-status$/, ({ params }) => {
+  const id = Number(params[0]);
+  if (!provisionClock.has(id)) provisionClock.set(id, Date.now());
+  const elapsed = (Date.now() - provisionClock.get(id)) / 1000;
+  const fetched = elapsed > 5;
+  const tunnelUp = elapsed > 11;
+  const reachable = elapsed > 16;
+  const checked = elapsed > 21;
+  const host = `10.250.0.${(id % 200) + 2}`;
+  const selfCheck = checked
+    ? { done: true, ...demoSelfCheck() }
+    : { done: false, ok: false, passed: 0, total: 0, checks: [], at: null };
+  return {
+    fetched,
+    fetch_count: fetched ? 1 : 0,
+    last_fetched_at: fetched ? new Date().toISOString() : null,
+    reachable,
+    online: reachable,
+    host,
+    management_wg_ip: host,
+    detected: reachable ? { model: 'CCR2004-16G-2S+', version: '7.20.7' } : {},
+    error: null,
+    stages: {
+      command_generated: true,
+      script_fetched: {
+        done: fetched,
+        count: fetched ? 1 : 0,
+        at: fetched ? new Date().toISOString() : null,
+      },
+      tunnel_up: {
+        done: tunnelUp,
+        applicable: true,
+        detail: tunnelUp
+          ? `Reply from ${host} in 12 ms (tcp/8291)`
+          : `No reply from ${host} yet`,
+      },
+      reachable: {
+        done: reachable,
+        detail: reachable ? `Connected to ${host} via SSH` : 'Not reachable yet',
+      },
+      self_check: selfCheck,
+    },
+    complete: checked,
+  };
+});
+
+route('POST', /^\/api\/devices\/(\d+)\/self-check$/, () => demoSelfCheck());
+
+route('GET', /^\/api\/devices\/(\d+)\/interfaces\/traffic$/, ({ params }) => {
+  const id = Number(params[0]);
+  const ifaces = demoInterfaces(id);
+  let counters = demoTraffic.get(id);
+  if (!counters) {
+    counters = {};
+    demoTraffic.set(id, counters);
+  }
+  const stats = ifaces.map((iface, idx) => {
+    const c = counters[iface.name] || {
+      rx: 1e9 + idx * 3.7e8,
+      tx: 4e8 + idx * 1.3e8,
+    };
+    if (iface.running && !iface.disabled) {
+      // bytes accrued since the last poll (~5s) — uplink busier than access ports
+      const base = iface.is_uplink || iface.kind === 'sfp' ? 4e6 : ((idx % 5) + 1) * 3e5;
+      c.rx += Math.round(base * (0.6 + Math.random() * 0.8));
+      c.tx += Math.round(base * 0.35 * (0.6 + Math.random() * 0.8));
+    }
+    counters[iface.name] = c;
+    return { name: iface.name, rx_bytes: c.rx, tx_bytes: c.tx, rx_packets: 0, tx_packets: 0 };
+  });
+  return { at: Date.now() / 1000, stats };
+});
+
+route('GET', /^\/api\/devices\/(\d+)\/interfaces$/, ({ params }) => {
+  const id = Number(params[0]);
+  const interfaces = demoInterfaces(id);
+  const physical = interfaces.filter((i) => PHYSICAL_KINDS.includes(i.kind));
+  const device = db.devices.find((d) => d.id === id);
+  return {
+    interfaces,
+    device: {
+      model: 'CCR2004-16G-2S+',
+      version: '7.20.7',
+      architecture: 'arm64',
+      uptime: '12d 4h',
+      cpu_load: '4',
+      ports: physical.length,
+    },
+    counts: {
+      total: interfaces.length,
+      physical: physical.length,
+      ethernet: interfaces.filter((i) => i.kind === 'ether').length,
+      sfp: interfaces.filter((i) => i.kind === 'sfp').length,
+      wireless: interfaces.filter((i) => i.kind === 'wlan').length,
+      active: physical.filter((i) => i.running && !i.disabled).length,
+    },
+    monitored: device?.monitored_interfaces || [],
+  };
+});
+
+route('PUT', /^\/api\/devices\/(\d+)\/interfaces\/monitor$/, ({ params, body }) => {
+  const device = db.devices.find((d) => d.id === Number(params[0]));
+  const names = Array.isArray(body?.interfaces) ? body.interfaces : [];
+  if (device) device.monitored_interfaces = names;
+  return ok({ monitored: names });
+});
+
+route('POST', /^\/api\/devices\/(\d+)\/interfaces\/([^/]+)\/toggle$/, ({ params, body }) => {
+  const ifaces = demoInterfaces(Number(params[0]));
+  const iface = ifaces.find((i) => i.name === decodeURIComponent(params[1])) || ifaces[0];
+  // The UI guards the uplink client-side; the demo never disables it either.
+  if (!(iface.is_uplink && body?.disabled)) {
+    iface.disabled = Boolean(body?.disabled);
+  }
+  return ok({ interface: { ...iface } });
+});
+
+route('POST', /^\/api\/devices\/(\d+)\/configure-services$/, ({ body }) => {
+  const services = [body?.pppoe && 'PPPoE', body?.hotspot && 'Hotspot'].filter(Boolean);
+  const ports = body?.bridge_ports || [];
+  const log = [
+    { step: 'queued', status: 'ok', detail: 'Starting device configuration...' },
+    { step: 'connect', status: 'ok', detail: 'Connecting via SSH...' },
+    { step: 'bridge', status: 'ok', detail: 'bridge configured' },
+    ...ports.map((p) => ({ step: `bridge-port:${p}`, status: 'ok', detail: `bridge-port:${p} configured` })),
+    { step: 'address', status: 'ok', detail: 'address configured' },
+    { step: 'pool', status: 'ok', detail: 'pool configured' },
+    { step: 'dhcp', status: 'ok', detail: 'dhcp configured' },
+    ...(body?.pppoe ? [{ step: 'pppoe', status: 'ok', detail: 'pppoe configured' }] : []),
+    ...(body?.hotspot ? [{ step: 'hotspot', status: 'ok', detail: 'hotspot configured' }] : []),
+    { step: 'done', status: 'ok', detail: 'Configuration complete.' },
+  ];
+  return {
+    success: true,
+    log,
+    summary: {
+      services,
+      ports,
+      subnet: body?.subnet || '172.31.0.0/16',
+      gateway: '172.31.0.1',
+      anti_sharing: Boolean(body?.hotspot && body?.anti_sharing),
+    },
+  };
+});
+
 /* ---------- ISPs ---------- */
 
 route('GET', /^\/api\/isps\/stats$/, () => ({

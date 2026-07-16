@@ -15,6 +15,9 @@ from services.device_config_ops import (
     check_firmware,
     upgrade_firmware,
     reboot_device,
+    run_self_check,
+    set_interface_disabled,
+    interface_traffic,
 )
 from services.device_backups import (
     create_backup,
@@ -69,6 +72,8 @@ def serialize_device(device):
             'is_active': device.is_active,
             'management_wg_enabled': bool(getattr(device, 'management_wg_enabled', False)),
             'management_wg_ip': getattr(device, 'management_wg_ip', None),
+            'monitored_interfaces': json.loads(device.monitored_interfaces) if getattr(device, 'monitored_interfaces', None) else [],
+            'self_check_at': device.self_check_at.isoformat() if getattr(device, 'self_check_at', None) else None,
             'created_at': device.created_at.isoformat() if device.created_at else None,
             'updated_at': device.updated_at.isoformat() if device.updated_at else None,
             'zone_id': device.zone_id,
@@ -861,27 +866,125 @@ def device_provision_status(device_id):
         device.device_model = detected['model'][:50]
         dirty = True
 
+    # First time the router becomes reachable, run the configuration
+    # self-check automatically and cache the result on the device.
+    if status['reachable'] and not device.self_check_result:
+        try:
+            result = run_self_check(device)
+            device.self_check_result = json.dumps(result)
+            device.self_check_at = datetime.now()
+            status['stages']['self_check'] = {'done': True, **result}
+            status['complete'] = (
+                status['stages']['script_fetched']['done']
+                and (status['stages']['tunnel_up']['done'] or not status['stages']['tunnel_up']['applicable'])
+                and result.get('ok', False)
+            )
+            dirty = True
+        except Exception as exc:
+            current_app.logger.warning('Auto self-check failed for device %s: %s', device.id, exc)
+
     if dirty:
         db.session.commit()
 
     return jsonify(status), 200
 
 
-@devices_bp.route('/<int:device_id>/interfaces', methods=['GET'])
+@devices_bp.route('/<int:device_id>/self-check', methods=['POST'])
 @jwt_required()
-def device_interfaces(device_id):
-    """List ethernet interfaces for the bridge-port picker (wizard Step 3)."""
+def device_self_check(device_id):
+    """Run the on-router configuration self-check ("Re-run self-check")."""
     device = MikrotikDevice.query.get_or_404(device_id)
     current_user = get_current_user()
     if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
         return jsonify({'error': 'Access denied'}), 403
 
     try:
-        interfaces = list_interfaces(device)
+        result = run_self_check(device)
+    except Exception as exc:
+        return jsonify({'error': f'Self-check failed: {exc}', 'checks': []}), 502
+
+    device.self_check_result = json.dumps(result)
+    device.self_check_at = datetime.now()
+    db.session.commit()
+    return jsonify(result), 200
+
+
+@devices_bp.route('/<int:device_id>/interfaces', methods=['GET'])
+@jwt_required()
+def device_interfaces(device_id):
+    """Full interface discovery: port map + device summary (wizard Ports step)."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    try:
+        discovery = list_interfaces(device)
     except Exception as exc:
         return jsonify({'error': f'Could not read interfaces: {exc}', 'interfaces': []}), 502
 
-    return jsonify({'interfaces': interfaces}), 200
+    discovery['monitored'] = (
+        json.loads(device.monitored_interfaces) if device.monitored_interfaces else []
+    )
+    return jsonify(discovery), 200
+
+
+@devices_bp.route('/<int:device_id>/interfaces/traffic', methods=['GET'])
+@jwt_required()
+def device_interface_traffic(device_id):
+    """Interface byte counters — clients poll and derive per-port rates."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    try:
+        data = interface_traffic(device)
+    except Exception as exc:
+        return jsonify({'error': f'Could not read traffic counters: {exc}', 'stats': []}), 502
+
+    return jsonify(data), 200
+
+
+@devices_bp.route('/<int:device_id>/interfaces/monitor', methods=['PUT'])
+@jwt_required()
+def device_set_monitored_interfaces(device_id):
+    """Persist which ports the operator chose to monitor (wizard Ports step)."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    payload = request.get_json(silent=True) or {}
+    names = payload.get('interfaces')
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        return jsonify({'error': 'interfaces must be a list of interface names'}), 400
+
+    device.monitored_interfaces = json.dumps(names)
+    db.session.commit()
+    return jsonify({'success': True, 'monitored': names}), 200
+
+
+@devices_bp.route('/<int:device_id>/interfaces/<path:interface_name>/toggle', methods=['POST'])
+@jwt_required()
+def device_toggle_interface(device_id, interface_name):
+    """Enable/disable a router port (uplink is refused server-side)."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    payload = request.get_json(silent=True) or {}
+    disabled = bool(payload.get('disabled'))
+
+    try:
+        iface = set_interface_disabled(device, interface_name, disabled)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        return jsonify({'error': f'Could not update interface: {exc}'}), 502
+
+    return jsonify({'success': True, 'interface': iface}), 200
 
 
 @devices_bp.route('/<int:device_id>/configure-services', methods=['POST'])

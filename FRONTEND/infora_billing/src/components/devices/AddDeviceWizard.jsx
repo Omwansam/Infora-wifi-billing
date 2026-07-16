@@ -21,18 +21,26 @@ import {
   Activity,
   RefreshCw,
   Wifi,
+  Search,
+  Power,
+  Network,
+  Zap,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
 import deviceService from '../../services/deviceService';
 import { getRadiusServerHost } from '../../lib/mikrotikProvision';
+import { useInterfaceRates, formatBps } from '../../hooks/useInterfaceRates';
 
 const STEPS = [
   { id: 1, title: 'Identity', caption: 'Name your router', icon: Wifi },
   { id: 2, title: 'Provision', caption: 'Run the command', icon: Shield },
-  { id: 3, title: 'Services', caption: 'PPPoE / Hotspot', icon: Settings2 },
-  { id: 4, title: 'Done', caption: 'Live & summary', icon: CheckCircle2 },
+  { id: 3, title: 'Ports', caption: 'Discover & monitor', icon: Cable },
+  { id: 4, title: 'Services', caption: 'PPPoE / Hotspot', icon: Settings2 },
+  { id: 5, title: 'Done', caption: 'Live & summary', icon: CheckCircle2 },
 ];
+
+const PHYSICAL_KINDS = ['ether', 'sfp', 'wlan'];
 
 const SUBNET_RE = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
 const DEFAULT_SUBNET = '172.31.0.0/16';
@@ -51,11 +59,21 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
   const [provisionData, setProvisionData] = useState(null);
   const [provisionStatus, setProvisionStatus] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [copiedOnce, setCopiedOnce] = useState(false);
+  const [selfCheckOpen, setSelfCheckOpen] = useState(false);
+  const [rerunningCheck, setRerunningCheck] = useState(false);
 
-  // Step 3 — services
-  const [interfaces, setInterfaces] = useState([]);
+  // Step 3 — ports (interface discovery)
+  const [discovery, setDiscovery] = useState(null);
   const [loadingIfaces, setLoadingIfaces] = useState(false);
   const [ifaceError, setIfaceError] = useState(null);
+  const [monitored, setMonitored] = useState([]);
+  const [portTab, setPortTab] = useState('active');
+  const [portQuery, setPortQuery] = useState('');
+  const [togglingPort, setTogglingPort] = useState(null);
+  const [savingPorts, setSavingPorts] = useState(false);
+
+  // Step 4 — services
   const [serviceForm, setServiceForm] = useState({
     pppoe: true,
     hotspot: false,
@@ -66,18 +84,21 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
   const [useCustomSubnet, setUseCustomSubnet] = useState(false);
   const [configuring, setConfiguring] = useState(false);
 
-  // Step 4 — result
+  // Step 5 — result
   const [configResult, setConfigResult] = useState(null);
 
   const showIspPicker = isps.length > 1;
   const selectedIsp = isps.find((isp) => String(isp.id) === String(form.isp_id));
   const isOnline = Boolean(provisionStatus?.online);
+  const stages = provisionStatus?.stages;
+  const allInterfaces = discovery?.interfaces || [];
+  const etherInterfaces = allInterfaces.filter((i) => i.kind === 'ether');
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
   const handleServiceChange = (field, value) =>
     setServiceForm((prev) => ({ ...prev, [field]: value }));
 
-  // --- Step 2 polling: is the router online yet? ---
+  // --- Step 2 polling: staged provisioning progress ---
   useEffect(() => {
     if (step !== 2 || !createdDevice) return undefined;
     let active = true;
@@ -98,32 +119,44 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
     };
   }, [step, createdDevice]);
 
-  // --- Step 3: load interfaces for the bridge-port picker ---
-  useEffect(() => {
-    if (step !== 3 || !createdDevice) return undefined;
-    let active = true;
+  // --- Step 3: full interface discovery for the port map ---
+  const loadDiscovery = async (force = false) => {
+    if (!createdDevice || (discovery && !force)) return;
     setLoadingIfaces(true);
     setIfaceError(null);
-    (async () => {
-      try {
-        const token = getAccessToken();
-        const ifs = await deviceService.getInterfaces(token, createdDevice.id);
-        if (!active) return;
-        setInterfaces(ifs);
-        setServiceForm((prev) => ({
-          ...prev,
-          bridge_ports: ifs.filter((i) => !i.is_uplink).map((i) => i.name),
-        }));
-      } catch (e) {
-        if (active) setIfaceError(e.message || 'Could not read interfaces');
-      } finally {
-        if (active) setLoadingIfaces(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
+    try {
+      const token = getAccessToken();
+      const data = await deviceService.getInterfaces(token, createdDevice.id);
+      setDiscovery(data);
+      const physical = data.interfaces.filter((i) => PHYSICAL_KINDS.includes(i.kind));
+      setMonitored(
+        data.monitored?.length
+          ? data.monitored
+          : physical.filter((i) => i.running && !i.disabled).map((i) => i.name)
+      );
+      setServiceForm((prev) => ({
+        ...prev,
+        bridge_ports: data.interfaces
+          .filter((i) => i.kind === 'ether' && !i.is_uplink)
+          .map((i) => i.name),
+      }));
+    } catch (e) {
+      setIfaceError(e.message || 'Could not read interfaces');
+    } finally {
+      setLoadingIfaces(false);
+    }
+  };
+
+  useEffect(() => {
+    if (step === 3 && createdDevice && !discovery) loadDiscovery();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, createdDevice]);
+
+  // Live per-port throughput while the port map is on screen
+  const portRates = useInterfaceRates(
+    createdDevice?.id,
+    step === 3 && allInterfaces.length > 0
+  );
 
   // Step 1 → register device (auto NAS IP/model) + mint provision token.
   const handleRegisterAndProvision = async () => {
@@ -168,10 +201,78 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
     try {
       await navigator.clipboard.writeText(provisionData.one_liner);
       setCopied(true);
+      setCopiedOnce(true);
       toast.success('Command copied');
       setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error('Could not copy to clipboard');
+    }
+  };
+
+  const rerunSelfCheck = async () => {
+    if (!createdDevice || rerunningCheck) return;
+    setRerunningCheck(true);
+    try {
+      const token = getAccessToken();
+      const result = await deviceService.runSelfCheck(token, createdDevice.id);
+      setProvisionStatus((prev) =>
+        prev
+          ? { ...prev, stages: { ...prev.stages, self_check: { done: true, ...result } } }
+          : prev
+      );
+      (result.ok ? toast.success : toast.error)(
+        `Self-check: ${result.passed}/${result.total} checks passed`
+      );
+    } catch (e) {
+      toast.error(e.message || 'Self-check failed');
+    } finally {
+      setRerunningCheck(false);
+    }
+  };
+
+  const toggleMonitored = (name) => {
+    setMonitored((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+  };
+
+  const handleTogglePort = async (iface, event) => {
+    event.stopPropagation();
+    if (iface.is_uplink && !iface.disabled) {
+      toast.error('The uplink port carries the internet feed — it cannot be disabled');
+      return;
+    }
+    setTogglingPort(iface.name);
+    try {
+      const token = getAccessToken();
+      const updated = await deviceService.toggleInterface(
+        token, createdDevice.id, iface.name, !iface.disabled
+      );
+      setDiscovery((prev) => ({
+        ...prev,
+        interfaces: prev.interfaces.map((x) =>
+          x.name === iface.name ? { ...x, disabled: updated.disabled } : x
+        ),
+      }));
+      toast.success(`${iface.name} ${updated.disabled ? 'disabled' : 'enabled'}`);
+    } catch (e) {
+      toast.error(e.message || 'Could not update the port');
+    } finally {
+      setTogglingPort(null);
+    }
+  };
+
+  const handleSavePorts = async () => {
+    if (!createdDevice) return setStep(4);
+    setSavingPorts(true);
+    try {
+      const token = getAccessToken();
+      await deviceService.saveMonitoredInterfaces(token, createdDevice.id, monitored);
+      setStep(4);
+    } catch (e) {
+      toast.error(e.message || 'Could not save the port selection');
+    } finally {
+      setSavingPorts(false);
     }
   };
 
@@ -206,7 +307,7 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
       };
       const res = await deviceService.configureServices(token, createdDevice.id, opts);
       setConfigResult(res);
-      setStep(4);
+      setStep(5);
       if (res.success) toast.success('Services configured');
       else toast.error('Configuration completed with errors — see log');
     } catch (e) {
@@ -235,7 +336,7 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
 
   const headerBack = () => {
     if (step === 1) onClose();
-    else if (step === 4) finishWizard();
+    else if (step === 5) finishWizard();
     else setStep((s) => Math.max(s - 1, 1));
   };
 
@@ -413,47 +514,358 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                     </p>
                   </div>
 
-                  {/* Live online status */}
-                  <div className={`rounded-xl border-2 p-4 transition-colors ${
-                    isOnline ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      {isOnline ? (
-                        <span className="relative flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
-                        </span>
-                      ) : (
-                        <Loader2 className="h-4 w-4 text-gray-400 animate-spin" />
-                      )}
-                      <div className="min-w-0">
-                        {isOnline ? (
-                          <>
-                            <p className="text-sm font-semibold text-emerald-800">
-                              {createdDevice?.name} is online at {provisionStatus?.host}
-                            </p>
-                            <p className="text-xs text-emerald-700">
-                              Provisioning detected{provisionStatus?.fetch_count ? ` · script fetched ${provisionStatus.fetch_count}×` : ''}
-                              {provisionStatus?.detected?.model ? ` · ${provisionStatus.detected.model}` : ''}. Continue to configure services.
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="text-sm font-semibold text-gray-700">Waiting for the router…</p>
-                            <p className="text-xs text-gray-500">
-                              Run the command above. This turns green automatically once the router checks in.
-                            </p>
-                          </>
-                        )}
+                  {/* Live provisioning checklist */}
+                  {(() => {
+                    const selfCheck = stages?.self_check;
+                    const tunnelApplicable = stages ? stages.tunnel_up?.applicable !== false : true;
+                    const checklist = [
+                      {
+                        id: 'copy',
+                        title: 'Copy the one-shot provisioning command',
+                        desc: 'Click the copy button above — the command is copied to your clipboard.',
+                        done: copiedOnce || Boolean(stages?.script_fetched?.done),
+                      },
+                      {
+                        id: 'fetch',
+                        title: 'Paste in Winbox → New Terminal',
+                        desc: stages?.script_fetched?.done
+                          ? `Script fetched ${stages.script_fetched.count}× — provisioning started.`
+                          : "Waiting for the script to start. We're listening for the first fetch.",
+                        done: Boolean(stages?.script_fetched?.done),
+                      },
+                      ...(tunnelApplicable ? [{
+                        id: 'tunnel',
+                        title: 'WireGuard tunnel established',
+                        desc: stages?.tunnel_up?.done
+                          ? `Your MikroTik dialed back through the encrypted tunnel. ${stages.tunnel_up.detail}`
+                          : 'Waiting for the router to dial back through the encrypted tunnel.',
+                        done: Boolean(stages?.tunnel_up?.done),
+                      }] : []),
+                      {
+                        id: 'reach',
+                        title: 'Device online and reachable',
+                        desc: stages?.reachable?.done
+                          ? `${stages.reachable.detail} — two-way connectivity confirmed.`
+                          : 'First reply confirms two-way connectivity.',
+                        done: Boolean(stages?.reachable?.done),
+                      },
+                      {
+                        id: 'check',
+                        title: 'Configuration self-check',
+                        desc: selfCheck?.done
+                          ? (selfCheck.ok
+                            ? `All ${selfCheck.total} checks passed — the router is configured exactly as expected.`
+                            : `${selfCheck.passed}/${selfCheck.total} checks passed — review the failing items below.`)
+                          : 'Verifies every artifact on the router once it is reachable.',
+                        done: Boolean(selfCheck?.done && selfCheck?.ok),
+                        warn: Boolean(selfCheck?.done && !selfCheck?.ok),
+                      },
+                    ];
+                    const firstPending = checklist.findIndex((c) => !c.done && !c.warn);
+                    return (
+                      <div className="rounded-xl border-2 border-gray-200 bg-white p-5">
+                        <div className="flex items-center justify-between mb-4">
+                          <p className={`text-xs font-bold uppercase tracking-wider ${
+                            provisionStatus?.complete ? 'text-emerald-600' : 'text-gray-400'
+                          }`}>
+                            <span className={`inline-block h-2 w-2 rounded-full mr-2 ${
+                              provisionStatus?.complete ? 'bg-emerald-500' : 'bg-gray-300 animate-pulse'
+                            }`} />
+                            {provisionStatus?.complete ? 'Provisioning complete' : 'Provisioning in progress'}
+                          </p>
+                          {provisionStatus?.complete && (
+                            <p className="text-xs font-medium text-gray-500">Click Next to pick ports</p>
+                          )}
+                        </div>
+                        <ol className="space-y-0">
+                          {checklist.map((item, idx) => (
+                            <li key={item.id} className="relative flex gap-3 pb-5 last:pb-0">
+                              {idx < checklist.length - 1 && (
+                                <span className={`absolute left-[13px] top-7 bottom-0 w-0.5 ${
+                                  item.done ? 'bg-emerald-300' : 'bg-gray-200'
+                                }`} />
+                              )}
+                              <span className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full shrink-0 ${
+                                item.done
+                                  ? 'bg-emerald-500 text-white'
+                                  : item.warn
+                                    ? 'bg-amber-100 text-amber-600 border-2 border-amber-400'
+                                    : idx === firstPending
+                                      ? 'bg-white border-2 border-orange-400'
+                                      : 'bg-gray-100 border-2 border-gray-200'
+                              }`}>
+                                {item.done ? (
+                                  <Check className="h-4 w-4" />
+                                ) : item.warn ? (
+                                  <X className="h-4 w-4" />
+                                ) : idx === firstPending ? (
+                                  <Loader2 className="h-3.5 w-3.5 text-orange-500 animate-spin" />
+                                ) : (
+                                  <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+                                )}
+                              </span>
+                              <div className="min-w-0 pt-0.5">
+                                <p className={`text-sm font-semibold ${
+                                  item.done ? 'text-gray-900' : item.warn ? 'text-amber-800' : 'text-gray-500'
+                                }`}>
+                                  {item.title}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
+
+                                {/* Self-check detail rows */}
+                                {item.id === 'check' && selfCheck?.done && (
+                                  <div className="mt-2 space-y-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelfCheckOpen((v) => !v)}
+                                      className="text-xs font-medium text-orange-600 hover:text-orange-700"
+                                    >
+                                      {selfCheckOpen ? 'Hide checks' : `Show ${selfCheck.total} checks`}
+                                    </button>
+                                    {selfCheckOpen && (
+                                      <ul className="space-y-1">
+                                        {(selfCheck.checks || []).map((c) => (
+                                          <li key={c.id} className="flex items-start gap-1.5 text-xs">
+                                            {c.ok ? (
+                                              <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-px" />
+                                            ) : (
+                                              <X className="h-3.5 w-3.5 text-rose-500 shrink-0 mt-px" />
+                                            )}
+                                            <span className={c.ok ? 'text-gray-600' : 'text-rose-600 font-medium'}>
+                                              {c.label}
+                                              {!c.ok && c.detail ? ` — ${c.detail}` : ''}
+                                            </span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={rerunSelfCheck}
+                                      disabled={rerunningCheck}
+                                      className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 underline hover:text-gray-800 disabled:opacity-50"
+                                    >
+                                      {rerunningCheck && <Loader2 className="h-3 w-3 animate-spin" />}
+                                      Re-run self-check
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
                       </div>
-                    </div>
-                  </div>
+                    );
+                  })()}
                 </motion.div>
               )}
 
-              {/* ---------------- STEP 3: SERVICES ---------------- */}
+              {/* ---------------- STEP 3: PORTS (interface discovery) ---------------- */}
               {step === 3 && (
-                <motion.div key="step-3" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-6">
+                <motion.div key="step-3" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-5">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-sky-600 mb-1">Interface discovery</p>
+                    <p className="text-base font-semibold text-gray-900">Choose what to monitor</p>
+                    <p className="text-sm text-gray-500">
+                      We read the router through the private tunnel, identify its model, and map the
+                      live interfaces. Select only the ports that matter operationally.
+                    </p>
+                  </div>
+
+                  {/* Tunnel banner */}
+                  {createdDevice?.management_wg_ip || provisionStatus?.management_wg_ip ? (
+                    <div className={`rounded-lg border px-4 py-2.5 text-sm flex items-center gap-2 ${
+                      provisionStatus?.stages?.tunnel_up?.done
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-gray-50 border-gray-200 text-gray-600'
+                    }`}>
+                      <Check className="h-4 w-4 shrink-0" />
+                      <span className="font-mono text-xs">
+                        wg-mgmt is present · {provisionStatus?.management_wg_ip || vpnAddress} ·{' '}
+                        {provisionStatus?.stages?.tunnel_up?.done ? 'running' : 'standby'}
+                      </span>
+                    </div>
+                  ) : null}
+
+                  {/* Device summary card */}
+                  {discovery?.device && (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 flex items-center gap-4">
+                      <div className="flex items-center justify-center h-11 w-11 rounded-lg bg-white border border-gray-200 text-gray-600 shrink-0">
+                        <Router className="h-6 w-6" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-gray-900 truncate">
+                          {discovery.device.model || createdDevice?.name}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {discovery.device.version && <>RouterOS {discovery.device.version}</>}
+                          {discovery.device.architecture && <> · {discovery.device.architecture}</>}
+                          {' '}· {discovery.device.ports} ports
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-emerald-600">
+                          {discovery.counts?.active ?? 0} active
+                        </p>
+                        <p className="text-xs text-gray-400">of {discovery.counts?.physical ?? 0}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {loadingIfaces && (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-6 justify-center">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Reading interfaces through the tunnel…
+                    </div>
+                  )}
+                  {ifaceError && !loadingIfaces && (
+                    <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 flex items-center justify-between gap-3">
+                      <span>Could not read interfaces yet: {ifaceError}</span>
+                      <button
+                        type="button"
+                        onClick={() => loadDiscovery(true)}
+                        className="inline-flex items-center gap-1 font-semibold text-amber-900 underline shrink-0"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" /> Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {allInterfaces.length > 0 && (
+                    <>
+                      {/* Filter tabs + search */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-1">Select</span>
+                        {[
+                          { id: 'active', label: `All active ${discovery?.counts?.active ?? 0}` },
+                          { id: 'ether', label: `Ethernet ${discovery?.counts?.ethernet ?? 0}` },
+                          { id: 'sfp', label: `SFP ${discovery?.counts?.sfp ?? 0}` },
+                          { id: 'wlan', label: `Wireless ${discovery?.counts?.wireless ?? 0}` },
+                          { id: 'all', label: 'All' },
+                        ].map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setPortTab(tab.id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                              portTab === tab.id
+                                ? 'bg-sky-50 border-sky-400 text-sky-700'
+                                : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => { setPortTab('active'); setPortQuery(''); }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-white border-gray-200 text-gray-400 hover:text-gray-600"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <input
+                          type="text"
+                          value={portQuery}
+                          onChange={(e) => setPortQuery(e.target.value)}
+                          placeholder="Filter interfaces"
+                          className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                        />
+                      </div>
+
+                      {/* Port map */}
+                      {(() => {
+                        const filtered = allInterfaces
+                          .filter((i) => {
+                            if (portTab === 'active') return PHYSICAL_KINDS.includes(i.kind) && i.running && !i.disabled;
+                            if (portTab === 'ether') return i.kind === 'ether';
+                            if (portTab === 'sfp') return i.kind === 'sfp';
+                            if (portTab === 'wlan') return i.kind === 'wlan';
+                            return true;
+                          })
+                          .filter((i) => !portQuery || i.name.toLowerCase().includes(portQuery.toLowerCase()));
+                        if (filtered.length === 0) {
+                          return <p className="text-xs text-gray-400 py-4 text-center">No interfaces match this filter.</p>;
+                        }
+                        return (
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Port map</p>
+                              <p className="text-xs text-gray-500">
+                                {monitored.length} selected for monitoring
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-6 gap-2.5">
+                              {filtered.map((iface) => {
+                                const selected = monitored.includes(iface.name);
+                                const Icon = iface.kind === 'wlan' ? Wifi : iface.kind === 'sfp' ? Zap : Network;
+                                return (
+                                  <div
+                                    key={iface.name}
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => toggleMonitored(iface.name)}
+                                    onKeyDown={(e) => e.key === 'Enter' && toggleMonitored(iface.name)}
+                                    className={`relative rounded-xl border-2 p-3 cursor-pointer transition-colors text-center ${
+                                      selected
+                                        ? 'border-sky-500 bg-sky-50'
+                                        : 'border-gray-200 bg-white hover:border-gray-300'
+                                    } ${iface.disabled ? 'opacity-60' : ''}`}
+                                    title={[
+                                      iface.mac,
+                                      iface.speed,
+                                      iface.comment,
+                                      iface.is_uplink ? 'uplink / WAN' : null,
+                                    ].filter(Boolean).join(' · ') || iface.name}
+                                  >
+                                    <span className={`absolute top-2 right-2 h-2 w-2 rounded-full ${
+                                      iface.disabled ? 'bg-rose-400' : iface.running ? 'bg-emerald-500' : 'bg-gray-300'
+                                    }`} />
+                                    <Icon className={`h-5 w-5 mx-auto ${selected ? 'text-sky-600' : 'text-gray-400'}`} />
+                                    <p className="font-mono text-[11px] font-semibold text-gray-800 mt-1.5 truncate">
+                                      {iface.name}
+                                    </p>
+                                    {portRates[iface.name] && !iface.disabled && (
+                                      <p className="font-mono text-[9px] text-gray-500 mt-0.5 truncate">
+                                        ↓{formatBps(portRates[iface.name].rx_bps)} ↑{formatBps(portRates[iface.name].tx_bps)}
+                                      </p>
+                                    )}
+                                    {iface.is_uplink ? (
+                                      <p className="text-[9px] uppercase tracking-wide text-orange-500 font-bold mt-0.5">uplink</p>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleTogglePort(iface, e)}
+                                        disabled={togglingPort === iface.name}
+                                        className={`mt-0.5 inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                                          iface.disabled ? 'text-rose-500 hover:text-rose-700' : 'text-gray-400 hover:text-gray-600'
+                                        }`}
+                                        title={iface.disabled ? 'Enable this port' : 'Disable this port'}
+                                      >
+                                        {togglingPort === iface.name ? (
+                                          <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                                        ) : (
+                                          <Power className="h-2.5 w-2.5" />
+                                        )}
+                                        {iface.disabled ? 'off' : 'on'}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </>
+                  )}
+                </motion.div>
+              )}
+
+              {/* ---------------- STEP 4: SERVICES ---------------- */}
+              {step === 4 && (
+                <motion.div key="step-4" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-6">
                   <div>
                     <p className="text-base font-semibold text-gray-900">Service types</p>
                     <p className="text-sm text-gray-500 mb-3">Choose what this router should run for subscribers.</p>
@@ -528,11 +940,11 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                       <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-500">
                         Interfaces will be read once the router is online. You can still apply config — the uplink is left untouched.
                       </div>
-                    ) : interfaces.length === 0 && !loadingIfaces ? (
+                    ) : etherInterfaces.length === 0 && !loadingIfaces ? (
                       <p className="text-xs text-gray-400">No ethernet interfaces detected yet.</p>
                     ) : (
                       <div className="space-y-2">
-                        {interfaces.map((iface) => {
+                        {etherInterfaces.map((iface) => {
                           const selected = serviceForm.bridge_ports.includes(iface.name);
                           return (
                             <button
@@ -601,9 +1013,9 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                 </motion.div>
               )}
 
-              {/* ---------------- STEP 4: DONE ---------------- */}
-              {step === 4 && (
-                <motion.div key="step-4" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-5">
+              {/* ---------------- STEP 5: DONE ---------------- */}
+              {step === 5 && (
+                <motion.div key="step-5" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-5">
                   <div className="flex items-center gap-3">
                     {configResult?.success ? (
                       <CheckCircle2 className="h-8 w-8 text-emerald-500" />
@@ -675,7 +1087,7 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
 
           {/* Footer */}
           <div className="px-6 sm:px-8 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl flex items-center justify-between">
-            {step === 4 ? (
+            {step === 5 ? (
               <>
                 <button
                   type="button"
@@ -731,13 +1143,37 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                         isOnline ? 'text-white bg-orange-500 hover:bg-orange-600' : 'text-orange-700 bg-orange-100 hover:bg-orange-200'
                       }`}
                     >
-                      {isOnline ? 'Configure services' : 'Configure anyway'}
+                      {isOnline ? 'Pick ports' : 'Continue anyway'}
                       <ChevronRight className="h-4 w-4 ml-1" />
                     </button>
                   </div>
                 )}
 
                 {step === 3 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStep(4)}
+                      className="px-4 py-2.5 text-sm font-medium text-gray-600 hover:text-gray-900"
+                    >
+                      Skip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSavePorts}
+                      disabled={savingPorts || loadingIfaces}
+                      className="inline-flex items-center px-5 py-2.5 text-sm font-semibold text-white bg-orange-500 rounded-lg hover:bg-orange-600 shadow-sm disabled:opacity-50"
+                    >
+                      {savingPorts ? (
+                        <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />Saving…</>
+                      ) : (
+                        <>Continue to services<ChevronRight className="h-4 w-4 ml-1" /></>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {step === 4 && (
                   <button
                     type="button"
                     onClick={handleApplyServices}

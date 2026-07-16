@@ -1,4 +1,4 @@
-"""Disconnect live hotspot sessions when a subscription expires."""
+"""Disconnect live subscriber sessions (hotspot + PPPoE) when a subscription expires."""
 import logging
 
 from models import Customer, MikrotikDevice
@@ -10,7 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 def disconnect_customer_on_devices(customer, isp):
-    """Best-effort kick of active hotspot sessions for this user on ISP routers."""
+    """Best-effort kick of active sessions for this user on all ISP routers.
+
+    Removing the active entry makes RouterOS send the RADIUS Accounting-Stop
+    and forces re-authentication — which fails once radcheck rows are gone.
+    Covers both connection types (a customer may have switched plans).
+    """
     if not customer or not isp:
         return 0
     username = radius_username(customer)
@@ -22,8 +27,12 @@ def disconnect_customer_on_devices(customer, isp):
                 if not client.connect():
                     continue
                 for cmd in (
+                    # Hotspot: session, host binding, and login cookie
                     f'/ip hotspot active remove [find user="{username}"]',
                     f'/ip hotspot host remove [find user="{username}"]',
+                    f'/ip hotspot cookie remove [find user="{username}"]',
+                    # PPPoE: drop the live tunnel session
+                    f'/ppp active remove [find name="{username}"]',
                 ):
                     try:
                         client.run_cli(cmd)
