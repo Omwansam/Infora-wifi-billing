@@ -8,4 +8,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  // 5175 matches the docker-compose dev profile; 5173/5174 belong to the
+  // billing app and the demo.
+  server: { port: 5175 },
+  preview: { port: 5175 },
 })

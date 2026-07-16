@@ -157,6 +157,49 @@ services:
       - infora_network
     command: npm run dev -- --host 0.0.0.0
 
+  # Billing demo (dev) — same app in demo mode; API simulated in the browser
+  demo:
+    profiles:
+      - dev
+    build:
+      context: ./FRONTEND/infora_billing
+      dockerfile: Dockerfile
+    container_name: lumen_demo
+    ports:
+      - "5174:5174"
+    volumes:
+      - ./FRONTEND/infora_billing:/app
+      - /app/node_modules
+    environment:
+      VITE_DEMO_MODE: "true"
+      VITE_API_BASE_URL: ""
+      VITE_MARKETING_URL: http://localhost:5175
+    networks:
+      - infora_network
+    command: npm run dev -- --host 0.0.0.0 --port 5174
+
+  # Lumen marketing website (dev)
+  lumen:
+    profiles:
+      - dev
+    build:
+      context: ./LUMEN/lumen-website
+      dockerfile: Dockerfile
+    container_name: lumen_website
+    ports:
+      - "5175:5175"
+    volumes:
+      - ./LUMEN/lumen-website:/app
+      - /app/node_modules
+    environment:
+      VITE_APP_URL: http://localhost:5173
+      VITE_DEMO_URL: http://localhost:5174
+      VITE_API_BASE_URL: http://localhost:5000
+    depends_on:
+      - flask_app
+    networks:
+      - infora_network
+
 volumes:
   postgres_data:
   ldap_data:

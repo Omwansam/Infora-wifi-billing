@@ -49,6 +49,19 @@ A comprehensive WiFi billing and network management system built with Flask (Pyt
                        └─────────────────┘
 ```
 
+## 🌐 Web surfaces (production)
+
+One nginx container (`web`) serves three vhosts, all built by
+`config/nginx/Dockerfile`:
+
+| Host | Content |
+|------|---------|
+| `ruirufactorymabati.com` | Billing admin UI, captive portal, `/api` → Flask |
+| `lumen.ruirufactorymabati.com` | Lumen marketing website (`LUMEN/lumen-website`) |
+| `demo.ruirufactorymabati.com` | Interactive demo — the billing app built with `VITE_DEMO_MODE=true`; every `/api` call is answered in the browser from seeded sample data (`FRONTEND/infora_billing/src/demo/`), so it needs no backend and resets on reload |
+
+Local dev equivalents (profile `dev`): billing app `:5173`, demo `:5174`, lumen site `:5175`.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

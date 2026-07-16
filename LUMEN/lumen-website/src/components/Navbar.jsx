@@ -6,6 +6,7 @@ import LumenLogo from './LumenLogo';
 const NAV_LINKS = [
   { label: 'Features', href: '/#features' },
   { label: 'Pricing', href: '/#pricing' },
+  { label: 'Why Lumen', href: '/#compare' },
   { label: 'Changelog', href: '/#changelog' },
   { label: 'FAQ', href: '/#faq' },
   { label: 'Contact', href: '/#contact' },

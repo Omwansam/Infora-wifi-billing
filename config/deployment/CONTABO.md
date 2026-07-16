@@ -41,12 +41,14 @@ If the domain pointed to another host:
 
 Replace `YOUR_CONTABO_IP` with your VPS IPv4.
 
-| Type | Name   | Content           | Proxy status   | Why |
-|------|--------|-------------------|----------------|-----|
-| A    | `@`    | YOUR_CONTABO_IP   | **Proxied** (orange cloud) | Admin UI, API, captive portal |
-| A    | `www`  | YOUR_CONTABO_IP   | **Proxied**    | Same as apex |
-| A    | `wg`   | YOUR_CONTABO_IP   | **DNS only** (grey cloud) | WireGuard — UDP cannot use HTTP proxy |
-| A    | `radius` | YOUR_CONTABO_IP | **DNS only**   | Optional label for MikroTik documentation |
+| Type | Name     | Content         | Proxy status               | Why |
+|------|----------|-----------------|----------------------------|-----|
+| A    | `@`      | YOUR_CONTABO_IP | **Proxied** (orange cloud) | Admin UI, API, captive portal |
+| A    | `www`    | YOUR_CONTABO_IP | **Proxied**                | Same as apex |
+| A    | `lumen`  | YOUR_CONTABO_IP | **Proxied**                | Lumen marketing website |
+| A    | `demo`   | YOUR_CONTABO_IP | **Proxied**                | Interactive demo (API simulated in browser) |
+| A    | `wg`     | YOUR_CONTABO_IP | **DNS only** (grey cloud)  | WireGuard — UDP cannot use HTTP proxy |
+| A    | `radius` | YOUR_CONTABO_IP | **DNS only**               | Optional label for MikroTik documentation |
 
 **Rule:** Orange cloud = web only. Grey cloud or raw IP = RADIUS and WireGuard.
 
