@@ -208,6 +208,8 @@ Replace `YOUR_CONTABO_IP` with your VPS IPv4.
 |------|------|---------|-------|-----|
 | A | `@` | YOUR_CONTABO_IP | **Proxied** (orange) | Admin UI, API, captive portal |
 | A | `www` | YOUR_CONTABO_IP | **Proxied** | Same as apex |
+| A | `lumen` | YOUR_CONTABO_IP | **Proxied** | Lumen marketing website |
+| A | `demo` | YOUR_CONTABO_IP | **Proxied** | Interactive demo (API simulated in browser) |
 | A | `wg` | YOUR_CONTABO_IP | **DNS only** (grey) | WireGuard — UDP cannot use HTTP proxy |
 | A | `radius` | YOUR_CONTABO_IP | **DNS only** | Optional label for MikroTik docs |
 

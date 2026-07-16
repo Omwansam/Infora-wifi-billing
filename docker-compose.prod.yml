@@ -17,6 +17,11 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://ruirufactorymabati.com}
         VITE_RADIUS_SERVER: ${PUBLIC_SERVER_HOST}
         VITE_FREERADIUS_HOST: ${PUBLIC_SERVER_HOST}
+        # lumen.<domain> marketing site + demo.<domain> interactive demo
+        LUMEN_SITE_URL: ${LUMEN_SITE_URL:-https://lumen.ruirufactorymabati.com}
+        LUMEN_APP_URL: ${LUMEN_APP_URL:-https://ruirufactorymabati.com}
+        LUMEN_DEMO_URL: ${LUMEN_DEMO_URL:-https://demo.ruirufactorymabati.com}
+        LUMEN_MARKETING_URL: ${LUMEN_SITE_URL:-https://lumen.ruirufactorymabati.com}
     container_name: infora_web
     ports:
       - "80:80"

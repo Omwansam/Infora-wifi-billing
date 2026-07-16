@@ -20,5 +20,12 @@ curl -sf "http://127.0.0.1:5000/api/health/deployment" | python3 -m json.tool ||
   echo "Start the API first, then open GET /api/health/deployment"
 
 echo ""
+echo "==> Nginx vhosts (web container must be up)"
+for host in lumen.ruirufactorymabati.com demo.ruirufactorymabati.com ruirufactorymabati.com; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${host}" "http://127.0.0.1/" || echo "000")
+  echo "  ${host}: HTTP ${code}"
+done
+
+echo ""
 echo "Done. Restart FreeRADIUS after client changes:"
 echo "  docker compose restart freeradius"

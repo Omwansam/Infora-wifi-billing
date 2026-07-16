@@ -16,6 +16,8 @@ Replace `YOUR_CONTABO_IP` with the VPS IPv4 from the Contabo panel.
 |------|------|---------|--------------|---------|
 | A | `@` | YOUR_CONTABO_IP | **Proxied** | Admin UI + API + captive portal |
 | A | `www` | YOUR_CONTABO_IP | **Proxied** | Redirect/www alias |
+| A | `lumen` | YOUR_CONTABO_IP | **Proxied** | Lumen marketing website |
+| A | `demo` | YOUR_CONTABO_IP | **Proxied** | Interactive demo (browser-simulated API) |
 | A | `wg` | YOUR_CONTABO_IP | **DNS only** | WireGuard customer VPN + mgmt endpoint |
 | A | `radius` | YOUR_CONTABO_IP | **DNS only** | Optional label for MikroTik docs |
 
@@ -40,9 +42,9 @@ CORS_ORIGINS=https://ruirufactorymabati.com,https://www.ruirufactorymabati.com
 
 ### Recommended (Full strict)
 
-1. Cloudflare → SSL/TLS → Origin Server → **Create certificate** (15-year origin cert).
+1. Cloudflare → SSL/TLS → Origin Server → **Create certificate** (15-year origin cert). Add `*.ruirufactorymabati.com` and `ruirufactorymabati.com` as hostnames so `lumen.` and `demo.` are covered.
 2. Save on the VPS under `/srv/infora-billing/certs/nginx/` as `origin.pem` and `origin.key`.
-3. Uncomment the `listen 443 ssl` server block in `config/nginx/conf.d/billing.conf`.
+3. Uncomment the `listen 443 ssl` server blocks in `config/nginx/conf.d/billing.conf`, `lumen.conf` and `demo.conf`.
 4. Cloudflare → SSL/TLS → **Full (strict)**.
 5. Rebuild web: `docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && docker compose ... up -d web`
 

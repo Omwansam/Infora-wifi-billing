@@ -1,4 +1,5 @@
 export const APP_URL = import.meta.env.VITE_APP_URL || 'http://localhost:5173';
+export const DEMO_URL = import.meta.env.VITE_DEMO_URL || APP_URL;
 
 export const BRAND = {
   name: 'Lumen',
@@ -13,8 +14,10 @@ export const BRAND = {
   appUrl: APP_URL,
   signupUrl: `${APP_URL}/signup`,
   loginUrl: `${APP_URL}/login`,
-  demoUrl: APP_URL,
-  portalUrl: `${APP_URL}/portal`,
+  demoUrl: DEMO_URL,
+  // Portal preview opens the demo's captive portal — safe to explore,
+  // never the production portal.
+  portalUrl: `${DEMO_URL}/portal`,
   copyright: (year = new Date().getFullYear()) =>
     `© ${year} Lumen. All rights reserved.`,
 };

@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:demo": "vite --mode demo --port 5174",
+    "build:demo": "vite build --mode demo",
+    "preview:demo": "vite preview --port 5174"
   },
   "dependencies": {
     "@hookform/resolvers": "^2.9.11",

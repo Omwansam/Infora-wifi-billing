@@ -10,6 +10,7 @@ import Insights from './components/Insights';
 import FeatureMarquee from './components/FeatureMarquee';
 import Automations from './components/Automations';
 import Pricing from './components/Pricing';
+import Comparison from './components/Comparison';
 import FAQ from './components/FAQ';
 import Testimonials from './components/Testimonials';
 import Changelog from './components/Changelog';
@@ -39,6 +40,7 @@ function HomePage() {
         <FeatureMarquee />
         <Automations />
         <Pricing />
+        <Comparison />
         <FAQ />
         <Testimonials />
         <Changelog />
