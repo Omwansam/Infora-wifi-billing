@@ -21,6 +21,7 @@ import CTABanner from './components/CTABanner';
 import Footer from './components/Footer';
 import WhatsAppButton from './components/WhatsAppButton';
 import ScrollToTop from './components/ScrollToTop';
+import ScrollToHash from './components/ScrollToHash';
 import { useEffect } from 'react';
 import { TermsPage, PrivacyPage, AffiliatePage } from './pages/LegalPages';
 import SignupPage from './pages/SignupPage';
@@ -68,6 +69,7 @@ function HomePage() {
 export default function App() {
   return (
     <div className="min-h-screen bg-white text-slate-900 antialiased">
+      <ScrollToHash />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/signup" element={<SignupPage />} />
