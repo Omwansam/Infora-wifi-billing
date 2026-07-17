@@ -37,12 +37,12 @@ export default function Navbar() {
         </ul>
 
         <div className="hidden items-center gap-3 md:flex">
-          <Link
-            to="/login"
+          <a
+            href={brand.loginUrl}
             className="rounded-full px-4 py-2 text-sm font-medium text-slate-600 transition hover:text-violet-600"
           >
             Log In
-          </Link>
+          </a>
           <a
             href={brand.demoUrl}
             target="_blank"
@@ -92,12 +92,12 @@ export default function Navbar() {
             ))}
           </ul>
           <div className="mt-4 flex flex-col gap-2">
-            <Link
-              to="/login"
+            <a
+              href={brand.loginUrl}
               className="rounded-full border border-slate-200 py-2.5 text-center text-sm font-medium"
             >
               Log In
-            </Link>
+            </a>
             <a
               href={brand.demoUrl}
               target="_blank"

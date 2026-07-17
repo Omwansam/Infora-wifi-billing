@@ -4,7 +4,6 @@ import { motion } from 'framer-motion';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import ConnectionTest from './ConnectionTest';
 import LumenLogo from '../brand/LumenLogo';
 import { BRAND } from '../../lib/brand';
 import { DEMO_MODE, DEMO_CREDENTIALS } from '../../demo/config';
@@ -223,20 +222,6 @@ export default function LoginPage() {
                 >
                   Use Demo Credentials
                 </button>
-              </div>
-
-              {/* Test Credentials Info */}
-              <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-                <p className="text-xs text-amber-100/90">
-                  <strong>Demo credentials:</strong><br />
-                  Email: {BRAND.adminEmail}<br />
-                  Password: admin123
-                </p>
-              </div>
-
-              {/* Connection Test */}
-              <div className="mt-4">
-                <ConnectionTest />
               </div>
             </>
           )}

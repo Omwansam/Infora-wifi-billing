@@ -21,9 +21,18 @@ import CTABanner from './components/CTABanner';
 import Footer from './components/Footer';
 import WhatsAppButton from './components/WhatsAppButton';
 import ScrollToTop from './components/ScrollToTop';
+import { useEffect } from 'react';
 import { TermsPage, PrivacyPage, AffiliatePage } from './pages/LegalPages';
 import SignupPage from './pages/SignupPage';
-import LoginPage from './pages/LoginPage';
+import { BRAND } from './lib/brand';
+
+/** The billing app owns the login page — send old /login links there. */
+function LoginRedirect() {
+  useEffect(() => {
+    window.location.replace(BRAND.loginUrl);
+  }, []);
+  return null;
+}
 
 function HomePage() {
   return (
@@ -62,7 +71,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/signup" element={<SignupPage />} />
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/login" element={<LoginRedirect />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/affiliate" element={<AffiliatePage />} />

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { submitTrialSignup } from '../services/websiteService';
-import { handoffToBillingApp } from '../services/authHandoff';
+import { redirectToBillingApp } from '../services/authHandoff';
 import { useBrand } from '../contexts/WebsiteContext';
 import LumenLogo from '../components/LumenLogo';
 
@@ -46,7 +46,9 @@ export default function SignupPage() {
         company_name: form.company_name,
         password: form.password,
       });
-      handoffToBillingApp(payload, '/');
+      // The billing app lives on its own subdomain — tokens can't cross
+      // origins, so the new account signs in on the billing login page.
+      redirectToBillingApp('/login');
     } catch (err) {
       setError(err.message || 'Registration failed');
     } finally {
@@ -171,9 +173,9 @@ export default function SignupPage() {
 
           <p className="mt-4 text-center text-sm text-slate-500">
             Already have an account?{' '}
-            <Link to="/login" className="font-medium text-violet-600 hover:underline">
+            <a href={brand.loginUrl} className="font-medium text-violet-600 hover:underline">
               Log in
-            </Link>
+            </a>
           </p>
         </form>
       </div>
