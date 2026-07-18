@@ -60,7 +60,7 @@ export default function SettingsPage() {
         <div>
           {active === 'general' && <GeneralSettings />}
           {active === 'modules' && <ModulesSettings isAdmin={admin} />}
-          {active === 'integrations' && <IntegrationsSettings />}
+          {active === 'integrations' && <IntegrationsSettings onNavigate={setActive} />}
           {active === 'notifications' && <NotificationsSettings />}
           {active === 'payments' && <PaymentsSettings />}
           {active === 'radius' && <RadiusSettings />}

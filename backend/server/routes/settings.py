@@ -825,11 +825,34 @@ def delete_radius_nas(nas_id):
 # Integrations  (Settings > Integrations)
 # ---------------------------------------------------------------------------
 
+# A config field is treated as a secret (encrypted at rest, masked on read) when
+# its name hints at credentials. Keeps the storage format generic per integration.
+_SECRET_MASK = '********'
+_SECRET_HINTS = ('key', 'secret', 'token', 'password', 'passkey')
+
+
+def _is_secret_field(name):
+    n = (name or '').lower()
+    return any(hint in n for hint in _SECRET_HINTS)
+
+
 def _integration_config(row):
+    """Raw stored config (secret values are ciphertext)."""
     try:
         return json.loads(row.config) if row.config else {}
     except (ValueError, TypeError):
         return {}
+
+
+def _public_integration_config(raw):
+    """Config safe to return to the client — secrets masked, never decrypted."""
+    out = {}
+    for k, v in (raw or {}).items():
+        if _is_secret_field(k):
+            out[k] = _SECRET_MASK if v else ''
+        else:
+            out[k] = v
+    return out
 
 
 @settings_bp.route('/integrations', methods=['GET'])
@@ -840,7 +863,7 @@ def get_integrations():
         return err, status
     rows = IntegrationSetting.query.filter_by(isp_id=isp.id).all()
     integrations = [
-        {'key': r.key, 'enabled': bool(r.enabled), 'config': _integration_config(r)}
+        {'key': r.key, 'enabled': bool(r.enabled), 'config': _public_integration_config(_integration_config(r))}
         for r in rows
     ]
     return jsonify({'integrations': integrations}), 200
@@ -863,12 +886,26 @@ def update_integration(key):
     if 'enabled' in data:
         row.enabled = bool(data['enabled'])
     if 'config' in data:
-        cfg = data.get('config')
-        row.config = json.dumps(cfg) if cfg else None
+        incoming = data.get('config') or {}
+        # Start from existing (keeps ciphertext secrets the client didn't resend),
+        # then apply incoming: encrypt new secrets, keep old on blank/mask.
+        merged = _integration_config(row)
+        for k, v in incoming.items():
+            if _is_secret_field(k):
+                if v in (None, '', _SECRET_MASK):
+                    continue  # leave existing ciphertext untouched
+                merged[k] = encrypt_value(str(v))
+            else:
+                merged[k] = v
+        row.config = json.dumps(merged) if merged else None
     db.session.commit()
     return jsonify({
         'message': 'Integration updated',
-        'integration': {'key': row.key, 'enabled': bool(row.enabled), 'config': _integration_config(row)},
+        'integration': {
+            'key': row.key,
+            'enabled': bool(row.enabled),
+            'config': _public_integration_config(_integration_config(row)),
+        },
     }), 200
 
 
