@@ -1,19 +1,27 @@
 import React, { useState } from 'react';
-import { Pencil, Boxes, Bell, Globe, FileText, UserCog } from 'lucide-react';
+import { Pencil, Boxes, Plug, Bell, CreditCard, Radio, Globe, FileText, KeyRound, UserCog } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import GeneralSettings from './tabs/GeneralSettings';
 import ModulesSettings from './tabs/ModulesSettings';
+import IntegrationsSettings from './tabs/IntegrationsSettings';
 import NotificationsSettings from './tabs/NotificationsSettings';
+import PaymentsSettings from './tabs/PaymentsSettings';
+import RadiusSettings from './tabs/RadiusSettings';
 import CaptivePortalSettings from './tabs/CaptivePortalSettings';
 import SubscriptionSettings from './tabs/SubscriptionSettings';
+import ApiKeysSettings from './tabs/ApiKeysSettings';
 import AccountSettings from './tabs/AccountSettings';
 
 const TABS = [
   { id: 'general', name: 'General', icon: Pencil },
   { id: 'modules', name: 'Modules', icon: Boxes },
+  { id: 'integrations', name: 'Integrations', icon: Plug },
   { id: 'notifications', name: 'Notifications', icon: Bell },
+  { id: 'payments', name: 'Payments', icon: CreditCard },
+  { id: 'radius', name: 'RADIUS', icon: Radio },
   { id: 'portal', name: 'Captive Portal', icon: Globe },
   { id: 'subscription', name: 'Subscription', icon: FileText },
+  { id: 'apikeys', name: 'API Keys', icon: KeyRound },
   { id: 'account', name: 'Account', icon: UserCog },
 ];
 
@@ -52,9 +60,13 @@ export default function SettingsPage() {
         <div>
           {active === 'general' && <GeneralSettings />}
           {active === 'modules' && <ModulesSettings isAdmin={admin} />}
+          {active === 'integrations' && <IntegrationsSettings />}
           {active === 'notifications' && <NotificationsSettings />}
+          {active === 'payments' && <PaymentsSettings />}
+          {active === 'radius' && <RadiusSettings />}
           {active === 'portal' && <CaptivePortalSettings />}
           {active === 'subscription' && <SubscriptionSettings />}
+          {active === 'apikeys' && <ApiKeysSettings />}
           {active === 'account' && <AccountSettings />}
         </div>
       </div>

@@ -132,12 +132,16 @@ def build_radius_script(device, snmp_community='infora'):
     commands so the billing server can reach back to the router for service
     configuration (Step 3 of the wizard).
     """
+    from services.radius_provisioning import resolve_isp_radius_host, resolve_isp_radius_secret
+
     isp = ISP.query.get(device.isp_id) if device.isp_id else None
-    if not isp or not isp.radius_secret:
+    radius_secret = resolve_isp_radius_secret(isp)
+    if not radius_secret:
         raise ValueError('ISP has no RADIUS secret configured')
 
-    radius_host = resolve_radius_host_for_device(device)
-    radius_secret = isp.radius_secret
+    # Server address the router talks to: the ISP's Settings > RADIUS host if
+    # set, else the management-tunnel host resolved for this device.
+    radius_host = resolve_isp_radius_host(isp, default=resolve_radius_host_for_device(device))
     timezone = current_app.config.get('ROUTER_TIMEZONE', 'Africa/Nairobi')
 
     # Pin the RADIUS source to the tunnel IP: FreeRADIUS matches this NAS to

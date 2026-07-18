@@ -71,8 +71,17 @@ export const API_ENDPOINTS = {
   SETTINGS_PORTAL: `${API_BASE_URL}/api/settings/portal`,
   SETTINGS_ANNOUNCEMENTS: `${API_BASE_URL}/api/settings/announcements`,
   SETTINGS_SUBSCRIPTION: `${API_BASE_URL}/api/settings/subscription`,
+  SETTINGS_PAYMENTS: `${API_BASE_URL}/api/settings/payments`,
+  SETTINGS_RADIUS: `${API_BASE_URL}/api/settings/radius`,
+  SETTINGS_RADIUS_NAS: `${API_BASE_URL}/api/settings/radius/nas`,
+  SETTINGS_INTEGRATIONS: `${API_BASE_URL}/api/settings/integrations`,
+  SETTINGS_API_KEYS: `${API_BASE_URL}/api/settings/api-keys`,
+  SETTINGS_WEBHOOK_SECRET: `${API_BASE_URL}/api/settings/api-keys/webhook-secret`,
   settingsRouterTheme: (deviceId) => `${API_BASE_URL}/api/settings/portal/router/${deviceId}`,
   settingsAnnouncement: (id) => `${API_BASE_URL}/api/settings/announcements/${id}`,
+  settingsRadiusNas: (id) => `${API_BASE_URL}/api/settings/radius/nas/${id}`,
+  settingsIntegration: (key) => `${API_BASE_URL}/api/settings/integrations/${key}`,
+  settingsApiKey: (id) => `${API_BASE_URL}/api/settings/api-keys/${id}`,
   
   // RADIUS endpoints
   RADIUS_CLIENTS: `${API_BASE_URL}/api/radius/clients`,

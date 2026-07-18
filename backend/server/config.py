@@ -36,15 +36,10 @@ class Config:
     MPESA_CALLBACK_URL = os.getenv('MPESA_CALLBACK_URL', 'http://localhost:5000/api/payments/mpesa/callback')
     MPESA_ENVIRONMENT = os.getenv('MPESA_ENVIRONMENT', 'sandbox')
     MPESA_TRANSACTION_TYPE = os.getenv('MPESA_TRANSACTION_TYPE', 'CustomerPayBillOnline')
+    # The Daraja auth / STK-push base URLs are derived per-request in
+    # services/mpesa_service.py from the effective environment (sandbox vs live),
+    # which may be overridden per-ISP in Settings > Payments.
 
-    # API URLs (auto-configured based on environment)
-    if MPESA_ENVIRONMENT == 'production':
-        MPESA_AUTH_URL = 'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials'
-        MPESA_STK_PUSH_URL = 'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest'
-    else:
-        MPESA_AUTH_URL = 'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials'
-        MPESA_STK_PUSH_URL = 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest'
-    
     # Subscription expiry (optional background thread; prefer cron: flask enforce-expiry)
     SUBSCRIPTION_ENFORCEMENT_INTERVAL = int(os.getenv('SUBSCRIPTION_ENFORCEMENT_INTERVAL', '0') or '0')
     SUBSCRIPTION_GRACE_HOURS = int(os.getenv('SUBSCRIPTION_GRACE_HOURS', '0') or '0')

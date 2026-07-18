@@ -500,6 +500,7 @@ def initiate_portal_payment(customer, plan, isp, phone, invoice=None):
             float(plan.price),
             invoice.invoice_number,
             'WiFi Portal — Lumen',
+            isp=isp,
         )
     except MpesaError as exc:
         raise exc

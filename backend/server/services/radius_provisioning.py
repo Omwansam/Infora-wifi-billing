@@ -22,6 +22,38 @@ from services.encryption import decrypt_value, encrypt_value
 from services.plan_utils import generate_radius_attributes
 
 
+def resolve_isp_radius_secret(isp, default=None):
+    """Effective RADIUS shared secret for an ISP.
+
+    Precedence: Settings > RADIUS override (``radius_config.shared_secret``,
+    encrypted) → legacy ``isp.radius_secret`` → the supplied ``default``.
+    Both the router provisioning script and the FreeRADIUS clients.conf resolve
+    through here so the two sides always agree.
+    """
+    if isp is not None:
+        rc = getattr(isp, 'radius_config', None)
+        if rc is not None and rc.shared_secret:
+            decrypted = decrypt_value(rc.shared_secret)
+            if decrypted:
+                return decrypted
+        if getattr(isp, 'radius_secret', None):
+            return isp.radius_secret
+    return default
+
+
+def resolve_isp_radius_host(isp, default=''):
+    """Effective RADIUS server address an ISP's routers should talk to.
+
+    Prefers the host the ISP typed in Settings > RADIUS; otherwise falls back
+    to the supplied ``default`` (typically the management-tunnel host).
+    """
+    if isp is not None:
+        rc = getattr(isp, 'radius_config', None)
+        if rc is not None and rc.host:
+            return rc.host.strip()
+    return default
+
+
 def radius_username(customer):
     """RADIUS username = lowercased email (PPPoE login)."""
     return customer.email.strip().lower()

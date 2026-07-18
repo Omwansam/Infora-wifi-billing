@@ -94,6 +94,66 @@ const settingsService = {
   async getSubscription(token) {
     return handle(await fetch(API_ENDPOINTS.SETTINGS_SUBSCRIPTION, { headers: json(token) }));
   },
+
+  // ---- Payments ----
+  async getPayments(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_PAYMENTS, { headers: json(token) }));
+  },
+  async savePayments(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_PAYMENTS, {
+      method: 'PUT', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+
+  // ---- RADIUS ----
+  async getRadius(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_RADIUS, { headers: json(token) }));
+  },
+  async saveRadius(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_RADIUS, {
+      method: 'PUT', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+  async addRadiusNas(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_RADIUS_NAS, {
+      method: 'POST', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+  async deleteRadiusNas(token, id) {
+    return handle(await fetch(API_ENDPOINTS.settingsRadiusNas(id), {
+      method: 'DELETE', headers: json(token),
+    }));
+  },
+
+  // ---- Integrations ----
+  async getIntegrations(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_INTEGRATIONS, { headers: json(token) }));
+  },
+  async saveIntegration(token, key, payload) {
+    return handle(await fetch(API_ENDPOINTS.settingsIntegration(key), {
+      method: 'PUT', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+
+  // ---- API keys ----
+  async getApiKeys(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_API_KEYS, { headers: json(token) }));
+  },
+  async createApiKey(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_API_KEYS, {
+      method: 'POST', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+  async deleteApiKey(token, id) {
+    return handle(await fetch(API_ENDPOINTS.settingsApiKey(id), {
+      method: 'DELETE', headers: json(token),
+    }));
+  },
+  async regenerateWebhookSecret(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_WEBHOOK_SECRET, {
+      method: 'POST', headers: json(token),
+    }));
+  },
 };
 
 export default settingsService;

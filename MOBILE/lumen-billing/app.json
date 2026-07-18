@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "lumen-billing",
+    "name": "Infora Billing",
     "slug": "lumen-billing",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -34,10 +34,11 @@
             "imageWidth": 76
           }
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
-      "typedRoutes": true,
+      "typedRoutes": false,
       "reactCompiler": true
     }
   }

@@ -6,7 +6,8 @@ from datetime import datetime
 
 from flask import current_app
 
-from models import ISP, MikrotikDevice, RadiusClient
+from models import ISP, MikrotikDevice, RadiusClient, RadiusNasClient
+from services.encryption import decrypt_value
 
 
 def radius_clients_conf_path():
@@ -33,6 +34,7 @@ def _nas_host_for_device(device):
 
 def generate_clients_conf(default_secret=None):
     """Build clients.conf content from database NAS records."""
+    from services.radius_provisioning import resolve_isp_radius_secret
     default_secret = default_secret or os.getenv('RADIUS_SECRET', 'radius_secret_key')
     lines = [
         '# Auto-generated FreeRADIUS clients.conf',
@@ -74,8 +76,28 @@ def generate_clients_conf(default_secret=None):
             continue
         seen_hosts.add(host)
         isp = ISP.query.get(device.isp_id) if device.isp_id else None
-        secret = (isp.radius_secret if isp and isp.radius_secret else default_secret)
+        secret = resolve_isp_radius_secret(isp, default_secret)
         shortname = device.device_name.replace(' ', '_')[:32]
+        lines.extend([
+            f'client {shortname} {{',
+            f'    ipaddr = {host}',
+            f'    secret = {secret}',
+            f'    shortname = {shortname}',
+            '    nas_type = mikrotik',
+            '}',
+            '',
+        ])
+
+    # NAS clients registered manually in Settings > RADIUS
+    for nas in RadiusNasClient.query.all():
+        host = (nas.ip_address or '').strip()
+        if not host or host in seen_hosts:
+            continue
+        seen_hosts.add(host)
+        isp = ISP.query.get(nas.isp_id) if nas.isp_id else None
+        secret = (decrypt_value(nas.shared_secret) if nas.shared_secret else None) \
+            or resolve_isp_radius_secret(isp, default_secret)
+        shortname = (nas.name or 'nas').replace(' ', '_')[:32]
         lines.extend([
             f'client {shortname} {{',
             f'    ipaddr = {host}',

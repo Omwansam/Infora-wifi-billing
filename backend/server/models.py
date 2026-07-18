@@ -1206,6 +1206,173 @@ class HotspotAccessCode(db.Model):
 
 
 # =========================
+#   Payments / RADIUS / Integrations / API  (Settings tabs)
+# =========================
+
+
+class PaymentSettings(db.Model):
+    """Per-ISP payment collection & M-Pesa Daraja configuration (Settings > Payments).
+
+    One row per ISP. Secret values (consumer secret, passkey) are stored
+    encrypted via ``services.encryption`` and decrypted on read for the form.
+    """
+    __tablename__ = 'payment_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, unique=True, index=True)
+
+    # Collection route: buygoods | paybill | bank
+    collection_route = db.Column(db.String(20), nullable=False, default='paybill')
+
+    buygoods_till = db.Column(db.String(20), nullable=True)
+    buygoods_store = db.Column(db.String(20), nullable=True)
+
+    paybill_shortcode = db.Column(db.String(20), nullable=True)
+    paybill_account = db.Column(db.String(60), nullable=True)
+
+    bank_name = db.Column(db.String(120), nullable=True)
+    bank_paybill = db.Column(db.String(20), nullable=True)
+    bank_account = db.Column(db.String(60), nullable=True)
+
+    # Daraja API (secrets encrypted at rest)
+    daraja_env = db.Column(db.String(10), nullable=False, default='sandbox')
+    daraja_consumer_key = db.Column(db.String(255), nullable=True)
+    daraja_consumer_secret = db.Column(db.Text, nullable=True)   # encrypted
+    daraja_passkey = db.Column(db.Text, nullable=True)           # encrypted
+    daraja_shortcode = db.Column(db.String(20), nullable=True)
+    daraja_callback_url = db.Column(db.String(500), nullable=True)
+
+    # Accepted methods
+    method_mpesa = db.Column(db.Boolean, default=True)
+    method_manual = db.Column(db.Boolean, default=True)
+    method_card = db.Column(db.Boolean, default=False)
+    method_cash = db.Column(db.Boolean, default=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', back_populates='payment_settings')
+
+    def __repr__(self):
+        return f"<PaymentSettings isp={self.isp_id} route={self.collection_route}>"
+
+
+class RadiusConfig(db.Model):
+    """Per-ISP RADIUS server configuration (Settings > RADIUS). One row per ISP."""
+    __tablename__ = 'radius_config'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, unique=True, index=True)
+
+    enabled = db.Column(db.Boolean, default=False)
+    host = db.Column(db.String(255), nullable=True)
+    auth_port = db.Column(db.Integer, default=1812)
+    acct_port = db.Column(db.Integer, default=1813)
+    shared_secret = db.Column(db.Text, nullable=True)  # encrypted
+    nas_identifier = db.Column(db.String(120), nullable=True)
+
+    acct_interim = db.Column(db.Boolean, default=True)
+    coa_enabled = db.Column(db.Boolean, default=True)
+    data_usage_enforce = db.Column(db.Boolean, default=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', back_populates='radius_config')
+
+    def __repr__(self):
+        return f"<RadiusConfig isp={self.isp_id} enabled={self.enabled}>"
+
+
+class RadiusNasClient(db.Model):
+    """A NAS device (router/AP) permitted to talk to the RADIUS server."""
+    __tablename__ = 'radius_nas_clients'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    ip_address = db.Column(db.String(64), nullable=False)
+    shared_secret = db.Column(db.Text, nullable=True)  # encrypted
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', back_populates='radius_nas_clients')
+
+    def __repr__(self):
+        return f"<RadiusNasClient {self.name} ({self.ip_address})>"
+
+
+class IntegrationSetting(db.Model):
+    """Per-ISP third-party integration enable flag + optional JSON config.
+
+    A missing row means "not connected". The display catalogue (icons,
+    descriptions) lives in the frontend; this only stores state keyed by ``key``.
+    """
+    __tablename__ = 'integration_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    key = db.Column(db.String(60), nullable=False)
+    enabled = db.Column(db.Boolean, default=False)
+    config = db.Column(db.Text, nullable=True)  # JSON blob
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', back_populates='integration_settings')
+
+    __table_args__ = (
+        db.UniqueConstraint('isp_id', 'key', name='uq_integration_setting'),
+    )
+
+    def __repr__(self):
+        return f"<IntegrationSetting {self.key} enabled={self.enabled}>"
+
+
+class ApiKey(db.Model):
+    """A REST API key issued to an ISP (Settings > API Keys).
+
+    The full token is shown only once at creation; afterwards only a masked
+    form (prefix + last 4) is returned.
+    """
+    __tablename__ = 'api_keys'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    token = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    scopes = db.Column(db.String(255), nullable=True)  # comma-separated
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    last_used_at = db.Column(db.DateTime, nullable=True)
+
+    isp = db.relationship('ISP', back_populates='api_keys')
+
+    @property
+    def masked(self):
+        t = self.token or ''
+        if len(t) <= 12:
+            return t
+        return f"{t[:11]}{'•' * 8}{t[-4:]}"
+
+    def __repr__(self):
+        return f"<ApiKey {self.name} isp={self.isp_id}>"
+
+
+class ApiSetting(db.Model):
+    """Per-ISP developer/API settings (currently the webhook signing secret)."""
+    __tablename__ = 'api_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, unique=True, index=True)
+    webhook_secret = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    isp = db.relationship('ISP', back_populates='api_setting')
+
+    def __repr__(self):
+        return f"<ApiSetting isp={self.isp_id}>"
+
+
+# =========================
 #   LDAP Server Model
 # =========================
 
@@ -1678,7 +1845,13 @@ class ISP(db.Model):
     wireguard_servers = db.relationship('WireGuardServer', back_populates='isp')
     notification_settings = db.relationship('NotificationSetting', back_populates='isp', cascade='all, delete-orphan')
     portal_announcements = db.relationship('PortalAnnouncement', back_populates='isp', cascade='all, delete-orphan')
-    
+    payment_settings = db.relationship('PaymentSettings', back_populates='isp', uselist=False, cascade='all, delete-orphan')
+    radius_config = db.relationship('RadiusConfig', back_populates='isp', uselist=False, cascade='all, delete-orphan')
+    radius_nas_clients = db.relationship('RadiusNasClient', back_populates='isp', cascade='all, delete-orphan')
+    integration_settings = db.relationship('IntegrationSetting', back_populates='isp', cascade='all, delete-orphan')
+    api_keys = db.relationship('ApiKey', back_populates='isp', cascade='all, delete-orphan')
+    api_setting = db.relationship('ApiSetting', back_populates='isp', uselist=False, cascade='all, delete-orphan')
+
     def __repr__(self):
         return f"<ISP {self.name} ({self.company_name})>"
     

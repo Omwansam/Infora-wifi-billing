@@ -1,56 +1,102 @@
-# Welcome to your Expo app 👋
+# Infora Billing — Mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+The mobile companion for the **Infora WiFi/ISP billing system** (the main admin
+platform, not the Lumen website or demo). Built with **Expo Router + React
+Native + NativeWind**, it mirrors the web admin's domain — Kenyan WISP data,
+KES currency, M-Pesa payments, MikroTik routers.
+
+> Status: **UI complete + live data layer wired.** Every screen fetches through
+> the service layer (`src/services`) via hooks (`src/hooks/use-data.ts`). With no
+> API URL configured the app runs in **demo mode** on seeded mock data; set
+> `EXPO_PUBLIC_API_URL` and it talks to the real Infora backend (`backend/server`).
 
 ## Get started
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
 ```bash
-npm run reset-project
+npm install
+
+# Demo mode (mock data, no backend needed):
+npx expo start
+
+# Live mode — point at the Infora API:
+cp .env.example .env         # then set EXPO_PUBLIC_API_URL
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Open on Android/iOS (Expo Go or a dev build) or the web.
 
-### Other setup steps
+## Tech
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+- **Expo SDK 56** + **Expo Router** (file-based routing, `src/app`)
+- **React Native 0.85 / React 19** (React Compiler enabled)
+- **NativeWind 4** (Tailwind CSS for RN) — config in `tailwind.config.js`,
+  entry stylesheet `src/global.css`
+- **@expo/vector-icons** (Ionicons) for iconography
 
-## Learn more
+## Design system
 
-To learn more about developing your project with Expo, look at the following resources:
+- **Color tokens** — `tailwind.config.js`, `src/lib/theme.ts`
+- **Formatting (KES)** — `src/lib/format.ts`
+- **UI primitives** — `src/components/ui/*` (Card, Badge, StatCard, Avatar, Screen, Button, FilterChips, MiniBarChart …)
+- **Mock data** — `src/data/mock.ts` + `src/data/types.ts`
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Brand primary is `#2563EB` (matches the web admin). Light/dark mode follow the
+system appearance and can be toggled in **Settings**.
 
-## Join the community
+## Data layer (`src/services`, `src/hooks`)
 
-Join our community of developers creating universal apps.
+Talks to the Flask backend in `backend/server` (JWT auth, `/api/*`, snake_case
+JSON). Mirrors the web app's `FRONTEND/infora_billing/src/services`.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```text
+src/services/
+  config.ts     API base URL (EXPO_PUBLIC_API_URL) + endpoint map; IS_LIVE flag
+  http.ts       fetch wrapper — bearer auth, timeout, 401 refresh-and-retry
+  session.ts    JWT + user persisted in the device keychain (expo-secure-store)
+  auth.ts       login / restoreSession / logout
+  mappers.ts    snake_case DTO → camelCase domain types (src/data/types.ts)
+  customers.ts plans.ts billing.ts tickets.ts devices.ts finance.ts dashboard.ts
+src/contexts/session.tsx   <SessionProvider> + useSession() — app-wide auth state
+src/hooks/use-query.ts     tiny data hook: { data, loading, error, refetch }
+src/hooks/use-data.ts      useDashboard / useCustomers / usePlans / … per domain
+```
+
+**How it flows:** screen → `useX()` hook → service → `http` → API, with results
+mapped to domain types so the UI never sees snake_case. Every service falls back
+to the seeded mock (`src/data/mock.ts`) when `EXPO_PUBLIC_API_URL` is unset, so
+the app is fully usable offline and screens render identically in both modes.
+
+**Auth:** `SessionProvider` restores the persisted JWT on boot and verifies it;
+`src/app/index.tsx` gates entry (→ tabs or login). Login calls the real
+`/api/auth/login`; in demo mode any credentials are accepted.
+
+**Adding a screen to the live layer:** add a function in the relevant service +
+a `useX` hook, then consume it — `const { data, loading, error, refetch } = useX()`
+— rendering `<Loading />` / `<ErrorState onRetry={refetch} />` while `data` is
+undefined. All read screens already follow this pattern.
+
+> Not yet wired to live endpoints (still static): **Communication** and
+> **Network & RADIUS** overview screens, and mutations (create/edit/pay). The
+> read services + hooks above are the template for adding them.
+
+## Screens (`src/app`)
+
+- `(auth)/login` — branded sign-in
+- `(tabs)` — bottom navigation:
+  - `index` — **Dashboard**: collections hero, KPIs, quick actions, revenue mix,
+    alerts, top data users, recent payments
+  - `clients` — searchable/filterable client list → `clients/[id]` profile
+  - `billing` — hub → `payments`, `invoices` (+ `invoices/[id]`),
+    `transactions`, `vouchers`
+  - `plans` — service plans → `plans/[id]` detail
+  - `more` — menu → `sessions`, `tickets` (+ `tickets/[id]` thread), `devices`,
+    `network`, `communication`, `finance`, `settings`
+
+## Scripts
+
+```bash
+npm run android   # open on Android
+npm run ios       # open on iOS
+npm run web       # open in browser
+npm run lint      # expo lint
+```

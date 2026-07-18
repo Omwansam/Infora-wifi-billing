@@ -13,13 +13,20 @@ from werkzeug.utils import secure_filename
 
 from extensions import db
 from auth_utils import get_current_user
-from models import ISP, MikrotikDevice, NotificationSetting, PortalAnnouncement
+from models import (
+    ISP, MikrotikDevice, NotificationSetting, PortalAnnouncement,
+    PaymentSettings, RadiusConfig, RadiusNasClient, IntegrationSetting,
+    ApiKey, ApiSetting,
+)
 from services.rate_limit import rate_limit
 from services import notification_events as nev
 from services.portal_urls import portal_entry_url, portal_frontend_base_url
+from services.encryption import encrypt_value, decrypt_value
 from datetime import datetime
 
+import json
 import re
+import secrets
 
 settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
 
@@ -593,3 +600,364 @@ def create_hotspot_code():
     db.session.add(row)
     db.session.commit()
     return jsonify({'message': 'Access code created', 'code': code, 'id': row.id}), 201
+
+
+# ---------------------------------------------------------------------------
+# Payments  (Settings > Payments)
+# ---------------------------------------------------------------------------
+
+def _get_or_create_payment_settings(isp):
+    ps = isp.payment_settings
+    if ps is None:
+        ps = PaymentSettings(isp_id=isp.id)
+        db.session.add(ps)
+        db.session.commit()
+    return ps
+
+
+def serialize_payments(ps):
+    return {
+        'collection_route': ps.collection_route or 'paybill',
+        'buygoods_till': ps.buygoods_till or '',
+        'buygoods_store': ps.buygoods_store or '',
+        'paybill_shortcode': ps.paybill_shortcode or '',
+        'paybill_account': ps.paybill_account or '',
+        'bank_name': ps.bank_name or '',
+        'bank_paybill': ps.bank_paybill or '',
+        'bank_account': ps.bank_account or '',
+        'daraja_env': ps.daraja_env or 'sandbox',
+        'daraja_consumer_key': ps.daraja_consumer_key or '',
+        'daraja_consumer_secret': decrypt_value(ps.daraja_consumer_secret) or '',
+        'daraja_passkey': decrypt_value(ps.daraja_passkey) or '',
+        'daraja_shortcode': ps.daraja_shortcode or '',
+        'daraja_callback_url': ps.daraja_callback_url or '',
+        'method_mpesa': bool(ps.method_mpesa),
+        'method_manual': bool(ps.method_manual),
+        'method_card': bool(ps.method_card),
+        'method_cash': bool(ps.method_cash),
+    }
+
+
+@settings_bp.route('/payments', methods=['GET'])
+@jwt_required()
+def get_payments():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    ps = _get_or_create_payment_settings(isp)
+    return jsonify(serialize_payments(ps)), 200
+
+
+@settings_bp.route('/payments', methods=['PUT'])
+@jwt_required()
+def update_payments():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    ps = _get_or_create_payment_settings(isp)
+    data = request.get_json() or {}
+
+    if 'collection_route' in data:
+        route = (data.get('collection_route') or 'paybill').strip()
+        if route not in ('buygoods', 'paybill', 'bank'):
+            return jsonify({'error': 'Invalid collection route'}), 400
+        ps.collection_route = route
+
+    plain_fields = (
+        'buygoods_till', 'buygoods_store', 'paybill_shortcode', 'paybill_account',
+        'bank_name', 'bank_paybill', 'bank_account',
+        'daraja_consumer_key', 'daraja_shortcode', 'daraja_callback_url',
+    )
+    for field in plain_fields:
+        if field in data:
+            value = data[field]
+            setattr(ps, field, (str(value).strip() or None) if value is not None else None)
+
+    if 'daraja_env' in data:
+        env = (data.get('daraja_env') or 'sandbox').strip().lower()
+        ps.daraja_env = env if env in ('sandbox', 'live') else 'sandbox'
+
+    # Secrets are stored encrypted; an empty value clears them.
+    if 'daraja_consumer_secret' in data:
+        val = (data.get('daraja_consumer_secret') or '').strip()
+        ps.daraja_consumer_secret = encrypt_value(val) if val else None
+    if 'daraja_passkey' in data:
+        val = (data.get('daraja_passkey') or '').strip()
+        ps.daraja_passkey = encrypt_value(val) if val else None
+
+    for field in ('method_mpesa', 'method_manual', 'method_card', 'method_cash'):
+        if field in data:
+            setattr(ps, field, bool(data[field]))
+
+    db.session.commit()
+    return jsonify({'message': 'Payment settings saved', 'payments': serialize_payments(ps)}), 200
+
+
+# ---------------------------------------------------------------------------
+# RADIUS  (Settings > RADIUS)
+# ---------------------------------------------------------------------------
+
+def _get_or_create_radius_config(isp):
+    rc = isp.radius_config
+    if rc is None:
+        rc = RadiusConfig(isp_id=isp.id)
+        db.session.add(rc)
+        db.session.commit()
+    return rc
+
+
+def _sync_radius_clients_conf_safe():
+    """Best-effort regen of the FreeRADIUS clients.conf after a RADIUS change.
+
+    Mirrors the device routes: a file-write failure must never fail the API.
+    """
+    try:
+        from services.radius_clients_export import sync_radius_clients_conf
+        sync_radius_clients_conf()
+    except Exception as exc:
+        current_app.logger.warning('Failed to sync RADIUS clients.conf: %s', exc)
+
+
+def serialize_nas(n):
+    return {'id': n.id, 'name': n.name, 'ip': n.ip_address}
+
+
+def serialize_radius(rc, nas_clients):
+    return {
+        'enabled': bool(rc.enabled),
+        'host': rc.host or '',
+        'auth_port': rc.auth_port or 1812,
+        'acct_port': rc.acct_port or 1813,
+        'shared_secret': decrypt_value(rc.shared_secret) or '',
+        'nas_identifier': rc.nas_identifier or '',
+        'acct_interim': bool(rc.acct_interim),
+        'coa_enabled': bool(rc.coa_enabled),
+        'data_usage_enforce': bool(rc.data_usage_enforce),
+        'nas_clients': [serialize_nas(n) for n in nas_clients],
+    }
+
+
+@settings_bp.route('/radius', methods=['GET'])
+@jwt_required()
+def get_radius():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    rc = _get_or_create_radius_config(isp)
+    nas = RadiusNasClient.query.filter_by(isp_id=isp.id).order_by(RadiusNasClient.id.asc()).all()
+    return jsonify(serialize_radius(rc, nas)), 200
+
+
+@settings_bp.route('/radius', methods=['PUT'])
+@jwt_required()
+def update_radius():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    rc = _get_or_create_radius_config(isp)
+    data = request.get_json() or {}
+
+    if 'enabled' in data:
+        rc.enabled = bool(data['enabled'])
+    if 'host' in data:
+        rc.host = (data.get('host') or '').strip() or None
+    if 'nas_identifier' in data:
+        rc.nas_identifier = (data.get('nas_identifier') or '').strip() or None
+    for field in ('auth_port', 'acct_port'):
+        if field in data and data[field] not in (None, '', 'null'):
+            try:
+                setattr(rc, field, int(data[field]))
+            except (TypeError, ValueError):
+                return jsonify({'error': f'{field} must be a whole number'}), 400
+    if 'shared_secret' in data:
+        val = (data.get('shared_secret') or '').strip()
+        rc.shared_secret = encrypt_value(val) if val else None
+    for field in ('acct_interim', 'coa_enabled', 'data_usage_enforce'):
+        if field in data:
+            setattr(rc, field, bool(data[field]))
+
+    db.session.commit()
+    _sync_radius_clients_conf_safe()
+    nas = RadiusNasClient.query.filter_by(isp_id=isp.id).order_by(RadiusNasClient.id.asc()).all()
+    return jsonify({'message': 'RADIUS settings saved', 'radius': serialize_radius(rc, nas)}), 200
+
+
+@settings_bp.route('/radius/nas', methods=['POST'])
+@jwt_required()
+def add_radius_nas():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    ip = (data.get('ip') or data.get('ip_address') or '').strip()
+    if not name or not ip:
+        return jsonify({'error': 'Name and IP address are required'}), 400
+    secret = (data.get('secret') or data.get('shared_secret') or '').strip()
+    n = RadiusNasClient(
+        isp_id=isp.id,
+        name=name[:120],
+        ip_address=ip[:64],
+        shared_secret=encrypt_value(secret) if secret else None,
+    )
+    db.session.add(n)
+    db.session.commit()
+    _sync_radius_clients_conf_safe()
+    return jsonify({'message': 'NAS client added', 'nas': serialize_nas(n)}), 201
+
+
+@settings_bp.route('/radius/nas/<int:nas_id>', methods=['DELETE'])
+@jwt_required()
+def delete_radius_nas(nas_id):
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    n = RadiusNasClient.query.get_or_404(nas_id)
+    if n.isp_id != isp.id:
+        return jsonify({'error': 'Access denied'}), 403
+    db.session.delete(n)
+    db.session.commit()
+    _sync_radius_clients_conf_safe()
+    return jsonify({'message': 'NAS client removed'}), 200
+
+
+# ---------------------------------------------------------------------------
+# Integrations  (Settings > Integrations)
+# ---------------------------------------------------------------------------
+
+def _integration_config(row):
+    try:
+        return json.loads(row.config) if row.config else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+@settings_bp.route('/integrations', methods=['GET'])
+@jwt_required()
+def get_integrations():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    rows = IntegrationSetting.query.filter_by(isp_id=isp.id).all()
+    integrations = [
+        {'key': r.key, 'enabled': bool(r.enabled), 'config': _integration_config(r)}
+        for r in rows
+    ]
+    return jsonify({'integrations': integrations}), 200
+
+
+@settings_bp.route('/integrations/<key>', methods=['PUT'])
+@jwt_required()
+def update_integration(key):
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    key = (key or '').strip().lower()[:60]
+    if not key:
+        return jsonify({'error': 'Integration key required'}), 400
+    data = request.get_json() or {}
+    row = IntegrationSetting.query.filter_by(isp_id=isp.id, key=key).first()
+    if row is None:
+        row = IntegrationSetting(isp_id=isp.id, key=key)
+        db.session.add(row)
+    if 'enabled' in data:
+        row.enabled = bool(data['enabled'])
+    if 'config' in data:
+        cfg = data.get('config')
+        row.config = json.dumps(cfg) if cfg else None
+    db.session.commit()
+    return jsonify({
+        'message': 'Integration updated',
+        'integration': {'key': row.key, 'enabled': bool(row.enabled), 'config': _integration_config(row)},
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# API keys & webhook secret  (Settings > API Keys)
+# ---------------------------------------------------------------------------
+
+def _get_or_create_api_setting(isp):
+    a = isp.api_setting
+    if a is None:
+        a = ApiSetting(isp_id=isp.id, webhook_secret=f'whsec_{secrets.token_hex(16)}')
+        db.session.add(a)
+        db.session.commit()
+    elif not a.webhook_secret:
+        a.webhook_secret = f'whsec_{secrets.token_hex(16)}'
+        db.session.commit()
+    return a
+
+
+def serialize_api_key(k):
+    return {
+        'id': k.id,
+        'name': k.name,
+        'key': k.masked,
+        'scopes': [s for s in (k.scopes or '').split(',') if s],
+        'created': k.created_at.date().isoformat() if k.created_at else None,
+        'last_used': k.last_used_at.date().isoformat() if k.last_used_at else None,
+    }
+
+
+@settings_bp.route('/api-keys', methods=['GET'])
+@jwt_required()
+def get_api_keys():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    a = _get_or_create_api_setting(isp)
+    keys = ApiKey.query.filter_by(isp_id=isp.id).order_by(ApiKey.created_at.desc()).all()
+    return jsonify({
+        'keys': [serialize_api_key(k) for k in keys],
+        'webhook_secret': a.webhook_secret,
+    }), 200
+
+
+@settings_bp.route('/api-keys', methods=['POST'])
+@jwt_required()
+def create_api_key():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Key name is required'}), 400
+    scopes = data.get('scopes') or []
+    if isinstance(scopes, str):
+        scopes = [s.strip() for s in scopes.split(',')]
+    valid = {'read', 'write', 'payments', 'webhooks'}
+    scopes = [s for s in scopes if s in valid] or ['read']
+    token = f'sk_live_{secrets.token_hex(24)}'
+    k = ApiKey(isp_id=isp.id, name=name[:120], token=token, scopes=','.join(scopes))
+    db.session.add(k)
+    db.session.commit()
+    payload = serialize_api_key(k)
+    payload['token'] = token  # full token, returned only at creation
+    return jsonify({'message': 'API key created', 'api_key': payload}), 201
+
+
+@settings_bp.route('/api-keys/<int:key_id>', methods=['DELETE'])
+@jwt_required()
+def delete_api_key(key_id):
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    k = ApiKey.query.get_or_404(key_id)
+    if k.isp_id != isp.id:
+        return jsonify({'error': 'Access denied'}), 403
+    db.session.delete(k)
+    db.session.commit()
+    return jsonify({'message': 'API key revoked'}), 200
+
+
+@settings_bp.route('/api-keys/webhook-secret', methods=['POST'])
+@jwt_required()
+def regenerate_webhook_secret():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    a = _get_or_create_api_setting(isp)
+    a.webhook_secret = f'whsec_{secrets.token_hex(16)}'
+    db.session.commit()
+    return jsonify({'message': 'Webhook secret regenerated', 'webhook_secret': a.webhook_secret}), 200

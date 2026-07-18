@@ -54,7 +54,7 @@ def mpesa_stk_push():
         account_ref = invoice.invoice_number if invoice else f'CUST{customer.id}'
         description = 'WiFi Billing'
 
-        stk = initiate_stk_push(phone, amount, account_ref, description)
+        stk = initiate_stk_push(phone, amount, account_ref, description, isp=isp)
 
         payment = create_pending_mpesa_payment(
             customer=customer,

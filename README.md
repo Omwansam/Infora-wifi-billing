@@ -356,3 +356,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Note**: This is a development version. For production use, ensure all security configurations are properly set up and tested.
+
+
+One caveat: I verified schema + credential-resolution logic, but I did not place a live STK call to Safaricom (needs real sandbox keys + a public callback URL). To confirm the full round-trip, drop sandbox creds into Settings → Payments (or .env) and trigger a portal payment.
