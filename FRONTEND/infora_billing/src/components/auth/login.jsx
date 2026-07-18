@@ -29,14 +29,11 @@ export default function LoginPage() {
     }
 
     try {
-      console.log('Attempting login with:', { email, password: '***' });
       const result = await login(email, password);
-      
-      console.log('Login result:', result);
-      
+
       if (result.success) {
         toast.success('Login successful!');
-        
+
         // Check if user is admin and redirect accordingly
         if (result.user.is_admin) {
           // Admin users go to dashboard
@@ -49,17 +46,10 @@ export default function LoginPage() {
         toast.error(result.error || 'Login failed');
       }
     } catch (error) {
-      console.error('Login error:', error);
       toast.error('Network error. Please check your connection.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleDemoLogin = () => {
-    setEmail(BRAND.adminEmail);
-    setPassword('admin123');
-    toast.success('Demo credentials loaded! Click Sign In to login.');
   };
 
   return (
@@ -119,6 +109,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  autoComplete="username"
                   className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   placeholder="Enter your email"
                   disabled={loading}
@@ -141,6 +132,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  autoComplete="current-password"
                   className="block w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   placeholder="Enter your password"
                   disabled={loading}
@@ -197,34 +189,6 @@ export default function LoginPage() {
               )}
             </button>
           </form>
-
-          {/* Production-only helpers — hidden in the demo build */}
-          {!DEMO_MODE && (
-            <>
-              {/* Divider */}
-              <div className="mt-6">
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-gray-300" />
-                  </div>
-                  <div className="relative flex justify-center text-sm">
-                    <span className="px-2 bg-white text-gray-500">Or continue with</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Demo Login */}
-              <div className="mt-6">
-                <button
-                  onClick={handleDemoLogin}
-                  disabled={loading}
-                  className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
-                >
-                  Use Demo Credentials
-                </button>
-              </div>
-            </>
-          )}
         </motion.div>
 
         {/* Sign Up Link */}
