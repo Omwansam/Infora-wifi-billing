@@ -359,3 +359,40 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 
 One caveat: I verified schema + credential-resolution logic, but I did not place a live STK call to Safaricom (needs real sandbox keys + a public callback URL). To confirm the full round-trip, drop sandbox creds into Settings → Payments (or .env) and trigger a portal payment.
+
+
+Locked in: TOTP + recovery codes now, opt-in per user, with a clean seam to add SMS OTP later. Here's the finalized build plan tailored to your codebase.
+
+Backend
+Deps — add pyotp to requirements.txt (qrcode[pil] already there).
+
+Schema (models.py + migration):
+
+On User: twofa_secret (Text, encrypted), twofa_enabled (Bool), twofa_confirmed_at (DateTime), and twofa_method (String, default 'totp') — that last column is the SMS-later seam.
+New user_recovery_codes table (user_id, code_hash, used_at) — hashed, single-use.
+New services/twofa_service.py — the whole TOTP domain in one place, with a method-dispatch shape so 'sms' slots in later:
+
+generate_secret(), provisioning_uri(user, secret), qr_png_base64(uri)
+verify_code(user, code) → dispatches on twofa_method (today: TOTP via pyotp, valid_window=1)
+generate_recovery_codes(), hash/verify/consume a recovery code
+Endpoints in routes/auth.py:
+
+Endpoint	Purpose
+POST /api/auth/2fa/setup	make pending secret → return otpauth:// + QR PNG
+POST /api/auth/2fa/enable	password + code → enable, return 10 recovery codes once
+POST /api/auth/2fa/disable	password → wipe secret + codes
+GET /api/auth/2fa/status	enabled? confirmed date? codes remaining
+POST /api/auth/login (modified)	if 2FA on: return {requires_2fa, mfa_token} — no real tokens
+POST /api/auth/login/2fa	mfa_token + code/recovery → create_user_tokens()
+mfa_token = short-lived itsdangerous signed token (purpose "mfa", ~5 min) — deliberately not a JWT, so it can never satisfy @jwt_required.
+@rate_limit + failure lockout on /login/2fa; AuditLog on enable/disable/failed verify.
+Frontend
+Rebuild TwoFactorAuthPage.jsx into a real enroll flow (QR → 6-digit verify → recovery-code display → disable), using the emerald ui.jsx kit.
+Two-step login in login.jsx + AuthContext.jsx (handle requires_2fa).
+Wire the AccountSettings "Coming soon" card → live status + link.
+New endpoints in config/api.js + service methods.
+Verification
+pyotp enroll→verify round-trip; recovery-code single-use; mfa_token rejected by protected routes; schema on real Postgres (rolled back).
+That's the complete, opt-in TOTP design with SMS kept as a future drop-in. Say the word and I'll build it — I'd start with the backend (schema + twofa_service + endpoints), verify, then do the enroll page and the two-step login.
+
+One question worth settling before I code: should enabling 2FA immediately invalidate the user's other active sessions (forcing re-login with 2FA everywhere), or leave existing sessions alone until they expire? I'd recommend invalidating for a security feature — but it's your call.
