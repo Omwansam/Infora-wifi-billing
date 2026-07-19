@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft,
@@ -62,6 +62,8 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
   const [copiedOnce, setCopiedOnce] = useState(false);
   const [selfCheckOpen, setSelfCheckOpen] = useState(false);
   const [rerunningCheck, setRerunningCheck] = useState(false);
+  const [tunnelStalled, setTunnelStalled] = useState(false);
+  const tunnelWaitStartRef = useRef(null);
 
   // Step 3 — ports (interface discovery)
   const [discovery, setDiscovery] = useState(null);
@@ -106,7 +108,24 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
       try {
         const token = getAccessToken();
         const status = await deviceService.getProvisionStatus(token, createdDevice.id);
-        if (active) setProvisionStatus(status);
+        if (!active) return;
+        setProvisionStatus(status);
+        // Detect a stalled dial-back: the script has been fetched but the
+        // WireGuard handshake never completes. This is almost always a server
+        // firewall / port-forwarding issue (UDP 51821 not reaching the tunnel),
+        // so surface an actionable hint instead of spinning forever.
+        const s = status?.stages;
+        const waitingOnTunnel =
+          s?.script_fetched?.done &&
+          s?.tunnel_up?.applicable !== false &&
+          !s?.tunnel_up?.done;
+        if (waitingOnTunnel) {
+          if (!tunnelWaitStartRef.current) tunnelWaitStartRef.current = Date.now();
+          else if (Date.now() - tunnelWaitStartRef.current > 150000) setTunnelStalled(true);
+        } else {
+          tunnelWaitStartRef.current = null;
+          setTunnelStalled(false);
+        }
       } catch {
         /* keep polling silently */
       }
@@ -611,6 +630,22 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                                   {item.title}
                                 </p>
                                 <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
+
+                                {/* Stalled dial-back diagnostic */}
+                                {item.id === 'tunnel' && !item.done && tunnelStalled && (
+                                  <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800">
+                                    <p className="font-semibold">
+                                      The router is sending WireGuard handshakes but the server hasn&apos;t answered yet.
+                                    </p>
+                                    <p className="mt-1 text-amber-700">
+                                      On the router, <span className="font-medium">wg-mgmt</span> will show Tx increasing
+                                      with Rx 0&nbsp;B. That means UDP&nbsp;51821 is not reaching the WireGuard service on the
+                                      billing server — check the server firewall (allow and forward UDP&nbsp;51821 to the
+                                      WireGuard container) and any cloud-provider firewall. You can also continue anyway
+                                      and finish the port map once connectivity is restored.
+                                    </p>
+                                  </div>
+                                )}
 
                                 {/* Self-check detail rows */}
                                 {item.id === 'check' && selfCheck?.done && (

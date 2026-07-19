@@ -27,6 +27,7 @@ import PlanDetail from './components/plans/PlanDetail';
 import PlanForm from './components/plans/PlanForm';
 import FupMonitorPage from './components/monitoring/FupMonitorPage';
 import MikrotikPage from './components/devices/MikrotikPage';
+import DeviceDetailPage from './components/devices/DeviceDetailPage';
 import EquipmentPage from './components/devices/EquipmentPage';
 import DeviceStatusPage from './components/devices/DeviceStatusPage';
 import DeviceBackupPage from './components/devices/DeviceBackupPage';
@@ -151,6 +152,7 @@ function AppRoutes() {
       
       {/* Device Management Routes */}
       <Route path="/devices/mikrotik" element={<AdminRoute><MainLayout><MikrotikPage /></MainLayout></AdminRoute>} />
+      <Route path="/devices/mikrotik/:id" element={<AdminRoute><MainLayout><DeviceDetailPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/equipment" element={<AdminRoute><MainLayout><EquipmentPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/status" element={<AdminRoute><MainLayout><DeviceStatusPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/backup" element={<AdminRoute><MainLayout><DeviceBackupPage /></MainLayout></AdminRoute>} />

@@ -54,6 +54,12 @@ def sync_device_stats(device, connection_type=None):
         device.bandwidth_usage = info.bandwidth_rx + info.bandwidth_tx
         device.last_synced = datetime.utcnow()
         device.device_status = DeviceStatus.ONLINE
+        # Live resource usage for the device detail page (Resource Usage card)
+        device.cpu_load = info.cpu_load
+        device.mem_total = getattr(info, 'memory_total', 0) or None
+        device.mem_free = getattr(info, 'memory_free', 0) or None
+        device.hdd_total = getattr(info, 'hdd_total', 0) or None
+        device.hdd_free = getattr(info, 'hdd_free', 0) or None
         # Persist version / board so the Firmware + Status pages show real data.
         if info.version:
             device.os_version = info.version

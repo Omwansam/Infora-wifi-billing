@@ -360,6 +360,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 One caveat: I verified schema + credential-resolution logic, but I did not place a live STK call to Safaricom (needs real sandbox keys + a public callback URL). To confirm the full round-trip, drop sandbox creds into Settings → Payments (or .env) and trigger a portal payment.
 
+####################################################################################################
 
 Locked in: TOTP + recovery codes now, opt-in per user, with a clean seam to add SMS OTP later. Here's the finalized build plan tailored to your codebase.
 
@@ -396,3 +397,64 @@ pyotp enroll→verify round-trip; recovery-code single-use; mfa_token rejected b
 That's the complete, opt-in TOTP design with SMS kept as a future drop-in. Say the word and I'll build it — I'd start with the backend (schema + twofa_service + endpoints), verify, then do the enroll page and the two-step login.
 
 One question worth settling before I code: should enabling 2FA immediately invalidate the user's other active sessions (forcing re-login with 2FA everywhere), or leave existing sessions alone until they expire? I'd recommend invalidating for a security feature — but it's your call.
+
+
+Ready for review
+Select text to add comments on the plan
+Introduce WAN (multi-uplink) load balancing into router provisioning
+Context
+The user wants to introduce ISP WAN link load balancing — spreading customer internet traffic across multiple upstream links (e.g. ISP-A + ISP-B) on managed MikroTik routers, with automatic failover — driven from the billing platform.
+
+The platform already generates idempotent RouterOS provisioning scripts (build_radius_script in services/provisioning_scripts.py), fetched by each router via a token one-liner. The gap: MikrotikDevice has no concept of uplinks — nothing records which interfaces are WANs, their gateways, capacity weights, or ISP labels. This feature adds per-device uplink modelling, generates a PCC (Per-Connection Classifier) + health-checked failover block, and adds a wizard step to configure it.
+
+Outcome: an operator marks 2+ WANs on a router; the generated provisioning script load-balances customer traffic across them (weighted, per-connection) and fails over when a link dies. With <2 uplinks configured, script output is unchanged (safe by default).
+
+First deliverable is documentation: save this design as a real repo file at docs/design/wan-load-balancing.md (new docs/design/ folder) so it lives in the project's folder structure, not only in the ephemeral plan file.
+
+Key concept (primer captured in the doc)
+Not link aggregation. Balancing two 10 Mbps links does not give one client 20 Mbps — a single TCP flow rides one uplink. You gain aggregate throughput across many connections + resilience.
+PCC is the production method: mangle hashes each new connection into a weighted bucket and pins it to one WAN for its lifetime (avoids asymmetric routing and the "two IPs" session breakage). ECMP/nth are simpler but weaker; we generate PCC.
+Failover is mandatory: check-gateway=ping on marked routes + /tool netwatch canary pinging through each link (detects "link up, internet down"), distance-tiered so the survivor absorbs traffic and rebalances on recovery.
+Gotchas the generator must handle: per-connection (never per-packet), per-WAN masquerade, input-interface connection marking, weighted buckets for unequal links, router-originated + DNS traffic.
+Approach
+1. Data model — per-device uplinks
+New DeviceUplink table (1-many → MikrotikDevice), one row per WAN:
+
+id, device_id (FK, indexed), interface (RouterOS name e.g. ether1), gateway (next-hop IP), weight (int ≥1, capacity ratio, default 1), isp_label (e.g. "Safaricom"), enabled (bool default true), created_at.
+Add uplinks = db.relationship('DeviceUplink', back_populates='device', cascade='all, delete-orphan') on MikrotikDevice (mirrors existing relationship style in models.py).
+Alembic migration creating device_uplinks, chained from the current head — new table, so it's create_all-safe and migration-covered (same pattern used for the settings tables: payment_settings, radius_config, etc. in migrations/versions/c2d3e4f5a6b7_...py).
+Reuse: interface names come from the existing deviceInterfaces endpoint (API_ENDPOINTS.deviceInterfaces → routes/devices.py), so the wizard offers a dropdown of real interfaces rather than free text.
+
+2. Script generation — the WAN balancing block
+New build_wan_balancing_lines(device, uplinks) in backend/server/services/provisioning_scripts.py, emitting an idempotent block tagged comment="infora-wan", only when >=2 enabled uplinks exist:
+
+Remove prior infora-wan mangle/route/nat rules first (idempotency), matching the existing :if ([:len [/... find comment="infora-..."]] > 0) do={ ... remove ... } pattern.
+Per-WAN input marking: chain=prerouting in-interface=<wan> action=mark-connection new-connection-mark=wan<N>-conn (keeps replies on the entry WAN).
+Weighted PCC split of new LAN connections: expand weight into buckets, e.g. weights {A:2, B:1} → 3 buckets per-connection-classifier=both-addresses-and-ports:3/0|3/1 → wanA, 3/2 → wanB.
+Route marking per connection-mark → new-routing-mark=to-wan<N>.
+Per-mark routes: /ip route add routing-mark=to-wan<N> gateway=<gw> check-gateway=ping.
+Per-WAN masquerade: one srcnat/masquerade out-interface=<wan> each.
+Failover + router/DNS traffic: distance-tiered default routes + optional /tool netwatch canary per uplink. Wire the call into build_radius_script right after the NAT/masquerade section (§4), guarded on uplinks. Single-WAN behaviour is untouched when <2 uplinks.
+3. API — uplink CRUD
+In backend/server/routes/devices.py: GET/PUT /api/devices/<id>/uplinks to read/replace a device's uplinks. Validate: interface belongs to the device's known interfaces, weight >= 1, gateway is a valid IP. Mirror existing device sub-resource endpoints (ISP access check via the same helper used by deviceInterfaces/deviceRadiusScript).
+
+4. Frontend — wizard step + service
+Add a "WAN / Load balancing" step to the device wizard (the same wizard that has the Ports step feeding monitored_interfaces): a small editable table — interface (dropdown from deviceInterfaces), gateway, weight, ISP label, enable — persisted via a new deviceService.saveUplinks + API_ENDPOINTS.deviceUplinks(id) in src/config/api.js.
+Copy: "<2 uplinks = single WAN (no balancing); 2+ = weighted balancing with failover."
+Critical files
+backend/server/models.py — DeviceUplink model + MikrotikDevice.uplinks relationship.
+backend/server/migrations/versions/<rev>_device_uplinks.py — new table (chain from head).
+backend/server/services/provisioning_scripts.py — build_wan_balancing_lines + wire into build_radius_script.
+backend/server/routes/devices.py — uplink CRUD endpoints.
+FRONTEND/infora_billing/src/config/api.js + device service + device wizard component — uplink UI.
+docs/design/wan-load-balancing.md — this design, committed to the repo.
+Verification
+Unit (script): call build_radius_script for a device with 2 weighted uplinks; assert the .rsc contains the PCC mangle rules (both buckets), per-mark routes with check-gateway=ping, per-WAN masquerade, and the infora-wan idempotency removes; assert no WAN block when <2 uplinks (single-WAN output unchanged).
+Model smoke (Postgres, rolled back): create a MikrotikDevice + 2 DeviceUplink rows, verify the relationship + cascade, using the same throwaway-venv-against-real-Postgres approach used for the settings tables (create tables in a transaction, exercise, roll back — no side effects).
+py_compile all changed backend files.
+End-to-end (lab/real router): fetch the provisioning one-liner, apply, confirm both links carry connections (/ip firewall connection shows both routing-marks), then disable one uplink and confirm traffic shifts to the survivor and rebalances on restore.
+Frontend: npm run build; drive the wizard step, confirm uplinks persist and appear in the generated script.
+Rollout & safety
+Safe by default: existing routers have 0 uplinks → generated script is byte-for-byte unchanged.
+Disruptive to apply: the WAN block rewrites routing/mangle. Apply during a maintenance window; the script never touches the built-in admin user (the operator's console session stays alive).
+Deploy path: same two-part flow as recent deploys — rebuild the flask_app image (backend) and rebuild + publish the admin static bundle (frontend), per the recipe in [[contabo-server-topology]] (memory).

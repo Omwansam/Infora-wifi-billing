@@ -106,6 +106,11 @@ def ensure_schema_upgrades():
         'monitored_interfaces': 'TEXT',
         'self_check_result': 'TEXT',
         'self_check_at': 'TIMESTAMP',
+        'cpu_load': 'DOUBLE PRECISION',
+        'mem_total': 'BIGINT',
+        'mem_free': 'BIGINT',
+        'hdd_total': 'BIGINT',
+        'hdd_free': 'BIGINT',
     }
     try:
         inspector = sa_inspect(db.engine)

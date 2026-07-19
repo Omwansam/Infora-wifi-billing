@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Search,
@@ -28,7 +29,6 @@ import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
 import DevicesLayout from './DevicesLayout';
 import DeviceStatusBadge from './DeviceStatusBadge';
 import AddDeviceWizard from './AddDeviceWizard';
-import DevicePortsPanel from './DevicePortsPanel';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -38,6 +38,7 @@ const STATUS_TABS = [
 ];
 
 export default function MikrotikPage() {
+  const navigate = useNavigate();
   const { devices, stats, loading, loadDevices } = useMikrotikDevices();
   const [isps, setIsps] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -46,7 +47,6 @@ export default function MikrotikPage() {
   const [actionId, setActionId] = useState(null);
   const [deploymentIssues, setDeploymentIssues] = useState([]);
   const [provisionModal, setProvisionModal] = useState(null);
-  const [portsPanel, setPortsPanel] = useState(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -415,9 +415,9 @@ export default function MikrotikPage() {
                       <Terminal className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => setPortsPanel(device)}
+                      onClick={() => navigate(`/devices/mikrotik/${device.id}`)}
                       className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                      title="Ports & live traffic"
+                      title="View device"
                     >
                       <Eye className="h-4 w-4" />
                     </button>
@@ -443,10 +443,6 @@ export default function MikrotikPage() {
             </motion.div>
           ))}
         </div>
-      )}
-
-      {portsPanel && (
-        <DevicePortsPanel device={portsPanel} onClose={() => setPortsPanel(null)} />
       )}
 
       {provisionModal && (

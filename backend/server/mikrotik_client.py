@@ -42,6 +42,10 @@ class DeviceInfo:
     temperature: Optional[float] = None
     version: Optional[str] = None
     board_name: Optional[str] = None
+    memory_total: int = 0
+    memory_free: int = 0
+    hdd_total: int = 0
+    hdd_free: int = 0
 
 class MikroTikAPIError(Exception):
     """Custom exception for MikroTik API errors"""
@@ -235,18 +239,20 @@ class MikroTikClient:
         # Parse CPU load
         cpu_load = float(resources.get('cpu-load', 0))
         
-        # Parse memory usage
-        total_memory = int(resources.get('total-memory', 0))
-        free_memory = int(resources.get('free-memory', 0))
+        # Parse memory + storage (bytes; _res_int handles API bytes and SSH units)
+        total_memory = _res_int(resources, 'total-memory')
+        free_memory = _res_int(resources, 'free-memory')
         memory_usage = ((total_memory - free_memory) / total_memory * 100) if total_memory > 0 else 0
-        
+        total_hdd = _res_int(resources, 'total-hdd-space')
+        free_hdd = _res_int(resources, 'free-hdd-space')
+
         # Count clients (wireless + ethernet)
         client_count = len(wireless_clients) if wireless_clients else 0
-        
+
         # Parse bandwidth (simplified - would need more complex logic for actual usage)
         bandwidth_rx = 0
         bandwidth_tx = 0
-        
+
         return DeviceInfo(
             uptime=uptime,
             cpu_load=cpu_load,
@@ -255,7 +261,11 @@ class MikroTikClient:
             bandwidth_rx=bandwidth_rx,
             bandwidth_tx=bandwidth_tx,
             version=resources.get('version', ''),
-            board_name=resources.get('board-name', '')
+            board_name=resources.get('board-name', ''),
+            memory_total=total_memory,
+            memory_free=free_memory,
+            hdd_total=total_hdd,
+            hdd_free=free_hdd,
         )
     
     def _get_device_info_ssh(self) -> DeviceInfo:
@@ -281,11 +291,13 @@ class MikroTikClient:
         uptime = int(resources.get('uptime', '0').split()[0]) if 'uptime' in resources else 0
         cpu_load = float(resources.get('cpu-load', '0')) if 'cpu-load' in resources else 0
         
-        # Calculate memory usage
-        total_memory = int(resources.get('total-memory', '0')) if 'total-memory' in resources else 0
-        free_memory = int(resources.get('free-memory', '0')) if 'free-memory' in resources else 0
+        # Calculate memory + storage (bytes; _res_int handles SSH's human units)
+        total_memory = _res_int(resources, 'total-memory')
+        free_memory = _res_int(resources, 'free-memory')
         memory_usage = ((total_memory - free_memory) / total_memory * 100) if total_memory > 0 else 0
-        
+        total_hdd = _res_int(resources, 'total-hdd-space')
+        free_hdd = _res_int(resources, 'free-hdd-space')
+
         return DeviceInfo(
             uptime=uptime,
             cpu_load=cpu_load,
@@ -293,6 +305,10 @@ class MikroTikClient:
             client_count=client_count,
             bandwidth_rx=0,  # Would need more complex parsing
             bandwidth_tx=0,  # Would need more complex parsing
+            memory_total=total_memory,
+            memory_free=free_memory,
+            hdd_total=total_hdd,
+            hdd_free=free_hdd,
             version=resources.get('version', ''),
             board_name=resources.get('board-name', '')
         )

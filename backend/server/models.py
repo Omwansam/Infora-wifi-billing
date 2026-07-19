@@ -341,6 +341,12 @@ class MikrotikDevice(db.Model):
     uptime = db.Column(db.Integer, default=0)
     client_count = db.Column(db.Integer, default=0)
     bandwidth_usage = db.Column(db.Integer, default=0)
+    # Live resource usage, refreshed on each sync (see services/mikrotik_sync.py)
+    cpu_load = db.Column(db.Float, nullable=True)          # percent
+    mem_total = db.Column(db.BigInteger, nullable=True)    # bytes
+    mem_free = db.Column(db.BigInteger, nullable=True)     # bytes
+    hdd_total = db.Column(db.BigInteger, nullable=True)    # bytes
+    hdd_free = db.Column(db.BigInteger, nullable=True)     # bytes
     location = db.Column(db.String(50), nullable=False)
     notes = db.Column(db.Text, nullable=True)
     last_synced = db.Column(db.DateTime, nullable=True)
