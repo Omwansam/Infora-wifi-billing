@@ -135,12 +135,19 @@ class MikroTikClient:
             self.ssh_client = paramiko.SSHClient()
             self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
+            # MikroTik SSH negotiates slowly (heavy crypto) and the management
+            # tunnel adds latency, so give the banner/auth phases their own
+            # generous budgets — the TCP `timeout` alone is too tight and causes
+            # "Error reading SSH protocol banner" over the tunnel.
+            banner_auth = max(self.config.timeout, 15)
             self.ssh_client.connect(
                 hostname=self.config.host,
                 port=self.config.port,
                 username=self.config.username,
                 password=self.config.password,
                 timeout=self.config.timeout,
+                banner_timeout=banner_auth,
+                auth_timeout=banner_auth,
                 look_for_keys=False,
                 allow_agent=False
             )

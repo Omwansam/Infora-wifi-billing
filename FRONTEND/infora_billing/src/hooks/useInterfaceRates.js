@@ -11,15 +11,22 @@ import { getAccessToken } from '../utils/authToken';
 export function useInterfaceRates(deviceId, enabled, intervalMs = 5000) {
   const [rates, setRates] = useState({});
   const prevRef = useRef(null);
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     if (!enabled || !deviceId) {
       prevRef.current = null;
+      inFlightRef.current = false;
       setRates({});
       return undefined;
     }
     let active = true;
     const poll = async () => {
+      // MikroTik SSH over the tunnel can take longer than the interval; never
+      // let a new tick open a second request while one is still running, or the
+      // router sees overlapping SSH sessions and drops them.
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
       try {
         const token = getAccessToken();
         const sample = await deviceService.getInterfaceTraffic(token, deviceId);
@@ -41,6 +48,8 @@ export function useInterfaceRates(deviceId, enabled, intervalMs = 5000) {
         setRates(next);
       } catch {
         /* router offline — keep last known rates */
+      } finally {
+        inFlightRef.current = false;
       }
     };
     poll();

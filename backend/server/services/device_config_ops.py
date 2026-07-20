@@ -11,7 +11,10 @@ Used by the device onboarding wizard:
 For NAT routers the management WireGuard tunnel IP is used as the connect host;
 otherwise the registered device_ip is used.
 """
+import contextlib
+import fcntl
 import ipaddress
+import os
 import re
 import socket
 import time
@@ -20,6 +23,7 @@ from mikrotik_client import (
     ConnectionType,
     MikroTikClient,
     MikroTikConnectionConfig,
+    MikroTikSSHError,
 )
 from services.encryption import decrypt_value
 
@@ -52,6 +56,83 @@ def _ssh_config(device, timeout=8):
         timeout=timeout,
         verify_ssl=False,
     )
+
+
+class DeviceBusy(Exception):
+    """Raised when the per-device SSH lock can't be acquired in time.
+
+    Pollers catch this and return last-known/empty data instead of opening a
+    competing SSH session (which is what caused the router to drop connections
+    mid-banner in the first place).
+    """
+
+
+_LOCK_DIR = '/tmp'
+
+
+@contextlib.contextmanager
+def _device_ssh_file_lock(device_id, wait):
+    """Cross-process, cross-thread exclusive lock for one device's SSH access.
+
+    Prod runs gunicorn with multiple worker *processes*, so an in-process
+    threading.Lock cannot serialize SSH to a router. A flock on a per-device
+    file in the shared container filesystem does — and opening a fresh fd per
+    acquire makes it serialize the threads within a worker too. The lock frees
+    automatically when the fd closes or the worker dies, so no stale locks.
+    """
+    path = os.path.join(_LOCK_DIR, f'infora-mikrotik-{device_id}.lock')
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    deadline = time.time() + wait
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    raise DeviceBusy(f'device {device_id} SSH is busy')
+                time.sleep(0.25)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def mikrotik_ssh(device, timeout=12, lock_wait=30, retries=3):
+    """Serialized, retrying SSH session to a device.
+
+    Acquires the per-device lock (raising DeviceBusy after ``lock_wait`` s),
+    then connects with up to ``retries`` attempts and short backoff — MikroTik
+    SSH over the tunnel is flaky and a retry almost always lands. Yields a
+    connected MikroTikClient; disconnects and unlocks on exit.
+    """
+    with _device_ssh_file_lock(device.id, lock_wait):
+        last_err = None
+        client = None
+        for attempt in range(retries):
+            client = MikroTikClient(_ssh_config(device, timeout=timeout))
+            try:
+                if client.connect():
+                    break
+                last_err = MikroTikSSHError('connect() returned False')
+            except Exception as exc:  # noqa: BLE001 — retry any connect failure
+                last_err = exc
+            client.disconnect()
+            client = None
+            if attempt < retries - 1:
+                time.sleep(1.5 * (attempt + 1))
+        if client is None:
+            raise MikroTikSSHError(
+                f'SSH to {connection_host(device)} failed after {retries} attempts: {last_err}'
+            )
+        try:
+            yield client
+        finally:
+            client.disconnect()
 
 
 def _parse_kv(output):
@@ -157,10 +238,7 @@ def run_self_check(device):
 
     wg_enabled = bool(device.management_wg_enabled and device.management_wg_ip)
 
-    with MikroTikClient(_ssh_config(device, timeout=12)) as client:
-        if not client.connect():
-            raise RuntimeError('Could not connect to router')
-
+    with mikrotik_ssh(device, timeout=12, lock_wait=30) as client:
         def cli(command):
             out, _err = client.run_cli(command)
             return out or ''
@@ -250,10 +328,15 @@ def get_provision_status(device):
 
     if fetched or tunnel['up']:
         try:
-            with MikroTikClient(_ssh_config(device, timeout=5)) as client:
-                reachable = bool(client.connect())
-                if reachable:
-                    detected = _detect_router_info(client)
+            # Poller: don't wait long for the lock and never open a competing
+            # SSH session. If another op holds the device (e.g. configure), the
+            # router IS reachable — reflect the tunnel probe and skip detection.
+            with mikrotik_ssh(device, timeout=10, lock_wait=1, retries=2) as client:
+                reachable = True
+                detected = _detect_router_info(client)
+        except DeviceBusy:
+            reachable = tunnel['up']
+            error = 'Router busy (another operation in progress)'
         except Exception as exc:
             error = str(exc)
 
@@ -370,9 +453,7 @@ def list_interfaces(device):
     disabled state, MAC, speed and an uplink hint, plus a summary of the
     router itself (model, RouterOS version, architecture, port counts).
     """
-    with MikroTikClient(_ssh_config(device, timeout=10)) as client:
-        if not client.connect():
-            raise RuntimeError('Could not connect to router')
+    with mikrotik_ssh(device, timeout=10, lock_wait=30) as client:
         all_out, _ = client.run_cli('/interface print terse')
         eth_out, _ = client.run_cli('/interface ethernet print terse')
         res_out, _ = client.run_cli('/system resource print')
@@ -430,11 +511,16 @@ def interface_traffic(device):
 
     Callers poll this twice and derive per-port throughput from the delta —
     no flow collector needed. Returns {'at': epoch_seconds, 'stats': [...]}.
+
+    Poller: if the device is busy with another SSH op, returns {'busy': True,
+    'stats': []} instead of opening a competing session, so the wizard's live
+    poll never collides with (or 502s during) discovery/configure.
     """
-    with MikroTikClient(_ssh_config(device, timeout=8)) as client:
-        if not client.connect():
-            raise RuntimeError('Could not connect to router')
-        out, _err = client.run_cli('/interface print stats terse')
+    try:
+        with mikrotik_ssh(device, timeout=8, lock_wait=1, retries=2) as client:
+            out, _err = client.run_cli('/interface print stats terse')
+    except DeviceBusy:
+        return {'at': time.time(), 'stats': [], 'busy': True}
 
     def _num(value):
         try:
@@ -470,9 +556,7 @@ def set_interface_disabled(device, name, disabled):
         raise ValueError('Refusing to disable the uplink port — it carries the internet feed')
 
     state = 'yes' if disabled else 'no'
-    with MikroTikClient(_ssh_config(device, timeout=8)) as client:
-        if not client.connect():
-            raise RuntimeError('Could not connect to router')
+    with mikrotik_ssh(device, timeout=8, lock_wait=30) as client:
         _out, err = client.run_cli(f'/interface set [find name="{name}"] disabled={state}')
         if err and err.strip():
             raise RuntimeError(err.strip()[:200])
@@ -627,9 +711,7 @@ def build_services_commands(opts):
 
 def read_device_info(device):
     """Read live version/board/uptime over SSH. Returns a dict (best-effort)."""
-    with MikroTikClient(_ssh_config(device, timeout=10)) as client:
-        if not client.connect():
-            raise RuntimeError('Could not connect to router')
+    with mikrotik_ssh(device, timeout=10, lock_wait=30) as client:
         resource, _ = client.run_cli('/system resource print')
         routerboard, _ = client.run_cli('/system routerboard print')
     res = _parse_kv(resource)
@@ -652,9 +734,7 @@ def check_firmware(device):
     Returns {installed, latest, update_available, channel}. Never raises on
     parse issues — connection failures propagate to the caller.
     """
-    with MikroTikClient(_ssh_config(device, timeout=15)) as client:
-        if not client.connect():
-            raise RuntimeError('Could not connect to router')
+    with mikrotik_ssh(device, timeout=15, lock_wait=30) as client:
         # check-for-updates contacts MikroTik's upgrade servers, then print shows the result.
         client.run_cli('/system package update check-for-updates')
         out, _ = client.run_cli('/system package update print')
@@ -680,10 +760,7 @@ def upgrade_firmware(device):
     """
     log = [{'step': 'queued', 'status': 'ok', 'detail': 'Starting firmware upgrade...'}]
     try:
-        with MikroTikClient(_ssh_config(device, timeout=20)) as client:
-            if not client.connect():
-                log.append({'step': 'connect', 'status': 'error', 'detail': 'Connection failed'})
-                return {'success': False, 'log': log}
+        with mikrotik_ssh(device, timeout=20, lock_wait=30) as client:
             log.append({'step': 'connect', 'status': 'ok', 'detail': f'Connected to {connection_host(device)}'})
 
             # Upgrade RouterBOOT firmware to match the new RouterOS, then install + reboot.
@@ -711,9 +788,7 @@ def upgrade_firmware(device):
 
 def export_config(device):
     """Return the full RouterOS configuration as text (from /export over SSH)."""
-    with MikroTikClient(_ssh_config(device, timeout=30)) as client:
-        if not client.connect():
-            raise RuntimeError('Could not connect to router')
+    with mikrotik_ssh(device, timeout=30, lock_wait=30) as client:
         out, err = client.run_cli('/export')
     text = out or ''
     if not text.strip() and err:
@@ -724,9 +799,7 @@ def export_config(device):
 def reboot_device(device):
     """Reboot the router over SSH (session drops, which is expected)."""
     try:
-        with MikroTikClient(_ssh_config(device, timeout=10)) as client:
-            if not client.connect():
-                return {'success': False, 'detail': 'Connection failed'}
+        with mikrotik_ssh(device, timeout=10, lock_wait=30) as client:
             try:
                 client.run_cli('/system reboot')
             except Exception:
@@ -760,11 +833,10 @@ def configure_services(device, opts):
     steps, params = build_services_commands(opts)
 
     try:
-        with MikroTikClient(_ssh_config(device, timeout=12)) as client:
-            log.append({'step': 'connect', 'status': 'ok', 'detail': f'Connecting to {connection_host(device)} via SSH...'})
-            if not client.connect():
-                log.append({'step': 'connect', 'status': 'error', 'detail': 'Connection failed'})
-                return {'success': False, 'log': log, 'summary': None}
+        # Action: wait for the router even if a poll currently holds it, and let
+        # mikrotik_ssh retry the flaky MikroTik SSH banner before giving up.
+        with mikrotik_ssh(device, timeout=12, lock_wait=30) as client:
+            log.append({'step': 'connect', 'status': 'ok', 'detail': f'Connected to {connection_host(device)} via SSH'})
 
             for label, command in steps:
                 try:
