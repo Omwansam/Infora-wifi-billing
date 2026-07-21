@@ -72,7 +72,12 @@ def sync_device_stats(device, connection_type=None):
     """
     use_tunnel = bool(device.management_wg_enabled and device.management_wg_ip)
     if use_tunnel:
-        from services.device_config_ops import mikrotik_ssh
+        from services.device_config_ops import mikrotik_ssh, probe_tunnel
+        # Fast offline detection: if the router doesn't answer on the tunnel
+        # (powered off / tunnel down), fail immediately so the card flips to
+        # OFFLINE in a few seconds instead of after ~40s of SSH retries.
+        if not probe_tunnel(device, timeout=2)['up']:
+            raise MikroTikSSHError('Router unreachable on management tunnel (powered off or tunnel down)')
         with mikrotik_ssh(device, timeout=12, lock_wait=20) as client:
             info = client.get_device_info()
             _apply_device_info(device, info)

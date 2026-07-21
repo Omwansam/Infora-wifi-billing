@@ -516,30 +516,37 @@ def interface_traffic(device):
     'stats': []} instead of opening a competing session, so the wizard's live
     poll never collides with (or 502s during) discovery/configure.
     """
+    # NOTE: '/interface print stats terse' renders a COLUMNAR table with
+    # space-separated thousands (e.g. '7 018 235'), which the key=value terse
+    # parser can't read (yields 0 rows). Use scripting `get` to emit clean CSV
+    # (raw integers, no separators) that parses deterministically.
+    cmd = (
+        ':foreach i in=[/interface find] do={'
+        ':put ([/interface get $i name].","'
+        '.[/interface get $i rx-byte].",".[/interface get $i tx-byte].","'
+        '.[/interface get $i rx-packet].",".[/interface get $i tx-packet])}'
+    )
     try:
         with mikrotik_ssh(device, timeout=8, lock_wait=1, retries=2) as client:
-            out, _err = client.run_cli('/interface print stats terse')
+            out, _err = client.run_cli(cmd)
     except DeviceBusy:
         return {'at': time.time(), 'stats': [], 'busy': True}
 
     def _num(value):
-        try:
-            return int(str(value).replace(',', '').strip() or 0)
-        except (TypeError, ValueError):
-            return 0
+        digits = ''.join(ch for ch in str(value) if ch.isdigit())
+        return int(digits) if digits else 0
 
     stats = []
-    for row in _parse_terse_rows(out):
-        name = row.get('name')
-        if not name:
-            continue
-        stats.append({
-            'name': name,
-            'rx_bytes': _num(row.get('rx-byte')),
-            'tx_bytes': _num(row.get('tx-byte')),
-            'rx_packets': _num(row.get('rx-packet')),
-            'tx_packets': _num(row.get('tx-packet')),
-        })
+    for line in (out or '').replace('\r', '').split('\n'):
+        parts = line.strip().split(',')
+        if len(parts) >= 5 and parts[0]:
+            stats.append({
+                'name': parts[0],
+                'rx_bytes': _num(parts[1]),
+                'tx_bytes': _num(parts[2]),
+                'rx_packets': _num(parts[3]),
+                'tx_packets': _num(parts[4]),
+            })
     return {'at': time.time(), 'stats': stats}
 
 

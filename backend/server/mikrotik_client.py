@@ -445,7 +445,26 @@ class MikroTikClient:
             return 0, 0
 
     def _ssh_uplink_interface(self) -> Optional[str]:
-        """Best-effort WAN port name: ether1 if present, else the first ethernet."""
+        """WAN/uplink port name.
+
+        Prefer the interface carrying the active default route (the true internet
+        uplink, wherever it is), and only fall back to ether1 / the first
+        ethernet when that can't be resolved.
+        """
+        # 1) Interface of the active default route (immediate-gw is 'IP%iface').
+        try:
+            out, _err = self._ssh_execute_command(
+                ':local r [/ip route find where dst-address="0.0.0.0/0" active=yes];'
+                ' :if ([:len $r] > 0) do={ :put [/ip route get ([:pick $r 0]) immediate-gw] }'
+            )
+            val = (out or '').strip()
+            if '%' in val:
+                iface = val.split('%')[-1].strip().split(',')[0].split()[0]
+                if iface:
+                    return iface
+        except Exception:
+            pass
+        # 2) Fallback: ether1, else the first ethernet port.
         try:
             out, _err = self._ssh_execute_command('/interface ethernet print terse')
             names = []

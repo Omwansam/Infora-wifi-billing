@@ -363,9 +363,22 @@ def delete_device(device_id):
     """Delete device"""
     try:
         device = MikrotikDevice.query.get_or_404(device_id)
-        
+
         if device.management_wg_enabled:
             deprovision_device_management_tunnel(device)
+
+        # Detach/clean rows that FK to this device without ON DELETE CASCADE, or
+        # the delete fails: radius_sessions.mikrotik_device_id is NOT NULL (so the
+        # rows must be removed); the rest are nullable history we keep by nulling
+        # the reference.
+        from models import RadiusSession, RadAcct, HotspotAccessCode, WireGuardServer
+        RadiusSession.query.filter_by(mikrotik_device_id=device.id).delete(synchronize_session=False)
+        RadAcct.query.filter_by(mikrotik_device_id=device.id).update(
+            {'mikrotik_device_id': None}, synchronize_session=False)
+        HotspotAccessCode.query.filter_by(device_id=device.id).update(
+            {'device_id': None}, synchronize_session=False)
+        WireGuardServer.query.filter_by(mikrotik_device_id=device.id).update(
+            {'mikrotik_device_id': None}, synchronize_session=False)
 
         db.session.delete(device)
         db.session.commit()
