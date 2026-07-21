@@ -19,9 +19,18 @@ from services.wireguard_management import (
 
 
 def resolve_provision_base_url():
-    """HTTPS base URL the router uses to fetch its provisioning script."""
+    """HTTPS base URL the router uses to fetch its provisioning script.
+
+    Prefer the public DOMAIN (PROVISION_BASE_URL / PUBLIC_BASE_URL) so the fetch
+    works and passes TLS certificate validation — a raw server IP would present a
+    cert that doesn't match the host and the router can't reach the origin that
+    way. Only fall back to the server host/IP when no domain is configured.
+    """
+    from services.portal_urls import public_base_url
+
     base = (
         current_app.config.get('PROVISION_BASE_URL')
+        or public_base_url()  # resolves PUBLIC_BASE_URL / PROVISION_BASE_URL (the domain)
         or current_app.config.get('PUBLIC_SERVER_HOST')
         or current_app.config.get('FREERADIUS_HOST', '')
     ).strip()
@@ -222,8 +231,11 @@ def build_one_liner(device, base_url=None):
     base = (base_url or resolve_provision_base_url()).rstrip('/')
     token = device.provision_token or '<TOKEN>'
     url = f'{base}/api/provision/{token}/script'
+    # check-certificate=no: RouterOS ships without a full CA bundle, so HTTPS
+    # fetch to a valid public cert still fails validation. The unguessable
+    # 64-hex token in the URL is the auth for this one-time bootstrap fetch.
     return (
-        f'/tool fetch url="{url}" dst-path=flash/provision.rsc;'
+        f'/tool fetch url="{url}" check-certificate=no dst-path=flash/provision.rsc;'
         ' :delay 3s;'
         ' /import flash/provision.rsc;'
         ' :delay 2s;'

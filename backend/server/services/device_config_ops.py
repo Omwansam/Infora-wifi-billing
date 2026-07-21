@@ -692,7 +692,7 @@ def build_services_commands(opts):
             steps.append((
                 'captive-login',
                 ':do {/file remove hotspot/login.html} on-error={}; '
-                f':do {{/tool fetch url="{redirect_api}" dst-path=hotspot/login.html mode=https}} on-error={{}}; '
+                f':do {{/tool fetch url="{redirect_api}" check-certificate=no dst-path=hotspot/login.html mode=https}} on-error={{}}; '
                 '/ip hotspot profile set [find name=infora] html-directory=hotspot '
                 'login-by=http-chap,cookie,http-pap',
             ))
