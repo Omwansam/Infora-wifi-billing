@@ -766,11 +766,38 @@ def upgrade_firmware(device):
     expected to drop after the install command is issued.
     """
     log = [{'step': 'queued', 'status': 'ok', 'detail': 'Starting firmware upgrade...'}]
+    installed = latest = None
     try:
         with mikrotik_ssh(device, timeout=20, lock_wait=30) as client:
             log.append({'step': 'connect', 'status': 'ok', 'detail': f'Connected to {connection_host(device)}'})
 
-            # Upgrade RouterBOOT firmware to match the new RouterOS, then install + reboot.
+            # 1. Refresh the update channel so the router installs the *latest*
+            #    release the system detects (not whatever it last knew about).
+            update_available = True
+            try:
+                client.run_cli('/system package update check-for-updates')
+                info = _parse_kv(client.run_cli('/system package update print')[0])
+                installed = info.get('installed-version')
+                latest = info.get('latest-version')
+                status = (info.get('status') or '').lower()
+                update_available = (
+                    bool(latest and installed and latest != installed)
+                    or 'new version is available' in status
+                )
+                log.append({'step': 'check', 'status': 'ok',
+                            'detail': f'Installed {installed or "?"} · latest {latest or "?"}'})
+            except Exception as exc:
+                # Couldn't read versions — proceed with a best-effort install.
+                log.append({'step': 'check', 'status': 'error', 'detail': str(exc)[:200]})
+
+            # 2. Already current — don't reboot for nothing.
+            if installed and latest and not update_available:
+                log.append({'step': 'done', 'status': 'ok',
+                            'detail': f'Already on the latest release ({installed}); no upgrade needed.'})
+                return {'success': True, 'log': log, 'up_to_date': True,
+                        'installed': installed, 'latest': latest}
+
+            # 3. Upgrade RouterBOOT to match the new RouterOS, then install + reboot.
             try:
                 client.run_cli('/system routerboard upgrade')
                 log.append({'step': 'routerboard', 'status': 'ok', 'detail': 'RouterBOOT upgrade queued'})
@@ -780,17 +807,18 @@ def upgrade_firmware(device):
             try:
                 # This downloads + installs and reboots; the session usually drops here.
                 out, err = client.run_cli('/system package update install')
-                detail = (out or err or 'Install command sent — device rebooting').strip()[:200]
+                detail = (out or err or f'Installing {latest or "latest"} — device rebooting').strip()[:200]
                 log.append({'step': 'install', 'status': 'ok', 'detail': detail or 'Install command sent — device rebooting'})
             except Exception:
                 # A dropped connection during reboot is the expected/success path.
-                log.append({'step': 'install', 'status': 'ok', 'detail': 'Install issued — device is rebooting to apply the upgrade'})
+                log.append({'step': 'install', 'status': 'ok',
+                            'detail': f'Install issued — rebooting to apply {latest or "the upgrade"}'})
     except Exception as exc:
         log.append({'step': 'connect', 'status': 'error', 'detail': str(exc)[:200]})
         return {'success': False, 'log': log}
 
     log.append({'step': 'done', 'status': 'ok', 'detail': 'Upgrade in progress. Re-sync once the router is back online.'})
-    return {'success': True, 'log': log}
+    return {'success': True, 'log': log, 'installed': installed, 'latest': latest}
 
 
 def export_config(device):

@@ -6,6 +6,7 @@ import { getAccessToken } from '../../utils/authToken';
 import { formatDate } from '../../lib/utils';
 import { unwrapList } from '../../lib/networkUtils';
 import vpnService from '../../services/vpnService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
 
@@ -13,6 +14,7 @@ const CONFIG_FORM = { name: '', vpn_type: 'wireguard', server_endpoint: '', serv
 const VIEW_TABS = [{ value: 'configs', label: 'Servers' }, { value: 'clients', label: 'Clients' }];
 
 export default function VpnPage() {
+  const confirm = useConfirm();
   const [view, setView] = useState('configs');
   const [configs, setConfigs] = useState([]);
   const [clients, setClients] = useState([]);
@@ -79,7 +81,7 @@ export default function VpnPage() {
   };
 
   const handleDeleteConfig = async (config) => {
-    if (!window.confirm(`Remove VPN config "${config.name}"?`)) return;
+    if (!(await confirm({ title: 'Remove VPN config?', message: `VPN config "${config.name}" will be removed.`, confirmLabel: 'Remove', tone: 'danger' }))) return;
     try {
       const token = getAccessToken();
       await vpnService.deleteVPNConfig(token, config.id);
@@ -91,7 +93,7 @@ export default function VpnPage() {
   };
 
   const handleDeleteClient = async (client) => {
-    if (!window.confirm(`Remove VPN client "${client.name}"?`)) return;
+    if (!(await confirm({ title: 'Remove VPN client?', message: `VPN client "${client.name}" will be removed.`, confirmLabel: 'Remove', tone: 'danger' }))) return;
     try {
       const token = getAccessToken();
       await vpnService.deleteVPNClient(token, client.id);

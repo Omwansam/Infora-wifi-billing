@@ -5,12 +5,14 @@ import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
 import { unwrapList } from '../../lib/networkUtils';
 import ldapService from '../../services/ldapService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
 
 const FORM = { name: '', host: '', port: 389, bind_dn: '', bind_password: '', base_dn: '', use_ssl: false, use_tls: true };
 
 export default function LdapPage() {
+  const confirm = useConfirm();
   const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -59,7 +61,7 @@ export default function LdapPage() {
   };
 
   const handleDelete = async (server) => {
-    if (!window.confirm(`Remove LDAP server "${server.name}"?`)) return;
+    if (!(await confirm({ title: 'Remove LDAP server?', message: `LDAP server "${server.name}" will be removed.`, confirmLabel: 'Remove', tone: 'danger' }))) return;
     try {
       const token = getAccessToken();
       await ldapService.deleteLDAPServer(token, server.id);

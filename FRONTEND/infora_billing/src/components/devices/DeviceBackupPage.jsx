@@ -6,6 +6,7 @@ import { getAccessToken } from '../../utils/authToken';
 import { formatDate } from '../../lib/utils';
 import deviceService from '../../services/deviceService';
 import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import DevicesLayout from './DevicesLayout';
 import DeviceStatusBadge from './DeviceStatusBadge';
 
@@ -17,6 +18,7 @@ function formatSize(bytes) {
 }
 
 export default function DeviceBackupPage() {
+  const confirm = useConfirm();
   const { devices, loading, loadDevices } = useMikrotikDevices();
   const [selectedId, setSelectedId] = useState(null);
   const [backups, setBackups] = useState([]);
@@ -72,7 +74,13 @@ export default function DeviceBackupPage() {
   };
 
   const handleDelete = async (backup) => {
-    if (!window.confirm(`Delete backup "${backup.filename}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Delete backup?',
+      message: `Backup "${backup.filename}" will be permanently deleted. This cannot be undone.`,
+      confirmLabel: 'Delete backup',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const token = getAccessToken();
       await deviceService.deleteBackup(token, backup.id);

@@ -6,12 +6,14 @@ import { getAccessToken } from '../../utils/authToken';
 import { formatDate } from '../../lib/utils';
 import { unwrapList } from '../../lib/networkUtils';
 import snmpService from '../../services/snmpService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
 
 const FORM = { name: '', host: '', port: 161, snmp_version: '2c', community: 'public' };
 
 export default function SnmpPage() {
+  const confirm = useConfirm();
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -60,7 +62,7 @@ export default function SnmpPage() {
   };
 
   const handleDelete = async (device) => {
-    if (!window.confirm(`Remove SNMP device "${device.name}"?`)) return;
+    if (!(await confirm({ title: 'Remove SNMP device?', message: `SNMP device "${device.name}" will be removed.`, confirmLabel: 'Remove', tone: 'danger' }))) return;
     try {
       const token = getAccessToken();
       await snmpService.deleteSNMPDevice(token, device.id);

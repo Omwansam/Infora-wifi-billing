@@ -6,6 +6,7 @@ import { getAccessToken } from '../../utils/authToken';
 import { formatDate } from '../../lib/utils';
 import { unwrapList, formatBytes, formatDuration } from '../../lib/networkUtils';
 import radiusService from '../../services/radiusService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
 
@@ -16,6 +17,7 @@ const VIEW_TABS = [
 ];
 
 export default function RadiusPage() {
+  const confirm = useConfirm();
   const [view, setView] = useState('clients');
   const [clients, setClients] = useState([]);
   const [sessions, setSessions] = useState([]);
@@ -88,7 +90,7 @@ export default function RadiusPage() {
   };
 
   const handleDelete = async (client) => {
-    if (!window.confirm(`Remove RADIUS client "${client.name}"?`)) return;
+    if (!(await confirm({ title: 'Remove RADIUS client?', message: `RADIUS client "${client.name}" will be removed.`, confirmLabel: 'Remove', tone: 'danger' }))) return;
     try {
       const token = getAccessToken();
       await radiusService.deleteRadiusClient(token, client.id);

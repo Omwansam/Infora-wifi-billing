@@ -16,10 +16,12 @@ import { getAccessToken } from '../../utils/authToken';
 import { formatDate } from '../../lib/utils';
 import deviceService from '../../services/deviceService';
 import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import DevicesLayout from './DevicesLayout';
 import DeviceStatusBadge from './DeviceStatusBadge';
 
 export default function DeviceFirmwarePage() {
+  const confirm = useConfirm();
   const { devices, loading, loadDevices } = useMikrotikDevices();
   const [actionId, setActionId] = useState(null);
   const [checkResults, setCheckResults] = useState({}); // deviceId -> {installed, latest, update_available}
@@ -79,7 +81,16 @@ export default function DeviceFirmwarePage() {
   };
 
   const handleUpgrade = async (device) => {
-    if (!window.confirm(`Upgrade RouterOS on "${device.name}"? The device will download the new version and REBOOT, briefly dropping connectivity.`)) return;
+    const { installed, latest } = getVersions(device);
+    const target = latest && installed && latest !== installed
+      ? `RouterOS ${installed} → ${latest}`
+      : 'the latest RouterOS release detected by the system';
+    const ok = await confirm({
+      title: `Upgrade ${device.name}?`,
+      message: `The router will download and install ${target}, then REBOOT — briefly dropping connectivity. Take a configuration backup first.`,
+      confirmLabel: 'Upgrade & reboot',
+    });
+    if (!ok) return;
     try {
       setActionId(device.id);
       const token = getAccessToken();

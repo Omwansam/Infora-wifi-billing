@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import ispService from '../../services/ispService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
 
@@ -20,6 +21,7 @@ const EMPTY_FORM = {
 };
 
 export default function IspsPage() {
+  const confirm = useConfirm();
   const [isps, setIsps] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
@@ -105,7 +107,7 @@ export default function IspsPage() {
   };
 
   const handleDelete = async (isp) => {
-    if (!window.confirm(`Delete ISP "${isp.name}"?`)) return;
+    if (!(await confirm({ title: 'Delete ISP?', message: `ISP "${isp.name}" will be permanently deleted.`, confirmLabel: 'Delete ISP', tone: 'danger' }))) return;
     try {
       const token = getAccessToken();
       await ispService.deleteISP(token, isp.id);

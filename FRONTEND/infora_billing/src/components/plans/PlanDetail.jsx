@@ -21,12 +21,14 @@ import {
   getPlanCustomers,
 } from '../../services/planService';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import { normalizePlanFeatures, planMonthlyRevenue } from '../../lib/planUtils';
 import { customerInitials } from '../../lib/billingFormatters';
 import PlanFeatureIcon from './PlanFeatureIcon';
 import PlanStatusBadge from './PlanStatusBadge';
 
 export default function PlanDetail() {
+  const confirm = useConfirm();
   const { planId } = useParams();
   const navigate = useNavigate();
   const [plan, setPlan] = useState(null);
@@ -91,7 +93,7 @@ export default function PlanDetail() {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('Delete this plan? This cannot be undone.')) return;
+    if (!(await confirm({ title: 'Delete plan?', message: 'This plan will be permanently deleted. This cannot be undone.', confirmLabel: 'Delete plan', tone: 'danger' }))) return;
     try {
       setActionLoading(true);
       const response = await deletePlan(planId);

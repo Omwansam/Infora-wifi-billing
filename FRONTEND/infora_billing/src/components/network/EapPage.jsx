@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
 import { unwrapList } from '../../lib/networkUtils';
 import eapService from '../../services/eapService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
 
@@ -12,6 +13,7 @@ const FORM = { name: '', eap_method: 'PEAP', phase2_method: 'MSCHAPv2', outer_id
 const EAP_METHODS = ['EAP-TLS', 'PEAP', 'EAP-TTLS', 'EAP-FAST', 'EAP-MD5', 'EAP-MSCHAPv2'];
 
 export default function EapPage() {
+  const confirm = useConfirm();
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -60,7 +62,7 @@ export default function EapPage() {
   };
 
   const handleDelete = async (profile) => {
-    if (!window.confirm(`Remove EAP profile "${profile.name}"?`)) return;
+    if (!(await confirm({ title: 'Remove EAP profile?', message: `EAP profile "${profile.name}" will be removed.`, confirmLabel: 'Remove', tone: 'danger' }))) return;
     try {
       const token = getAccessToken();
       await eapService.deleteEAPProfile(token, profile.id);

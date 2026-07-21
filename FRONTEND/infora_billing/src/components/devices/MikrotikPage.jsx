@@ -26,6 +26,7 @@ import { bandwidthLabel, bandwidthTone } from '../../lib/deviceUtils';
 import { formatDate } from '../../lib/utils';
 import deviceService from '../../services/deviceService';
 import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import DevicesLayout from './DevicesLayout';
 import DeviceStatusBadge from './DeviceStatusBadge';
 import AddDeviceWizard from './AddDeviceWizard';
@@ -39,6 +40,7 @@ const STATUS_TABS = [
 
 export default function MikrotikPage() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const { devices, stats, loading, loadDevices } = useMikrotikDevices();
   const [isps, setIsps] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -156,7 +158,13 @@ export default function MikrotikPage() {
   };
 
   const handleDelete = async (device) => {
-    if (!window.confirm(`Remove "${device.name}" from inventory?`)) return;
+    const ok = await confirm({
+      title: 'Remove device?',
+      message: `"${device.name}" will be removed from inventory along with its provisioning link. This cannot be undone.`,
+      confirmLabel: 'Remove device',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       setActionId(device.id);
       const token = getAccessToken();
@@ -203,7 +211,13 @@ export default function MikrotikPage() {
   };
 
   const handleRevokeProvision = async (device) => {
-    if (!window.confirm(`Revoke the provisioning token for "${device.name}"? The current command will stop working.`)) return;
+    const ok = await confirm({
+      title: 'Revoke provisioning token?',
+      message: `The current provisioning command for "${device.name}" will stop working. You'll need to generate a new one to link the router.`,
+      confirmLabel: 'Revoke token',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const token = getAccessToken();
       await deviceService.revokeProvisionToken(token, device.id);

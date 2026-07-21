@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { ConfirmProvider } from './contexts/ConfirmContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import { AdminRoute, AdminOrSupportRoute } from './components/auth/RoleBasedRoute';
 import MainLayout from './components/layout/MainLayout';
@@ -209,6 +210,7 @@ function App() {
     <ThemeProvider>
       <AuthProvider>
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <ConfirmProvider>
         <AppRoutes />
         <Toaster
           position="top-right"
@@ -234,6 +236,7 @@ function App() {
             },
           }}
         />
+        </ConfirmProvider>
       </Router>
       </AuthProvider>
     </ThemeProvider>

@@ -9,6 +9,7 @@ import {
 import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
 import deviceService from '../../services/deviceService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import { uptimeLabel } from '../../lib/deviceUtils';
 import { formatDate } from '../../lib/utils';
 import DeviceStatusBadge from './DeviceStatusBadge';
@@ -99,6 +100,7 @@ function StatCard({ icon: Icon, label, value, sub, tone = 'text-slate-400' }) {
 export default function DeviceDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [device, setDevice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('overview');
@@ -132,7 +134,13 @@ export default function DeviceDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm(`Remove ${device.device_name}? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Remove device?',
+      message: `${device.device_name} will be permanently removed from inventory. This cannot be undone.`,
+      confirmLabel: 'Remove device',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await deviceService.deleteDevice(getAccessToken(), id);
       toast.success('Device removed');

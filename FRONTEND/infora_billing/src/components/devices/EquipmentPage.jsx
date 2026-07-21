@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { formatCurrency } from '../../lib/utils';
 import { getAccessToken } from '../../utils/authToken';
 import equipmentService from '../../services/equipmentService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import DevicesLayout from './DevicesLayout';
 
 const TYPE_TABS = [
@@ -38,6 +39,7 @@ function StatusBadge({ status }) {
 }
 
 export default function EquipmentPage() {
+  const confirm = useConfirm();
   const [equipment, setEquipment] = useState([]);
   const [stats, setStats] = useState({ total: 0, active: 0, asset_value: 0, outstanding: 0 });
   const [loading, setLoading] = useState(true);
@@ -133,7 +135,13 @@ export default function EquipmentPage() {
   };
 
   const handleDelete = async (item) => {
-    if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Delete equipment?',
+      message: `"${item.name}" will be permanently removed from the equipment register. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const token = getAccessToken();
       await equipmentService.remove(token, item.id);

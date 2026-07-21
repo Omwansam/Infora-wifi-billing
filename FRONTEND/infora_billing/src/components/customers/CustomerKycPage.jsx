@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '../../lib/utils';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import { customerInitials } from '../../lib/billingFormatters';
 import {
   deleteKycDocument,
@@ -47,6 +48,7 @@ function formatFileSize(bytes) {
 }
 
 export default function CustomerKycPage() {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [stats, setStats] = useState({});
@@ -167,7 +169,8 @@ export default function CustomerKycPage() {
   };
 
   const handleDeleteDocument = async (documentId) => {
-    if (!selected || !window.confirm('Delete this document?')) return;
+    if (!selected) return;
+    if (!(await confirm({ title: 'Delete document?', message: 'This KYC document will be permanently deleted.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     try {
       setActionLoading(true);
       const response = await deleteKycDocument(documentId);

@@ -8,6 +8,7 @@ import { getAccessToken } from '../../utils/authToken';
 import { formatDate } from '../../lib/utils';
 import { unwrapList } from '../../lib/networkUtils';
 import wireguardService from '../../services/wireguardService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
 
@@ -35,6 +36,7 @@ function formatBytes(n) {
 }
 
 export default function WireGuardPage() {
+  const confirm = useConfirm();
   const [view, setView] = useState('servers');
   const [servers, setServers] = useState([]);
   const [peers, setPeers] = useState([]);
@@ -302,7 +304,7 @@ export default function WireGuardPage() {
                       <button
                         type="button"
                         onClick={async () => {
-                          if (!window.confirm('Deprovision this peer?')) return;
+                          if (!(await confirm({ title: 'Deprovision peer?', message: 'This WireGuard peer will be removed and its access revoked.', confirmLabel: 'Deprovision', tone: 'danger' }))) return;
                           try {
                             await wireguardService.deletePeer(getAccessToken(), p.id);
                             toast.success('Peer removed');

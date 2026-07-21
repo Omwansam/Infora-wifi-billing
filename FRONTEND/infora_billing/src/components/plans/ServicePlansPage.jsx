@@ -22,6 +22,7 @@ import {
   deletePlan,
 } from '../../services/planService';
 import { formatCurrency } from '../../lib/utils';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import PackageTableRow from './PackageTableRow';
 
 const TYPE_TABS = [
@@ -40,6 +41,7 @@ const STATUS_FILTERS = [
 ];
 
 export default function ServicePlansPage() {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const [plans, setPlans] = useState([]);
   const [stats, setStats] = useState({});
@@ -95,7 +97,7 @@ export default function ServicePlansPage() {
   };
 
   const handleDeletePlan = async (plan) => {
-    if (!window.confirm(`Delete package "${plan.name}"?`)) return;
+    if (!(await confirm({ title: 'Delete package?', message: `Package "${plan.name}" will be permanently deleted.`, confirmLabel: 'Delete package', tone: 'danger' }))) return;
     try {
       setActionLoading(true);
       const response = await deletePlan(plan.id);

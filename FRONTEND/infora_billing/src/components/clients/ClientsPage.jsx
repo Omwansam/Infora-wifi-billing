@@ -19,6 +19,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import { formatDate } from '../../lib/utils';
 import { customerInitials } from '../../lib/billingFormatters';
 import { clientSpeedLabel, isClientConnected } from '../../lib/clientUtils';
@@ -66,6 +67,7 @@ function avatarClass(connectionType, clientType) {
 }
 
 export default function ClientsPage() {
+  const confirm = useConfirm();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -211,7 +213,7 @@ export default function ClientsPage() {
 
   const handleDelete = async (client, e) => {
     e?.stopPropagation();
-    if (!window.confirm(`Delete ${client.name}?`)) return;
+    if (!(await confirm({ title: 'Delete client?', message: `${client.name} will be permanently deleted, along with their account.`, confirmLabel: 'Delete client', tone: 'danger' }))) return;
     const result = await customerService.deleteCustomer(client.id);
     if (result.success) {
       toast.success('Deleted');
