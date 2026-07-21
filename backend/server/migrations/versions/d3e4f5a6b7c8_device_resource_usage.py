@@ -1,5 +1,10 @@
 """Device resource usage: cpu_load + memory/storage byte counters on
 mikrotik_devices (feeds the device detail page Resource Usage card).
+
+Idempotent: this project also builds schema via ``flask initdb`` (create_all),
+so on some databases these columns already exist before the migration runs.
+Guard each add so ``flask db upgrade`` succeeds whether or not they're present
+(otherwise boot crash-loops on DuplicateColumn).
 """
 
 from alembic import op
@@ -12,19 +17,29 @@ branch_labels = None
 depends_on = None
 
 
+RESOURCE_COLUMNS = (
+    ('cpu_load', sa.Float()),
+    ('mem_total', sa.BigInteger()),
+    ('mem_free', sa.BigInteger()),
+    ('hdd_total', sa.BigInteger()),
+    ('hdd_free', sa.BigInteger()),
+)
+
+
+def _existing_columns(table):
+    bind = op.get_bind()
+    return {col['name'] for col in sa.inspect(bind).get_columns(table)}
+
+
 def upgrade():
-    with op.batch_alter_table('mikrotik_devices', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('cpu_load', sa.Float(), nullable=True))
-        batch_op.add_column(sa.Column('mem_total', sa.BigInteger(), nullable=True))
-        batch_op.add_column(sa.Column('mem_free', sa.BigInteger(), nullable=True))
-        batch_op.add_column(sa.Column('hdd_total', sa.BigInteger(), nullable=True))
-        batch_op.add_column(sa.Column('hdd_free', sa.BigInteger(), nullable=True))
+    existing = _existing_columns('mikrotik_devices')
+    for name, type_ in RESOURCE_COLUMNS:
+        if name not in existing:
+            op.add_column('mikrotik_devices', sa.Column(name, type_, nullable=True))
 
 
 def downgrade():
-    with op.batch_alter_table('mikrotik_devices', schema=None) as batch_op:
-        batch_op.drop_column('hdd_free')
-        batch_op.drop_column('hdd_total')
-        batch_op.drop_column('mem_free')
-        batch_op.drop_column('mem_total')
-        batch_op.drop_column('cpu_load')
+    existing = _existing_columns('mikrotik_devices')
+    for name, _type in reversed(RESOURCE_COLUMNS):
+        if name in existing:
+            op.drop_column('mikrotik_devices', name)
