@@ -23,9 +23,20 @@ export function mapMikrotikDevice(device) {
 }
 
 export function uptimeLabel(value) {
-  // RouterOS uptime is a string like "1w2d3h4m5s"; pass through if present.
-  if (!value && value !== 0) return '—';
-  return String(value);
+  if (value === null || value === undefined || value === '') return '—';
+  // Uptime is stored as seconds. Format into a compact duration; pass through
+  // any legacy non-numeric string ("1w2d3h") unchanged.
+  const secs = Number(value);
+  if (!Number.isFinite(secs)) return String(value);
+  if (secs <= 0) return '—';
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const parts = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  if (m || (!d && !h)) parts.push(`${m}m`);
+  return parts.join(' ');
 }
 
 // Live uplink throughput. The backend stores current rx+tx on the WAN port in

@@ -2,6 +2,7 @@
 """
 MikroTik Client for API and SSH connections
 """
+import re
 import socket
 try:
     import paramiko
@@ -54,6 +55,76 @@ class MikroTikAPIError(Exception):
 class MikroTikSSHError(Exception):
     """Custom exception for MikroTik SSH errors"""
     pass
+
+
+_BYTE_UNITS = {
+    '': 1, 'b': 1,
+    'kib': 1024, 'kb': 1000, 'k': 1024,
+    'mib': 1024 ** 2, 'mb': 1000 ** 2, 'm': 1024 ** 2,
+    'gib': 1024 ** 3, 'gb': 1000 ** 3, 'g': 1024 ** 3,
+    'tib': 1024 ** 4, 'tb': 1000 ** 4, 't': 1024 ** 4,
+}
+
+_UPTIME_UNITS = {'w': 604800, 'd': 86400, 'h': 3600, 'm': 60, 's': 1}
+
+
+def _res_int(resources, key):
+    """Parse a RouterOS resource value to bytes.
+
+    Handles both API raw byte integers ('16777216') and SSH human units
+    ('256.0MiB', '12.5KiB'). Returns 0 on anything unparseable — a stats read
+    must never crash device sync.
+    """
+    raw = resources.get(key) if isinstance(resources, dict) else None
+    if raw is None:
+        return 0
+    s = str(raw).strip()
+    if not s:
+        return 0
+    m = re.match(r'^([\d.]+)\s*([A-Za-z]*)$', s)
+    if not m:
+        digits = ''.join(c for c in s if c.isdigit())
+        return int(digits) if digits else 0
+    try:
+        return int(float(m.group(1)) * _BYTE_UNITS.get(m.group(2).lower(), 1))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _parse_uptime_seconds(value):
+    """RouterOS uptime like '1w2d3h4m5s' or '13m19s' -> total seconds (0 on failure)."""
+    if value is None:
+        return 0
+    s = str(value).strip()
+    if not s:
+        return 0
+    if s.isdigit():
+        return int(s)
+    total, num = 0, ''
+    try:
+        for ch in s:
+            if ch.isdigit():
+                num += ch
+            elif ch.lower() in _UPTIME_UNITS and num:
+                total += int(num) * _UPTIME_UNITS[ch.lower()]
+                num = ''
+            else:
+                num = ''
+        return total
+    except (ValueError, TypeError):
+        return 0
+
+
+def _parse_float(value, default=0.0):
+    """Extract a float from strings like '5%', '5.0', '5' (default on failure)."""
+    if value is None:
+        return default
+    cleaned = ''.join(c for c in str(value) if c.isdigit() or c == '.')
+    try:
+        return float(cleaned) if cleaned else default
+    except (ValueError, TypeError):
+        return default
+
 
 class MikroTikClient:
     """Client for connecting to MikroTik devices via API or SSH"""
@@ -240,12 +311,12 @@ class MikroTikClient:
         # Get wireless clients (if applicable)
         wireless_clients = self._api_send_command('/interface/wireless/registration-table/print')
         
-        # Parse uptime
-        uptime = int(resources.get('uptime', 0))
-        
-        # Parse CPU load
-        cpu_load = float(resources.get('cpu-load', 0))
-        
+        # Parse uptime (RouterOS duration string like '1w2d3h' -> seconds)
+        uptime = _parse_uptime_seconds(resources.get('uptime'))
+
+        # Parse CPU load (may be '5' or '5%')
+        cpu_load = _parse_float(resources.get('cpu-load'))
+
         # Parse memory + storage (bytes; _res_int handles API bytes and SSH units)
         total_memory = _res_int(resources, 'total-memory')
         free_memory = _res_int(resources, 'free-memory')
@@ -298,9 +369,10 @@ class MikroTikClient:
         # Live uplink throughput (bits/sec) via monitor-traffic on the WAN port.
         bandwidth_rx, bandwidth_tx = self._ssh_uplink_bps()
 
-        # Parse values
-        uptime = int(resources.get('uptime', '0').split()[0]) if 'uptime' in resources else 0
-        cpu_load = float(resources.get('cpu-load', '0')) if 'cpu-load' in resources else 0
+        # Parse values (RouterOS uptime is a duration string e.g. '13m19s';
+        # cpu-load may carry a '%'. Both parse defensively -> never crash sync.)
+        uptime = _parse_uptime_seconds(resources.get('uptime'))
+        cpu_load = _parse_float(resources.get('cpu-load'))
 
         # Calculate memory + storage (bytes; _res_int handles SSH's human units)
         total_memory = _res_int(resources, 'total-memory')

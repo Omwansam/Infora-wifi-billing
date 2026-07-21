@@ -458,3 +458,7 @@ Rollout & safety
 Safe by default: existing routers have 0 uplinks → generated script is byte-for-byte unchanged.
 Disruptive to apply: the WAN block rewrites routing/mangle. Apply during a maintenance window; the script never touches the built-in admin user (the operator's console session stays alive).
 Deploy path: same two-part flow as recent deploys — rebuild the flask_app image (backend) and rebuild + publish the admin static bundle (frontend), per the recipe in [[contabo-server-topology]] (memory).
+
+
+Net: the device view is complete and faithful to the real system; the two deferred items are genuine backend features I'd want to build with a test router in the loop (each ~a focused task). Want me to (a) deploy the current state (backend image for the resource columns + frontend static), or (b) tackle Gap 3 or Gap 2 as a proper backend task next — ideally when you can point me at a reachable router to validate against?
+
