@@ -9,10 +9,10 @@ import {
 import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
 import deviceService from '../../services/deviceService';
-import { mapMikrotikDevice, uptimeLabel } from '../../lib/deviceUtils';
+import { uptimeLabel } from '../../lib/deviceUtils';
 import { formatDate } from '../../lib/utils';
 import DeviceStatusBadge from './DeviceStatusBadge';
-import DevicePortsPanel from './DevicePortsPanel';
+import ConfigureServicesPanel from './ConfigureServicesPanel';
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -104,7 +104,6 @@ export default function DeviceDetailPage() {
   const [tab, setTab] = useState('overview');
   const [syncing, setSyncing] = useState(false);
   const [showPw, setShowPw] = useState(false);
-  const [showWizard, setShowWizard] = useState(false);
 
   const load = async () => {
     try {
@@ -147,8 +146,6 @@ export default function DeviceDetailPage() {
     navigator.clipboard?.writeText(text);
     toast.success(label);
   };
-
-  const mapped = useMemo(() => (device ? mapMikrotikDevice(device) : null), [device]);
 
   if (loading) {
     return (
@@ -435,30 +432,27 @@ export default function DeviceDetailPage() {
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-emerald-700"><Wifi className="h-3.5 w-3.5" /> Hotspot</span>
                       <span className={`text-[10px] font-bold ${hotspotOn ? 'text-emerald-700' : 'text-slate-400'}`}>{hotspotOn ? 'ON' : 'OFF'}</span>
                     </div>
-                    <p className="mt-1 font-mono text-sm text-slate-700">{(svc.hotspot_interfaces || svc.hotspotInterfaces || []).join(', ') || '—'}</p>
+                    <p className="mt-1 font-mono text-sm text-slate-700">{(svc.bridge_ports || []).join(', ') || '—'}</p>
+                    {svc.subnet && <p className="mt-0.5 font-mono text-xs text-slate-400">{svc.subnet}</p>}
                   </div>
                   <div className="rounded-xl bg-violet-50 p-4">
                     <div className="flex items-center justify-between">
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-violet-700"><Network className="h-3.5 w-3.5" /> PPPoE</span>
                       <span className={`text-[10px] font-bold ${pppoeOn ? 'text-violet-700' : 'text-slate-400'}`}>{pppoeOn ? 'ON' : 'OFF'}</span>
                     </div>
-                    <p className="mt-1 font-mono text-sm text-slate-700">{(svc.pppoe_ports || svc.pppoePorts || []).join(', ') || '—'}</p>
+                    <p className="mt-1 font-mono text-sm text-slate-700">{(svc.bridge_ports || []).join(', ') || '—'}</p>
+                    {svc.subnet && <p className="mt-0.5 font-mono text-xs text-slate-400">{svc.subnet}</p>}
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-slate-500">No services configured yet. Run the wizard to enable PPPoE and/or Hotspot.</p>
+                <p className="text-sm text-slate-500">No services configured yet. Use the wizard below to enable PPPoE and/or Hotspot.</p>
               )}
-              <button onClick={() => setShowWizard(true)} className="mt-5 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
-                <Settings2 className="h-4 w-4" /> Open configuration wizard
-              </button>
             </div>
+
+            <ConfigureServicesPanel deviceId={id} initial={svc} onApplied={load} />
           </div>
         )}
       </div>
-
-      {showWizard && mapped && (
-        <DevicePortsPanel device={mapped} onClose={() => { setShowWizard(false); load(); }} />
-      )}
     </div>
   );
 }

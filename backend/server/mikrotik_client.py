@@ -290,14 +290,18 @@ class MikroTikClient:
                 key, value = line.split(':', 1)
                 resources[key.strip()] = value.strip()
         
-        # Get wireless clients
-        output, error = self._ssh_execute_command('/interface wireless registration-table print')
-        client_count = len([line for line in output.strip().split('\n') if line.strip()]) if output else 0
-        
+        # Active billing clients: hotspot + PPPoE sessions (what the card should
+        # show), falling back to bound DHCP leases, then wireless registrations.
+        # Best-effort — never let a stats read break sync/status detection.
+        client_count = self._ssh_client_count()
+
+        # Live uplink throughput (bits/sec) via monitor-traffic on the WAN port.
+        bandwidth_rx, bandwidth_tx = self._ssh_uplink_bps()
+
         # Parse values
         uptime = int(resources.get('uptime', '0').split()[0]) if 'uptime' in resources else 0
         cpu_load = float(resources.get('cpu-load', '0')) if 'cpu-load' in resources else 0
-        
+
         # Calculate memory + storage (bytes; _res_int handles SSH's human units)
         total_memory = _res_int(resources, 'total-memory')
         free_memory = _res_int(resources, 'free-memory')
@@ -310,8 +314,8 @@ class MikroTikClient:
             cpu_load=cpu_load,
             memory_usage=memory_usage,
             client_count=client_count,
-            bandwidth_rx=0,  # Would need more complex parsing
-            bandwidth_tx=0,  # Would need more complex parsing
+            bandwidth_rx=bandwidth_rx,
+            bandwidth_tx=bandwidth_tx,
             memory_total=total_memory,
             memory_free=free_memory,
             hdd_total=total_hdd,
@@ -319,7 +323,70 @@ class MikroTikClient:
             version=resources.get('version', ''),
             board_name=resources.get('board-name', '')
         )
-    
+
+    def _ssh_count(self, command: str) -> int:
+        """Run a RouterOS 'print count-only' and return the integer (0 on any issue)."""
+        try:
+            out, _err = self._ssh_execute_command(command)
+            digits = ''.join(ch for ch in (out or '') if ch.isdigit())
+            return int(digits) if digits else 0
+        except Exception:
+            return 0
+
+    def _ssh_client_count(self) -> int:
+        """Active subscriber count: hotspot + PPPoE, else bound DHCP leases, else wireless."""
+        try:
+            hotspot = self._ssh_count('/ip hotspot active print count-only')
+            pppoe = self._ssh_count('/ppp active print count-only')
+            total = hotspot + pppoe
+            if total > 0:
+                return total
+            leases = self._ssh_count('/ip dhcp-server lease print count-only where status=bound')
+            if leases > 0:
+                return leases
+            return self._ssh_count('/interface wireless registration-table print count-only')
+        except Exception:
+            return 0
+
+    def _ssh_uplink_bps(self) -> Tuple[int, int]:
+        """Return (rx_bps, tx_bps) on the WAN/uplink port via monitor-traffic.
+
+        Best-effort: picks ether1 (MikroTik's conventional WAN) or the first
+        ethernet port, samples once, and returns raw bits/sec. Any failure
+        yields (0, 0) so a stats read never breaks sync/status.
+        """
+        try:
+            uplink = self._ssh_uplink_interface()
+            if not uplink:
+                return 0, 0
+            # One 'as-value' sample -> raw integer bits/sec for rx and tx.
+            out, _err = self._ssh_execute_command(
+                f':local m [/interface monitor-traffic {uplink} once as-value];'
+                ' :put ($m->"rx-bits-per-second"); :put ($m->"tx-bits-per-second")'
+            )
+            nums = [int(''.join(c for c in ln if c.isdigit()) or 0)
+                    for ln in (out or '').strip().splitlines() if ln.strip()]
+            rx = nums[0] if len(nums) >= 1 else 0
+            tx = nums[1] if len(nums) >= 2 else 0
+            return rx, tx
+        except Exception:
+            return 0, 0
+
+    def _ssh_uplink_interface(self) -> Optional[str]:
+        """Best-effort WAN port name: ether1 if present, else the first ethernet."""
+        try:
+            out, _err = self._ssh_execute_command('/interface ethernet print terse')
+            names = []
+            for line in (out or '').strip().split('\n'):
+                for tok in line.split():
+                    if tok.startswith('name='):
+                        names.append(tok.split('=', 1)[1])
+            if 'ether1' in names:
+                return 'ether1'
+            return names[0] if names else None
+        except Exception:
+            return None
+
     def test_connection(self) -> Dict[str, Any]:
         """Test connection to device"""
         start_time = time.time()

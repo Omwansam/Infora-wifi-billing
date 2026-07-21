@@ -28,18 +28,21 @@ export function uptimeLabel(value) {
   return String(value);
 }
 
+// Live uplink throughput. The backend stores current rx+tx on the WAN port in
+// Kbps; render it as exact Mbps (Gbps for very high links).
 export function bandwidthLabel(value) {
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) return value || '—';
-  if (numeric > 1000000) return `${(numeric / 1000000).toFixed(1)} GB`;
-  if (numeric > 1000) return `${(numeric / 1000).toFixed(1)} MB`;
-  return `${numeric} MB`;
+  const kbps = Number(value);
+  if (Number.isNaN(kbps) || kbps <= 0) return '0 Mbps';
+  const mbps = kbps / 1000;
+  if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gbps`;
+  if (mbps >= 10) return `${mbps.toFixed(1)} Mbps`;
+  return `${mbps.toFixed(2)} Mbps`;
 }
 
 export function bandwidthTone(value) {
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) return 'text-slate-600';
-  if (numeric > 800) return 'text-rose-600';
-  if (numeric > 500) return 'text-amber-600';
+  const mbps = Number(value) / 1000;
+  if (Number.isNaN(mbps)) return 'text-slate-600';
+  if (mbps > 800) return 'text-rose-600';
+  if (mbps > 400) return 'text-amber-600';
   return 'text-emerald-600';
 }

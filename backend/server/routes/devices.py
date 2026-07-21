@@ -18,6 +18,7 @@ from services.device_config_ops import (
     run_self_check,
     set_interface_disabled,
     interface_traffic,
+    DeviceBusy,
 )
 from services.device_backups import (
     create_backup,
@@ -469,6 +470,17 @@ def sync_device(device_id):
             'message': 'Device synced successfully',
             'device': serialize_device(device),
             'sync_details': details,
+        }), 200
+
+    except DeviceBusy:
+        # Another operation holds the router — it's reachable, so keep the
+        # current status and let the caller retry shortly.
+        db.session.rollback()
+        device = MikrotikDevice.query.get(device_id)
+        return jsonify({
+            'message': 'Device is busy with another operation — try again shortly',
+            'busy': True,
+            'device': serialize_device(device) if device else None,
         }), 200
 
     except (MikroTikAPIError, MikroTikSSHError) as conn_err:
