@@ -43,6 +43,8 @@ class Config:
     # Subscription expiry (optional background thread; prefer cron: flask enforce-expiry)
     SUBSCRIPTION_ENFORCEMENT_INTERVAL = int(os.getenv('SUBSCRIPTION_ENFORCEMENT_INTERVAL', '0') or '0')
     SUBSCRIPTION_GRACE_HOURS = int(os.getenv('SUBSCRIPTION_GRACE_HOURS', '0') or '0')
+    # FUP throttle enforcement (optional background thread; prefer cron: flask enforce-fup)
+    FUP_ENFORCEMENT_INTERVAL = int(os.getenv('FUP_ENFORCEMENT_INTERVAL', '0') or '0')
     RADIUS_SECRET = os.getenv('RADIUS_SECRET', 'radius_secret_key')
     FREERADIUS_HOST = os.getenv('FREERADIUS_HOST', '10.0.0.10')
     WIREGUARD_CONFIG_DIR = os.getenv(

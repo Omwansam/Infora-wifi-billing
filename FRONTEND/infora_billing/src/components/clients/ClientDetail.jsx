@@ -26,6 +26,11 @@ import {
   Smartphone,
   Clock,
   ExternalLink,
+  Eye,
+  EyeOff,
+  Copy,
+  KeyRound,
+  RefreshCw,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
 import wireguardService from '../../services/wireguardService';
@@ -140,6 +145,9 @@ export default function ClientDetail() {
   const [deleting, setDeleting] = useState(false);
   const [accessLoading, setAccessLoading] = useState(false);
   const [wgQrUrl, setWgQrUrl] = useState(null);
+  const [radiusPassword, setRadiusPassword] = useState(null);
+  const [revealingPassword, setRevealingPassword] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   const authBlobDownload = async (url, filename) => {
     const token = getAccessToken();
@@ -213,6 +221,62 @@ export default function ClientDetail() {
       toast.error(e.message);
     } finally {
       setAccessLoading(false);
+    }
+  };
+
+  const handleRevealPassword = async () => {
+    if (radiusPassword !== null) {
+      setRadiusPassword(null); // toggle: hide
+      return;
+    }
+    try {
+      setRevealingPassword(true);
+      const result = await customerService.getRadiusCredentials(customerId);
+      if (result.success) {
+        const pw = result.data?.data?.password ?? result.data?.password;
+        if (pw) {
+          setRadiusPassword(pw);
+        } else {
+          toast.error('No password stored for this client — reset to issue one');
+        }
+      } else {
+        toast.error(result.error || result.data?.error || 'Could not load password');
+      }
+    } catch (e) {
+      toast.error(e.message || 'Could not load password');
+    } finally {
+      setRevealingPassword(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    try {
+      setResettingPassword(true);
+      const result = await customerService.resetRadiusCredentials(customerId);
+      if (result.success) {
+        const pw = result.data?.data?.password ?? result.data?.password;
+        setRadiusPassword(pw || null);
+        toast.success(
+          result.data?.data?.radius_reprovisioned
+            ? 'Password reset — RADIUS re-provisioned'
+            : 'Password reset'
+        );
+      } else {
+        toast.error(result.error || result.data?.error || 'Reset failed');
+      }
+    } catch (e) {
+      toast.error(e.message || 'Reset failed');
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
+  const copyToClipboard = async (value, label) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error('Copy failed');
     }
   };
 
@@ -510,6 +574,64 @@ export default function ClientDetail() {
                   </span>
                 </div>
               </div>
+
+              {(client.connection_type === 'pppoe' || client.connection_type === 'hotspot') && (
+                <div className="mt-3 rounded-xl bg-slate-50 border border-slate-100 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1.5">
+                        <KeyRound className="h-3.5 w-3.5" />
+                        {client.connection_type === 'pppoe' ? 'PPPoE password' : 'Hotspot password'}
+                      </p>
+                      <p className="font-mono text-sm font-medium text-slate-900 mt-1 break-all">
+                        {radiusPassword !== null ? radiusPassword : '••••••••••'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={handleRevealPassword}
+                        disabled={revealingPassword}
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-200/60 disabled:opacity-50"
+                        title={radiusPassword !== null ? 'Hide password' : 'Reveal password'}
+                      >
+                        {revealingPassword ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : radiusPassword !== null ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                      {radiusPassword !== null && (
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(radiusPassword, 'Password')}
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-200/60"
+                          title="Copy password"
+                        >
+                          <Copy className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleResetPassword}
+                        disabled={resettingPassword}
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50"
+                        title="Generate a new password and re-provision RADIUS"
+                      >
+                        {resettingPassword ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <p className="text-xs text-slate-500 mt-4">
                 Disconnect removes RADIUS access immediately. Connect re-provisions the client at the assigned package speed.
               </p>

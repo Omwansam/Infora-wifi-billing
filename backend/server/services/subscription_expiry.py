@@ -29,17 +29,14 @@ def enforce_expired_subscriptions(grace_hours=0):
     count = 0
     for customer in expired:
         isp = ISP.query.get(customer.isp_id) if customer.isp_id else None
-        if isp:
-            # Kick live sessions (hotspot AND PPPoE) — otherwise an expired
-            # PPPoE subscriber stays online until they re-dial.
-            from services.hotspot_disconnect import disconnect_customer_on_devices
-            disconnect_customer_on_devices(customer, isp)
         if customer.connection_type == 'hotspot' and isp:
             from services.notification_dispatch import dispatch_hotspot_expired
             try:
                 dispatch_hotspot_expired(customer, isp)
             except Exception:
                 pass
+        # suspend_customer_access deprovisions RADIUS *and* kicks live sessions
+        # (hotspot + PPPoE) so an expired subscriber drops immediately.
         suspend_customer_access(customer, isp)
         count += 1
 

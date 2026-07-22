@@ -11,6 +11,8 @@ from services.radius_provisioning import (
     suspend_customer_access,
     activate_customer_after_payment,
     set_customer_radius_password,
+    get_customer_radius_password,
+    radius_username,
     sync_customer_radius_status,
 )
 import secrets
@@ -763,6 +765,95 @@ def disconnect_client(customer_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to disconnect client: {str(e)}'}), 500
+
+
+def _authorize_customer_secret(customer):
+    """Guard for endpoints that expose a customer's plaintext RADIUS secret.
+
+    Returns None when allowed, or a (json, status) tuple to return otherwise.
+    Tighter than the plain get_customer route: non-admins are limited to their
+    own ISP, and only PPPoE/hotspot clients have RADIUS credentials.
+    """
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    if user.role != 'admin' and user.isp_id and customer.isp_id != user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+    if customer.connection_type not in ('pppoe', 'hotspot'):
+        return jsonify({'error': 'RADIUS credentials apply to PPPoE and hotspot clients only'}), 400
+    return None
+
+
+@customers_bp.route('/<int:customer_id>/radius-credentials', methods=['GET'])
+@jwt_required()
+def get_customer_radius_credentials(customer_id):
+    """Reveal a client's PPPoE/hotspot login (username + stored password)."""
+    try:
+        customer = Customer.query.get_or_404(customer_id)
+        denied = _authorize_customer_secret(customer)
+        if denied:
+            return denied
+
+        password = get_customer_radius_password(customer)
+        return jsonify({
+            'ok': True,
+            'data': {
+                'username': radius_username(customer),
+                'password': password,
+                'has_password': bool(password),
+                'connection_type': customer.connection_type,
+            },
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Failed to load credentials: {str(e)}'}), 500
+
+
+@customers_bp.route('/<int:customer_id>/radius-credentials/reset', methods=['POST'])
+@jwt_required()
+def reset_customer_radius_credentials(customer_id):
+    """Set a new PPPoE/hotspot password and re-provision RADIUS.
+
+    Accepts an optional ``password`` in the body, else generates one. For an
+    active client the radcheck row is rewritten and live sessions are kicked so
+    the old credentials stop working immediately.
+    """
+    try:
+        customer = Customer.query.get_or_404(customer_id)
+        denied = _authorize_customer_secret(customer)
+        if denied:
+            return denied
+
+        data = request.get_json(silent=True) or {}
+        new_password = (data.get('password') or '').strip() or secrets.token_urlsafe(8)
+        set_customer_radius_password(customer, new_password)
+
+        isp = ISP.query.get(customer.isp_id) if customer.isp_id else None
+        plan = customer.service_plan
+        reprovisioned = False
+        if customer.status == CustomerStatus.ACTIVE and isp and plan:
+            provision_customer_radius(
+                customer, plan, isp, password=new_password, throttle=customer.fup_throttled
+            )
+            from services.hotspot_disconnect import disconnect_customer_on_devices
+            try:
+                disconnect_customer_on_devices(customer, isp)
+            except Exception:
+                pass
+            reprovisioned = True
+
+        db.session.commit()
+        return jsonify({
+            'ok': True,
+            'message': 'RADIUS password reset',
+            'data': {
+                'username': radius_username(customer),
+                'password': new_password,
+                'radius_reprovisioned': reprovisioned,
+            },
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to reset credentials: {str(e)}'}), 500
 
 
 @customers_bp.route('/<int:customer_id>/invoices', methods=['GET'])

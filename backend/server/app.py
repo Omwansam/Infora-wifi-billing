@@ -102,26 +102,33 @@ def ensure_schema_upgrades():
     """Idempotent column additions — the image ships no Alembic migrations,
     and create_all() never alters existing tables."""
     from sqlalchemy import inspect as sa_inspect, text
-    additions = {
-        'monitored_interfaces': 'TEXT',
-        'self_check_result': 'TEXT',
-        'self_check_at': 'TIMESTAMP',
-        'cpu_load': 'DOUBLE PRECISION',
-        'mem_total': 'BIGINT',
-        'mem_free': 'BIGINT',
-        'hdd_total': 'BIGINT',
-        'hdd_free': 'BIGINT',
+    # table -> {column: DDL type}
+    table_additions = {
+        'mikrotik_devices': {
+            'monitored_interfaces': 'TEXT',
+            'self_check_result': 'TEXT',
+            'self_check_at': 'TIMESTAMP',
+            'cpu_load': 'DOUBLE PRECISION',
+            'mem_total': 'BIGINT',
+            'mem_free': 'BIGINT',
+            'hdd_total': 'BIGINT',
+            'hdd_free': 'BIGINT',
+        },
+        'customers': {
+            'fup_throttled': 'BOOLEAN DEFAULT FALSE NOT NULL',
+        },
     }
     try:
         inspector = sa_inspect(db.engine)
-        existing = {col['name'] for col in inspector.get_columns('mikrotik_devices')}
-        missing = {name: ddl for name, ddl in additions.items() if name not in existing}
-        if not missing:
-            return
-        with db.engine.begin() as conn:
-            for column, ddl in missing.items():
-                conn.execute(text(f'ALTER TABLE mikrotik_devices ADD COLUMN {column} {ddl}'))
-        app.logger.info('Schema upgrade: added mikrotik_devices columns %s', ', '.join(missing))
+        for table, additions in table_additions.items():
+            existing = {col['name'] for col in inspector.get_columns(table)}
+            missing = {name: ddl for name, ddl in additions.items() if name not in existing}
+            if not missing:
+                continue
+            with db.engine.begin() as conn:
+                for column, ddl in missing.items():
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {ddl}'))
+            app.logger.info('Schema upgrade: added %s columns %s', table, ', '.join(missing))
     except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
         app.logger.warning('Schema upgrade check skipped: %s', exc)
 
@@ -268,6 +275,18 @@ def enforce_expiry_command(grace_hours):
         click.echo(f'Expired subscriptions enforced: {count} customer(s) suspended.')
 
 
+@app.cli.command('enforce-fup')
+def enforce_fup_command():
+    """Throttle over-limit subscribers, restore on reset (cron: */15 * * * *)."""
+    from services.fup_enforcement import apply_fup_enforcement
+    with app.app_context():
+        result = apply_fup_enforcement()
+        click.echo(
+            f"FUP enforcement: {result['throttled']} throttled, "
+            f"{result['restored']} restored."
+        )
+
+
 @app.cli.command('verify-deployment')
 def verify_deployment_command():
     """Print MikroTik + WireGuard deployment checklist (run on the server after deploy)."""
@@ -350,6 +369,29 @@ def _start_expiry_scheduler(app):
     thread.start()
 
 
+def _start_fup_scheduler(app):
+    """Optional in-process FUP throttle enforcement when FUP_ENFORCEMENT_INTERVAL is set."""
+    interval = app.config.get('FUP_ENFORCEMENT_INTERVAL')
+    if not interval:
+        return
+
+    import threading
+    import time
+    from services.fup_enforcement import apply_fup_enforcement
+
+    def _loop():
+        while True:
+            time.sleep(int(interval))
+            with app.app_context():
+                try:
+                    apply_fup_enforcement()
+                except Exception as exc:
+                    app.logger.warning('FUP enforcement failed: %s', exc)
+
+    thread = threading.Thread(target=_loop, daemon=True, name='fup-enforcement')
+    thread.start()
+
+
 @app.route('/portal', defaults={'path': ''})
 @app.route('/portal/<path:path>')
 def redirect_portal_to_frontend(path):
@@ -371,4 +413,5 @@ def redirect_portal_to_frontend(path):
 
 if __name__ == "__main__":
     _start_expiry_scheduler(app)
+    _start_fup_scheduler(app)
     app.run(debug=True, port=5000, host='0.0.0.0')

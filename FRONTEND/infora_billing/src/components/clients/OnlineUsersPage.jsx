@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Eye,
   Unplug,
+  Ban,
   Loader2,
   ArrowLeft,
   Radio,
@@ -74,7 +75,7 @@ export default function OnlineUsersPage() {
   const [routerId, setRouterId] = useState('');
   const [countdown, setCountdown] = useState(REFRESH_SECONDS);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [actionId, setActionId] = useState(null);
+  const [actionKey, setActionKey] = useState(null);
 
   const loadSessions = useCallback(
     async (silent = false) => {
@@ -130,16 +131,35 @@ export default function OnlineUsersPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  // Kick just this live session (account stays active — they can reconnect).
+  const handleKick = async (session) => {
+    try {
+      setActionKey(`kick-${session.id}`);
+      const result = await customerService.terminateSession(session.id);
+      if (result.success) {
+        toast.success('Session kicked');
+        loadSessions(true);
+      } else {
+        toast.error(result.error || result.data?.message || 'Kick failed');
+      }
+    } catch (e) {
+      toast.error(e.message || 'Kick failed');
+    } finally {
+      setActionKey(null);
+    }
+  };
+
+  // Fully disconnect the subscriber: suspend the account + remove RADIUS access.
   const handleDisconnect = async (session) => {
     if (!session.customer_id) {
       toast.error('No linked client account for this session');
       return;
     }
     try {
-      setActionId(session.id);
+      setActionKey(`disc-${session.id}`);
       const result = await customerService.disconnectClient(session.customer_id);
       if (result.success) {
-        toast.success('User dropped from network');
+        toast.success('Client disconnected — access removed');
         loadSessions(true);
       } else {
         toast.error(result.error || 'Disconnect failed');
@@ -147,7 +167,7 @@ export default function OnlineUsersPage() {
     } catch (e) {
       toast.error(e.message || 'Disconnect failed');
     } finally {
-      setActionId(null);
+      setActionKey(null);
     }
   };
 
@@ -442,18 +462,31 @@ export default function OnlineUsersPage() {
                                 <Eye className="h-4 w-4" />
                               </Link>
                             )}
+                            <button
+                              type="button"
+                              onClick={() => handleKick(session)}
+                              disabled={actionKey === `kick-${session.id}`}
+                              className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-50 disabled:opacity-50"
+                              title="Kick session (stays active, can reconnect)"
+                            >
+                              {actionKey === `kick-${session.id}` ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Unplug className="h-4 w-4" />
+                              )}
+                            </button>
                             {session.customer_id && (
                               <button
                                 type="button"
                                 onClick={() => handleDisconnect(session)}
-                                disabled={actionId === session.id}
+                                disabled={actionKey === `disc-${session.id}`}
                                 className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-rose-500 hover:bg-rose-50 disabled:opacity-50"
-                                title="Drop session"
+                                title="Disconnect client (suspend + remove access)"
                               >
-                                {actionId === session.id ? (
+                                {actionKey === `disc-${session.id}` ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : (
-                                  <Unplug className="h-4 w-4" />
+                                  <Ban className="h-4 w-4" />
                                 )}
                               </button>
                             )}

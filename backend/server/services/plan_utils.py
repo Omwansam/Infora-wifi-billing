@@ -171,12 +171,42 @@ def get_plan_limits(plan):
     }
 
 
-def generate_radius_attributes(plan):
-    """Build FreeRADIUS reply attributes for a service plan."""
+def normalize_rate_limit(value):
+    """Coerce a throttled-speed value to MikroTik-Rate-Limit form (rx/tx).
+
+    Accepts '2M', '2M/2M', '2', or a number → '2M/2M'. Returns None if unusable.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if '/' in text:  # already rx/tx, trust the caller's format
+        return text
+    mbps = _parse_speed_mbps(text)
+    if not mbps:
+        return None
+    return f'{mbps}M/{mbps}M'
+
+
+def generate_radius_attributes(plan, rate_limit_override=None):
+    """Build FreeRADIUS reply attributes for a service plan.
+
+    When ``rate_limit_override`` is given (FUP throttling), it replaces the
+    plan's Mikrotik-Rate-Limit and the data cap (Mikrotik-Total-Limit) is
+    dropped — a throttled user is speed-limited, not cut off at a byte cap.
+    """
     limits = get_plan_limits(plan)
     attributes = []
 
-    if limits['bandwidth_limit']:
+    override = normalize_rate_limit(rate_limit_override)
+    if override:
+        attributes.append({
+            'attribute': 'Mikrotik-Rate-Limit',
+            'op': '=',
+            'value': override,
+        })
+    elif limits['bandwidth_limit']:
         mbps = int(limits['bandwidth_limit'])
         # MikroTik-Rate-Limit format: rx/tx (e.g. 10M/10M)
         attributes.append({
@@ -185,7 +215,7 @@ def generate_radius_attributes(plan):
             'value': f'{mbps}M/{mbps}M',
         })
 
-    if limits['data_limit']:
+    if limits['data_limit'] and not override:
         data_limit_bytes = int(limits['data_limit']) * 1024 * 1024 * 1024
         attributes.append({
             'attribute': 'Mikrotik-Total-Limit',

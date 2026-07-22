@@ -137,12 +137,26 @@ def ensure_plan_group(plan, isp):
             ))
 
 
-def provision_customer_radius(customer, plan, isp, password=None):
-    """Create/update FreeRADIUS entries for an active customer."""
+def _plan_throttle_rate_limit(plan):
+    """MikroTik rate-limit string for a plan's FUP throttled speed, or None."""
+    from services.plan_utils import extract_package_policy, normalize_rate_limit
+    policy = extract_package_policy(plan)
+    return normalize_rate_limit(policy.get('fup_throttled_speed'))
+
+
+def provision_customer_radius(customer, plan, isp, password=None, throttle=False):
+    """Create/update FreeRADIUS entries for an active customer.
+
+    When ``throttle`` is set and the plan defines a FUP throttled speed, the
+    per-user reply rows carry the throttled Mikrotik-Rate-Limit (which wins over
+    the plan group's full speed). Used by services.fup_enforcement.
+    """
     username = radius_username(customer)
     cleartext_password = password or get_customer_radius_password(customer)
     if not cleartext_password:
         cleartext_password = set_customer_radius_password(customer)
+
+    rate_limit_override = _plan_throttle_rate_limit(plan) if throttle else None
 
     ensure_plan_group(plan, isp)
 
@@ -170,7 +184,7 @@ def provision_customer_radius(customer, plan, isp, password=None):
             is_active=True,
         ))
 
-    for attr in generate_radius_attributes(plan):
+    for attr in generate_radius_attributes(plan, rate_limit_override=rate_limit_override):
         db.session.add(RadReply(
             username=username,
             attribute=attr['attribute'],
@@ -235,12 +249,22 @@ def activate_customer_after_payment(customer, isp, plan=None, stack_time=True):
 
 
 def suspend_customer_access(customer, isp):
-    """Suspend billing customer and remove RADIUS / WireGuard access."""
+    """Suspend billing customer and remove RADIUS / WireGuard access.
+
+    Also kicks any live sessions on the ISP's routers so the subscriber is
+    dropped immediately — deleting the radcheck rows alone only blocks the
+    *next* auth, leaving an existing PPPoE tunnel up until it re-dials.
+    """
     from services.wireguard_provisioning import deprovision_customer_wireguard
 
     customer.status = CustomerStatus.SUSPENDED
     if isp:
         deprovision_customer_radius(customer, isp)
+        from services.hotspot_disconnect import disconnect_customer_on_devices
+        try:
+            disconnect_customer_on_devices(customer, isp)
+        except Exception:
+            pass
     deprovision_customer_wireguard(customer)
     db.session.flush()
 

@@ -125,6 +125,9 @@ class Customer(db.Model):
     device_count = db.Column(db.Integer, default=0)
     last_payment_date = db.Column(db.DateTime, nullable=True)
     radius_password_encrypted = db.Column(db.Text, nullable=True)
+    # True while the subscriber is provisioned at the plan's FUP throttled speed
+    # (set/cleared by services.fup_enforcement).
+    fup_throttled = db.Column(db.Boolean, default=False, nullable=False)
     subscription_start = db.Column(db.DateTime, nullable=True)
     subscription_end = db.Column(db.DateTime, nullable=True)
     id_number = db.Column(db.String(50), nullable=True)

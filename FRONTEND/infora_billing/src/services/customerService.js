@@ -57,6 +57,27 @@ export const customerService = {
     return authenticatedApiCall(url, getAccessToken(), { method: 'POST' });
   },
 
+  /** Kick a single live session (keeps the account active) */
+  async terminateSession(sessionId) {
+    const url = `${API_ENDPOINTS.RADIUS_ROUTES}/sessions/terminate/${sessionId}`;
+    return authenticatedApiCall(url, getAccessToken(), { method: 'POST' });
+  },
+
+  /** Reveal a client's PPPoE/hotspot login (username + stored password) */
+  async getRadiusCredentials(clientId) {
+    const url = `${API_ENDPOINTS.CUSTOMERS}/${clientId}/radius-credentials`;
+    return authenticatedApiCall(url, getAccessToken());
+  },
+
+  /** Reset a client's RADIUS password (optionally to a supplied value) */
+  async resetRadiusCredentials(clientId, password) {
+    const url = `${API_ENDPOINTS.CUSTOMERS}/${clientId}/radius-credentials/reset`;
+    return authenticatedApiCall(url, getAccessToken(), {
+      method: 'POST',
+      body: JSON.stringify(password ? { password } : {}),
+    });
+  },
+
   /** Suspend customer and remove RADIUS access */
   async suspendCustomer(customerId) {
     const url = `${API_ENDPOINTS.BILLING_CUSTOMERS}/${customerId}/suspend`;
