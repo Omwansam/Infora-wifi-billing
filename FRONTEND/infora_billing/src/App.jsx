@@ -48,6 +48,21 @@ import SystemUsersPage from './components/settings/SystemUsersPage';
 import SystemLogsPage from './components/settings/SystemLogsPage';
 import BugReportPage from './components/settings/BugReportPage';
 import ContactSupportPage from './components/settings/ContactSupportPage';
+// Security section
+import RadiusUsersPage from './components/security/RadiusUsersPage';
+import RadiusGroupsPage from './components/security/RadiusGroupsPage';
+import AccountingPage from './components/security/AccountingPage';
+import AccessControlPage from './components/security/AccessControlPage';
+// Monitoring section
+import DeviceStatsPage from './components/monitoring/DeviceStatsPage';
+import TrafficPage from './components/monitoring/TrafficPage';
+import AlertsPage from './components/monitoring/AlertsPage';
+// Reports section
+import ReportsBillingPage from './components/reports/ReportsBillingPage';
+import ReportsNetworkPage from './components/reports/ReportsNetworkPage';
+import ReportsDevicesPage from './components/reports/ReportsDevicesPage';
+import ReportsClientsPage from './components/reports/ReportsClientsPage';
+import ReportsAnalyticsPage from './components/reports/ReportsAnalyticsPage';
 import CommunicationHubPage from './components/communication/CommunicationHubPage';
 import SmsManagementPage from './components/communication/SmsManagementPage';
 import EmailManagementPage from './components/communication/EmailManagementPage';
@@ -170,25 +185,26 @@ function AppRoutes() {
       <Route path="/network/eap" element={<AdminRoute><MainLayout><EapPage /></MainLayout></AdminRoute>} />
       
       {/* Security Routes */}
-      <Route path="/security/radius-users" element={<AdminRoute><MainLayout><PlaceholderPage title="RADIUS Users" description="Manage RADIUS user accounts and authentication" /></MainLayout></AdminRoute>} />
-      <Route path="/security/radius-groups" element={<AdminRoute><MainLayout><PlaceholderPage title="RADIUS Groups" description="Manage RADIUS user groups and policies" /></MainLayout></AdminRoute>} />
-      <Route path="/security/radius-accounting" element={<AdminRoute><MainLayout><PlaceholderPage title="RADIUS Accounting" description="View RADIUS accounting logs and session data" /></MainLayout></AdminRoute>} />
-      <Route path="/security/vpn-clients" element={<AdminRoute><MainLayout><PlaceholderPage title="VPN Clients" description="Manage VPN client connections and configurations" /></MainLayout></AdminRoute>} />
-      <Route path="/security/access-control" element={<AdminRoute><MainLayout><PlaceholderPage title="Access Control" description="Configure access control policies and rules" /></MainLayout></AdminRoute>} />
-      
+      <Route path="/security/radius-users" element={<AdminRoute><MainLayout><RadiusUsersPage /></MainLayout></AdminRoute>} />
+      <Route path="/security/radius-groups" element={<AdminRoute><MainLayout><RadiusGroupsPage /></MainLayout></AdminRoute>} />
+      <Route path="/security/radius-accounting" element={<AdminRoute><MainLayout><AccountingPage /></MainLayout></AdminRoute>} />
+      <Route path="/security/access-control" element={<AdminRoute><MainLayout><AccessControlPage /></MainLayout></AdminRoute>} />
+      {/* VPN moved to Network section */}
+      <Route path="/security/vpn-clients" element={<Navigate to="/network/vpn" replace />} />
+
       {/* Monitoring Routes */}
-      <Route path="/monitoring/snmp" element={<AdminRoute><MainLayout><PlaceholderPage title="SNMP Monitoring" description="Monitor network devices using SNMP protocols" /></MainLayout></AdminRoute>} />
-      <Route path="/monitoring/device-stats" element={<AdminRoute><MainLayout><PlaceholderPage title="Device Statistics" description="View detailed device performance statistics" /></MainLayout></AdminRoute>} />
-      <Route path="/monitoring/traffic" element={<AdminRoute><MainLayout><PlaceholderPage title="Network Traffic" description="Monitor network traffic and bandwidth usage" /></MainLayout></AdminRoute>} />
-      <Route path="/monitoring/logs" element={<AdminRoute><MainLayout><PlaceholderPage title="System Logs" description="View system logs and event history" /></MainLayout></AdminRoute>} />
-      <Route path="/monitoring/alerts" element={<AdminRoute><MainLayout><PlaceholderPage title="Alerts" description="Configure and manage system alerts and notifications" /></MainLayout></AdminRoute>} />
-      
+      <Route path="/monitoring/snmp" element={<AdminRoute><MainLayout><SnmpPage /></MainLayout></AdminRoute>} />
+      <Route path="/monitoring/device-stats" element={<AdminRoute><MainLayout><DeviceStatsPage /></MainLayout></AdminRoute>} />
+      <Route path="/monitoring/traffic" element={<AdminRoute><MainLayout><TrafficPage /></MainLayout></AdminRoute>} />
+      <Route path="/monitoring/logs" element={<AdminRoute><MainLayout><SystemLogsPage /></MainLayout></AdminRoute>} />
+      <Route path="/monitoring/alerts" element={<AdminRoute><MainLayout><AlertsPage /></MainLayout></AdminRoute>} />
+
       {/* Reports & Analytics Routes */}
-      <Route path="/reports/billing" element={<AdminRoute><MainLayout><PlaceholderPage title="Billing Reports" description="Generate comprehensive billing reports and analytics" /></MainLayout></AdminRoute>} />
-      <Route path="/reports/network" element={<AdminRoute><MainLayout><PlaceholderPage title="Network Reports" description="Generate network performance and usage reports" /></MainLayout></AdminRoute>} />
-      <Route path="/reports/devices" element={<AdminRoute><MainLayout><PlaceholderPage title="Device Reports" description="Generate device status and performance reports" /></MainLayout></AdminRoute>} />
-      <Route path="/reports/customers" element={<AdminRoute><MainLayout><PlaceholderPage title="Customer Reports" description="Generate customer activity and usage reports" /></MainLayout></AdminRoute>} />
-      <Route path="/reports/analytics" element={<AdminRoute><MainLayout><PlaceholderPage title="Performance Analytics" description="Advanced analytics and performance metrics" /></MainLayout></AdminRoute>} />
+      <Route path="/reports/billing" element={<AdminRoute><MainLayout><ReportsBillingPage /></MainLayout></AdminRoute>} />
+      <Route path="/reports/network" element={<AdminRoute><MainLayout><ReportsNetworkPage /></MainLayout></AdminRoute>} />
+      <Route path="/reports/devices" element={<AdminRoute><MainLayout><ReportsDevicesPage /></MainLayout></AdminRoute>} />
+      <Route path="/reports/customers" element={<AdminRoute><MainLayout><ReportsClientsPage /></MainLayout></AdminRoute>} />
+      <Route path="/reports/analytics" element={<AdminRoute><MainLayout><ReportsAnalyticsPage /></MainLayout></AdminRoute>} />
 
       {/* Settings Routes */}
       <Route path="/settings/2fa" element={<ProtectedRoute><MainLayout><TwoFactorAuthPage /></MainLayout></ProtectedRoute>} />

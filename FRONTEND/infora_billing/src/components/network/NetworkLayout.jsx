@@ -1,14 +1,13 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Globe, Shield, Database, Monitor, Lock, Key, Network } from 'lucide-react';
+import { Globe, Database, Lock, Key, Network } from 'lucide-react';
 import PageShell from '../layout/PageShell';
 
+// RADIUS moved to Security, SNMP moved to Monitoring (consolidated IA).
 const TABS = [
   { label: 'ISPs', path: '/network/isps', icon: Globe },
-  { label: 'RADIUS', path: '/network/radius', icon: Shield },
   { label: 'LDAP', path: '/network/ldap', icon: Database },
-  { label: 'SNMP', path: '/network/snmp', icon: Monitor },
   { label: 'VPN', path: '/network/vpn', icon: Lock },
   { label: 'WireGuard', path: '/network/wireguard', icon: Network },
   { label: 'EAP', path: '/network/eap', icon: Key },

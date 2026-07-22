@@ -1,6 +1,11 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import RadiusClient, User
+from sqlalchemy import or_
+from models import (
+    RadiusClient, User, RadCheck, RadReply, RadUserGroup,
+    RadGroupCheck, RadGroupReply, RadAcct, Customer, ServicePlan,
+)
+from auth_utils import get_current_user
 from extensions import db
 import os
 from datetime import datetime
@@ -159,6 +164,141 @@ def delete_radius_client(client_id):
             'ok': False,
             'message': f'Error deleting RADIUS client: {str(e)}'
         }), 500
+
+def _radius_isp_scope(query, model):
+    """Limit a RADIUS-table query to the caller's ISP (admins see all)."""
+    user = get_current_user()
+    if user and user.role != 'admin' and user.isp_id:
+        return query.filter(model.isp_id == user.isp_id), user
+    return query, user
+
+
+@radius_bp.route('/users', methods=['GET'])
+@jwt_required()
+def get_radius_users():
+    """RADIUS auth users from radcheck (Cleartext-Password rows), enriched."""
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 25, type=int)
+        search = (request.args.get('search') or '').strip()
+
+        query = RadCheck.query.filter(RadCheck.attribute == 'Cleartext-Password')
+        query, _user = _radius_isp_scope(query, RadCheck)
+        if search:
+            query = query.filter(RadCheck.username.ilike(f'%{search}%'))
+
+        paginated = query.order_by(RadCheck.username.asc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        rows = paginated.items
+        usernames = [r.username for r in rows]
+        cust_ids = [r.customer_id for r in rows if r.customer_id]
+
+        # Batch enrichments
+        replies = {}
+        groups = {}
+        customers = {}
+        online = set()
+        if usernames:
+            for rr in RadReply.query.filter(RadReply.username.in_(usernames)).all():
+                replies.setdefault(rr.username, {})[rr.attribute] = rr.value
+            for ug in RadUserGroup.query.filter(RadUserGroup.username.in_(usernames)).all():
+                groups.setdefault(ug.username, ug.groupname)
+            for row in (
+                db.session.query(RadAcct.username)
+                .filter(RadAcct.acctstoptime.is_(None), RadAcct.username.in_(usernames))
+                .distinct()
+                .all()
+            ):
+                online.add((row[0] or '').lower())
+        if cust_ids:
+            for c in Customer.query.filter(Customer.id.in_(cust_ids)).all():
+                customers[c.id] = c
+
+        def _plan_label(groupname):
+            if groupname and groupname.startswith('plan_'):
+                try:
+                    plan = ServicePlan.query.get(int(groupname.split('_', 1)[1]))
+                    if plan:
+                        return plan.name
+                except (ValueError, TypeError):
+                    pass
+            return groupname
+
+        data = []
+        for r in rows:
+            cust = customers.get(r.customer_id)
+            attrs = replies.get(r.username, {})
+            gname = groups.get(r.username)
+            data.append({
+                'id': r.id,
+                'username': r.username,
+                'customer_id': r.customer_id,
+                'customer_name': cust.full_name if cust else None,
+                'customer_status': cust.status.value if cust and cust.status else None,
+                'group': gname,
+                'plan_name': _plan_label(gname),
+                'rate_limit': attrs.get('Mikrotik-Rate-Limit'),
+                'expiration': attrs.get('Expiration'),
+                'is_online': (r.username or '').lower() in online,
+                'is_active': r.is_active,
+            })
+
+        return jsonify({
+            'ok': True,
+            'data': {
+                'users': data,
+                'total': paginated.total,
+                'pages': paginated.pages,
+                'current_page': page,
+            },
+        }), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': f'Failed to load RADIUS users: {str(e)}'}), 500
+
+
+@radius_bp.route('/groups', methods=['GET'])
+@jwt_required()
+def get_radius_groups():
+    """RADIUS groups from radgroupreply/radgroupcheck, mapped to plans."""
+    try:
+        reply_q, _user = _radius_isp_scope(RadGroupReply.query, RadGroupReply)
+        replies = reply_q.all()
+
+        groups = {}
+        for rr in replies:
+            groups.setdefault(rr.groupname, {})[rr.attribute] = rr.value
+
+        # Member counts per group
+        member_counts = {}
+        mc_q, _ = _radius_isp_scope(
+            db.session.query(RadUserGroup.groupname, db.func.count(RadUserGroup.id)), RadUserGroup
+        )
+        for gname, count in mc_q.group_by(RadUserGroup.groupname).all():
+            member_counts[gname] = count
+
+        data = []
+        for gname, attrs in sorted(groups.items()):
+            plan = None
+            if gname.startswith('plan_'):
+                try:
+                    plan = ServicePlan.query.get(int(gname.split('_', 1)[1]))
+                except (ValueError, TypeError):
+                    plan = None
+            data.append({
+                'groupname': gname,
+                'plan_id': plan.id if plan else None,
+                'plan_name': plan.name if plan else gname,
+                'rate_limit': attrs.get('Mikrotik-Rate-Limit'),
+                'data_cap': attrs.get('Mikrotik-Total-Limit'),
+                'attributes': [{'attribute': k, 'value': v} for k, v in attrs.items()],
+                'member_count': member_counts.get(gname, 0),
+            })
+
+        return jsonify({'ok': True, 'data': {'groups': data, 'total': len(data)}}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': f'Failed to load RADIUS groups: {str(e)}'}), 500
+
 
 @radius_bp.route('/auth/<int:client_id>', methods=['POST'])
 def authenticate_radius(client_id):

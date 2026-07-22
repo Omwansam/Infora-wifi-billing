@@ -166,6 +166,8 @@ export const API_ENDPOINTS = {
   // Dashboard & tickets
   DASHBOARD_STATS: `${API_BASE_URL}/api/dashboard/stats`,
   FUP_MONITOR: `${API_BASE_URL}/api/monitoring/fup`,
+  MONITORING_ALERTS: `${API_BASE_URL}/api/monitoring/alerts`,
+  reportEndpoint: (type) => `${API_BASE_URL}/api/reports/${type}`,
   FINANCE_LEADS: `${API_BASE_URL}/api/finance/leads`,
   FINANCE_EXPENSES: `${API_BASE_URL}/api/finance/expenses`,
   FINANCE_SUMMARY: `${API_BASE_URL}/api/finance/summary`,
