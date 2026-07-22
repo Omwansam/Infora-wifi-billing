@@ -160,30 +160,39 @@ def _detect_router_info(client):
     return detected
 
 
-def probe_tunnel(device, timeout=2):
+def probe_tunnel(device, timeout=2, attempts=1):
     """Check two-way connectivity to the router's management tunnel IP.
 
     A TCP reply through the tunnel proves the WireGuard handshake completed
     (the packet round-trips inside the encrypted tunnel). Tries SSH, Winbox
     and the API port so a firewalled service doesn't cause a false negative.
+
+    ``attempts`` re-tries the whole port sweep before giving up. Over a NAT'd
+    tunnel the very first packet after a brief idle has to wake the WireGuard
+    handshake, so a lone 2s connect can time out on a router that is perfectly
+    alive — a second sweep almost always lands. Use attempts>1 wherever a false
+    "down" would wrongly flip a live router OFFLINE.
     """
     if not (device.management_wg_enabled and device.management_wg_ip):
         return {'up': False, 'applicable': False, 'detail': 'Management tunnel not enabled'}
 
     host = device.management_wg_ip.split('/')[0]
     ports = [device.ssh_port or 22, 8291, device.api_port or 8728]
-    for port in ports:
-        start = time.time()
-        try:
-            with socket.create_connection((host, port), timeout=timeout):
-                ms = int((time.time() - start) * 1000)
-                return {
-                    'up': True,
-                    'applicable': True,
-                    'detail': f'Reply from {host} in {ms} ms (tcp/{port})',
-                }
-        except OSError:
-            continue
+    for attempt in range(max(1, attempts)):
+        for port in ports:
+            start = time.time()
+            try:
+                with socket.create_connection((host, port), timeout=timeout):
+                    ms = int((time.time() - start) * 1000)
+                    return {
+                        'up': True,
+                        'applicable': True,
+                        'detail': f'Reply from {host} in {ms} ms (tcp/{port})',
+                    }
+            except OSError:
+                continue
+        if attempt < max(1, attempts) - 1:
+            time.sleep(0.5)
     return {'up': False, 'applicable': True, 'detail': f'No reply from {host} yet'}
 
 

@@ -1,6 +1,8 @@
 """MikroTik device sync helpers (API + SSH)."""
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from flask import current_app
 
 from extensions import db
 from models import DeviceStatus, MikrotikDevice
@@ -12,6 +14,62 @@ from mikrotik_client import (
     MikroTikSSHError,
 )
 from services.encryption import decrypt_value
+
+# Fallback used when there's no Flask app context (e.g. unit tests) to read
+# DEVICE_OFFLINE_GRACE_SECONDS from config.
+_DEFAULT_OFFLINE_GRACE_SECONDS = 300
+
+
+def _offline_grace_seconds():
+    try:
+        return int(current_app.config.get(
+            'DEVICE_OFFLINE_GRACE_SECONDS', _DEFAULT_OFFLINE_GRACE_SECONDS))
+    except Exception:
+        return _DEFAULT_OFFLINE_GRACE_SECONDS
+
+
+def _mark_online(device):
+    """Flip a device ONLINE and stamp the contact time (idempotent)."""
+    device.device_status = DeviceStatus.ONLINE
+    device.last_synced = datetime.utcnow()
+
+
+def mark_unreachable(device):
+    """Decide a failed device's status with hysteresis instead of a hard OFFLINE.
+
+    A NAT router on the management tunnel proves it's alive continuously —
+    WireGuard keepalive every 25s + a netwatch ping to the server every 60s —
+    so one failed probe/SSH attempt (the tunnel's first packet after idle, a
+    flaky SSH banner, a momentary port block) is NOT evidence it's down. This
+    keeps "Online" sticky:
+
+      * Re-probe the tunnel with retries. If the router answers, it's alive at
+        the tunnel layer even if the SSH stat pull failed — keep it ONLINE and
+        refresh the contact time.
+      * Otherwise only flip OFFLINE once there's been no proven contact for the
+        grace window (``DEVICE_OFFLINE_GRACE_SECONDS``); within the window keep
+        the last-known status so a transient blip can't knock a live router off.
+
+    Must be called with the caller's failed transaction already rolled back.
+    Commits the resulting status. Returns the DeviceStatus it settled on.
+    """
+    use_tunnel = bool(device.management_wg_enabled and device.management_wg_ip)
+    if use_tunnel:
+        from services.device_config_ops import probe_tunnel
+        if probe_tunnel(device, timeout=2, attempts=3)['up']:
+            _mark_online(device)
+            db.session.commit()
+            return DeviceStatus.ONLINE
+
+    grace = timedelta(seconds=_offline_grace_seconds())
+    within_grace = bool(device.last_synced and datetime.utcnow() - device.last_synced < grace)
+    if within_grace and device.device_status == DeviceStatus.ONLINE:
+        # Recently confirmed online and no proof it's gone yet — stay sticky.
+        return DeviceStatus.ONLINE
+
+    device.device_status = DeviceStatus.OFFLINE
+    db.session.commit()
+    return DeviceStatus.OFFLINE
 
 
 def device_connection_config(device, connection_type=None):
@@ -72,16 +130,41 @@ def sync_device_stats(device, connection_type=None):
     """
     use_tunnel = bool(device.management_wg_enabled and device.management_wg_ip)
     if use_tunnel:
-        from services.device_config_ops import mikrotik_ssh, probe_tunnel
-        # Fast offline detection: if the router doesn't answer on the tunnel
-        # (powered off / tunnel down), fail immediately so the card flips to
-        # OFFLINE in a few seconds instead of after ~40s of SSH retries.
-        if not probe_tunnel(device, timeout=2)['up']:
+        from services.device_config_ops import DeviceBusy, mikrotik_ssh, probe_tunnel
+        # Offline detection: if the router doesn't answer on the tunnel at all
+        # (powered off / tunnel down), fail so the caller can apply hysteresis.
+        # Retry the sweep — the first packet after idle wakes the WG handshake,
+        # so a lone 2s connect can time out on a router that is perfectly alive.
+        if not probe_tunnel(device, timeout=2, attempts=3)['up']:
             raise MikroTikSSHError('Router unreachable on management tunnel (powered off or tunnel down)')
-        with mikrotik_ssh(device, timeout=12, lock_wait=20) as client:
-            info = client.get_device_info()
-            _apply_device_info(device, info)
+        # The tunnel answered => the router is alive. Mark it ONLINE up front so
+        # a flaky SSH banner on the stat pull below can't flip a live router
+        # OFFLINE; the stats just stay at their last-known values this round.
+        _mark_online(device)
+        db.session.commit()
+        try:
+            with mikrotik_ssh(device, timeout=12, lock_wait=20) as client:
+                info = client.get_device_info()
+                _apply_device_info(device, info)
+                db.session.commit()
+        except DeviceBusy:
+            raise
+        except Exception:
+            # Tunnel is proven live but the stat pull failed — keep it ONLINE
+            # (re-affirm, the rollback undid the earlier commit's session state)
+            # and return last-known stats instead of throwing.
+            db.session.rollback()
+            _mark_online(device)
             db.session.commit()
+            return {
+                'uptime': device.uptime,
+                'client_count': device.client_count,
+                'cpu_load': device.cpu_load,
+                'memory_usage': None,
+                'version': device.os_version,
+                'board_name': device.device_model,
+                'stats_stale': True,
+            }
     else:
         config = device_connection_config(device, connection_type)
         with MikroTikClient(config) as client:
@@ -123,13 +206,14 @@ def sync_device_async(app, device_id, connection_type=None):
                 # flip it offline; the next sync will refresh its stats.
                 db.session.rollback()
             except Exception:
-                # Any real failure (unreachable, banner error, parse) => OFFLINE.
-                # Never leave the card stuck in a stale state.
+                # A failed attempt is not proof the router is down (flaky tunnel
+                # SSH, transient probe miss). Apply hysteresis: keep a live/
+                # recently-seen router ONLINE, only flip OFFLINE when it's truly
+                # unreachable past the grace window.
                 db.session.rollback()
                 device = MikrotikDevice.query.get(device_id)
                 if device:
-                    device.device_status = DeviceStatus.OFFLINE
-                    db.session.commit()
+                    mark_unreachable(device)
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -149,8 +233,10 @@ def bulk_sync_devices(isp_id=None):
             sync_device_stats(device)
             synced += 1
         except Exception:
-            device.device_status = DeviceStatus.OFFLINE
-            db.session.commit()
+            # Hysteresis, not a hard OFFLINE: a live router that just missed one
+            # probe/SSH stays ONLINE; only genuinely-gone routers flip.
+            db.session.rollback()
+            mark_unreachable(device)
             failed += 1
 
     return {'synced': synced, 'failed': failed, 'total': len(devices)}

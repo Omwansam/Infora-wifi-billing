@@ -70,6 +70,11 @@ class Config:
     WIREGUARD_MGMT_SERVER_IP = os.getenv('WIREGUARD_MGMT_SERVER_IP', '10.250.0.1')
     WIREGUARD_MGMT_PORT = int(os.getenv('WIREGUARD_MGMT_PORT', '51821'))
     WIREGUARD_MGMT_ENDPOINT = os.getenv('WIREGUARD_MGMT_ENDPOINT', os.getenv('PUBLIC_SERVER_HOST', ''))
+    # A router on the management tunnel keepalives every 25s and netwatch-pings
+    # the server every 60s, so a single failed probe/SSH does NOT mean it's down.
+    # Only flip a device OFFLINE after this many seconds with no proven contact
+    # (hysteresis) — keeps a live router stuck ONLINE instead of flapping.
+    DEVICE_OFFLINE_GRACE_SECONDS = int(os.getenv('DEVICE_OFFLINE_GRACE_SECONDS', '300'))
     # Timezone applied to MikroTik routers during self-provisioning
     ROUTER_TIMEZONE = os.getenv('ROUTER_TIMEZONE', 'Africa/Nairobi')
     # Public base URL the router uses to fetch its provisioning script (HTTPS)

@@ -1,7 +1,9 @@
 """Deployment and connectivity health checks for MikroTik + WireGuard."""
 import os
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -65,24 +67,51 @@ def build_deployment_report():
     # thread-safe), then probe TCP reachability concurrently with a short
     # timeout so the health check stays responsive when routers are down.
     isp_secret_map = {i.id: bool(i.radius_secret) for i in isps}
+    grace = timedelta(seconds=int(
+        current_app.config.get('DEVICE_OFFLINE_GRACE_SECONDS', 300)))
+    now = datetime.utcnow()
     device_meta = []
     for device in devices:
         host, port, prefer = _probe_host_port(device)
+        mgmt = bool(getattr(device, 'management_wg_enabled', False))
+        last_synced = getattr(device, 'last_synced', None)
         device_meta.append({
             'id': device.id,
             'name': device.device_name,
             'ip': device.device_ip,
             'probe_host': host,
-            'management_wg_enabled': bool(getattr(device, 'management_wg_enabled', False)),
+            'management_wg_enabled': mgmt,
             'management_wg_ip': getattr(device, 'management_wg_ip', None),
             'connection_type': prefer,
             'port': port,
             'has_radius_secret': isp_secret_map.get(device.isp_id, False),
             'status': device.device_status.value if device.device_status else 'unknown',
+            # Sticky-online signal: a NAT router on the tunnel heartbeats the
+            # server continuously, so treat "ONLINE + synced within grace" as
+            # reachable even when a one-shot TCP probe misses.
+            'recently_online': bool(
+                mgmt
+                and device.device_status
+                and device.device_status.value == 'online'
+                and last_synced
+                and now - last_synced < grace
+            ),
         })
 
     def _probe_reachable(meta):
-        return meta['id'], (_check_tcp(meta['probe_host'], meta['port']) if meta['probe_host'] else False)
+        if not meta['probe_host']:
+            return meta['id'], False
+        # One quick retry for tunnel routers — the first packet after idle wakes
+        # the WireGuard handshake, so a lone connect can miss on a live router.
+        # Kept short (recently_online is the authoritative sticky signal) so a
+        # genuinely-down router can't stall this endpoint.
+        attempts = 2 if meta['management_wg_enabled'] else 1
+        for attempt in range(attempts):
+            if _check_tcp(meta['probe_host'], meta['port'], timeout=1.5):
+                return meta['id'], True
+            if attempt < attempts - 1:
+                time.sleep(0.3)
+        return meta['id'], False
 
     reachable_map = {}
     if device_meta:
@@ -94,7 +123,7 @@ def build_deployment_report():
 
     device_checks = []
     for meta in device_meta:
-        meta['api_reachable'] = reachable_map.get(meta['id'], False)
+        meta['api_reachable'] = bool(reachable_map.get(meta['id'], False) or meta['recently_online'])
         device_checks.append(meta)
 
     server_checks = []

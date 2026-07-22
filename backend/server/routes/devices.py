@@ -33,6 +33,7 @@ from services.mikrotik_sync import (
     sync_device_stats,
     test_device_connection as mikrotik_test_connection,
     bulk_sync_devices,
+    mark_unreachable,
 )
 from mikrotik_client import MikroTikAPIError, MikroTikSSHError
 from services.radius_clients_export import sync_radius_clients_conf
@@ -430,8 +431,9 @@ def test_device_connection(device_id):
                     'details': result.get('device_info', {}),
                 }), 200
 
-            device.device_status = DeviceStatus.OFFLINE
-            db.session.commit()
+            # Don't hard-flip OFFLINE on one failed test — a NAT router on the
+            # tunnel may be alive and just slow to answer the direct probe.
+            mark_unreachable(device)
             return jsonify({
                 'message': 'Connection test failed',
                 'device': serialize_device(device),
@@ -440,8 +442,7 @@ def test_device_connection(device_id):
             }), 200
 
         except Exception as e:
-            device.device_status = DeviceStatus.OFFLINE
-            db.session.commit()
+            mark_unreachable(device)
             return jsonify({
                 'message': 'Connection test failed',
                 'device': serialize_device(device),
@@ -497,17 +498,17 @@ def sync_device(device_id):
         }), 200
 
     except (MikroTikAPIError, MikroTikSSHError) as conn_err:
-        # Router unreachable is an expected operational state (e.g. tunnel not
-        # up yet) — report it as "offline" with 200 so the UI shows status
-        # instead of throwing on a 500.
+        # A failed attempt is not proof the router is down (tunnel not up yet,
+        # flaky SSH banner). Apply hysteresis so a live router stays ONLINE and
+        # only a genuinely-gone one flips OFFLINE. Report with 200 so the UI
+        # shows status instead of throwing on a 500.
         db.session.rollback()
         device = MikrotikDevice.query.get(device_id)
-        if device:
-            device.device_status = DeviceStatus.OFFLINE
-            db.session.commit()
+        status = mark_unreachable(device) if device else None
         return jsonify({
-            'message': 'Device is unreachable',
-            'reachable': False,
+            'message': 'Device is unreachable' if status == DeviceStatus.OFFLINE
+                       else 'Sync attempt failed but device is still reachable',
+            'reachable': status != DeviceStatus.OFFLINE,
             'device': serialize_device(device) if device else None,
             'error': str(conn_err),
         }), 200
@@ -516,8 +517,7 @@ def sync_device(device_id):
         db.session.rollback()
         device = MikrotikDevice.query.get(device_id)
         if device:
-            device.device_status = DeviceStatus.OFFLINE
-            db.session.commit()
+            mark_unreachable(device)
         return jsonify({'error': f'Failed to sync device: {str(e)}'}), 500
 
 @devices_bp.route('/<int:device_id>/toggle-status', methods=['PUT'])
