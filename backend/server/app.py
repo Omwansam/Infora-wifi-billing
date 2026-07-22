@@ -30,6 +30,7 @@ from routes.monitoring import monitoring_bp
 from routes.health import health_bp
 from routes.provision import provision_bp
 from routes.settings import settings_bp
+from routes.support import support_bp
 from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
@@ -96,6 +97,7 @@ app.register_blueprint(monitoring_bp)
 app.register_blueprint(health_bp)
 app.register_blueprint(provision_bp)
 app.register_blueprint(settings_bp)
+app.register_blueprint(support_bp)
 
 
 def ensure_schema_upgrades():
@@ -116,6 +118,11 @@ def ensure_schema_upgrades():
         },
         'customers': {
             'fup_throttled': 'BOOLEAN DEFAULT FALSE NOT NULL',
+        },
+        'users': {
+            'two_factor_enabled': 'BOOLEAN DEFAULT FALSE NOT NULL',
+            'two_factor_secret': 'TEXT',
+            'two_factor_backup_codes': 'TEXT',
         },
     }
     try:

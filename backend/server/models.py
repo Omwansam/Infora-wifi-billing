@@ -87,6 +87,11 @@ class User(db.Model):
     last_name = db.Column(db.String(50), nullable=False)
     role = db.Column(db.String(20), default='admin')
     is_active = db.Column(db.Boolean, default=True)
+    # Two-factor authentication (TOTP). Secret is encrypted at rest; backup
+    # codes stored as a JSON list of hashes. See routes/auth.py 2FA endpoints.
+    two_factor_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    two_factor_secret = db.Column(db.Text, nullable=True)
+    two_factor_backup_codes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
     last_login = db.Column(db.DateTime, server_default=db.func.current_timestamp())
@@ -628,6 +633,50 @@ class SystemLog(db.Model):
 
     def __repr__(self):
         return f"<SystemLog {self.log_type} ({self.log_message})>"
+
+
+class SupportRequest(db.Model):
+    """Operator-submitted support messages, bug reports, and feature requests.
+
+    Distinct from customer `Ticket`s (which require a customer_id) — these are
+    raised by admin/staff users from Settings → Contact Support / Bug Report.
+    """
+    __tablename__ = 'support_requests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_type = db.Column(db.String(20), nullable=False, default='support')  # support | bug | feature
+    subject = db.Column(db.String(255), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    priority = db.Column(db.String(20), nullable=False, default='medium')  # low | medium | high | urgent
+    status = db.Column(db.String(20), nullable=False, default='open')  # open | in_progress | resolved | closed
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    user = db.relationship('User')
+    isp = db.relationship('ISP')
+
+    def to_dict(self):
+        submitter = None
+        if self.user:
+            submitter = f"{self.user.first_name} {self.user.last_name}".strip() or self.user.email
+        return {
+            'id': self.id,
+            'type': self.request_type,
+            'subject': self.subject,
+            'message': self.message,
+            'priority': self.priority,
+            'status': self.status,
+            'user_id': self.user_id,
+            'submitted_by': submitter,
+            'submitter_email': self.user.email if self.user else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def __repr__(self):
+        return f"<SupportRequest {self.request_type} ({self.subject})>"
 
 
 # =========================

@@ -8,8 +8,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 from extensions import db
 from models import User
-from auth_utils import create_user_tokens, get_user_id_from_jwt
+from auth_utils import create_user_tokens, get_user_id_from_jwt, get_current_user
 from services.rate_limit import rate_limit
+from services.system_log import record_system_log
 
 
 
@@ -44,10 +45,27 @@ def login():
         
         # Verify password using Werkzeug hashing
         if not check_password_hash(user.password_hash, password):
+            record_system_log('auth', f'Failed login for {email}', 'WARNING',
+                              user_id=user.id, commit=True)
             return jsonify({"error": "Invalid email or password"}), 401
+
+        # Two-factor challenge: if enabled, require a valid TOTP or backup code.
+        if user.two_factor_enabled:
+            from services.two_factor import load_secret, verify_code, consume_backup_code
+            otp_code = (data.get('otp_code') or '').strip()
+            if not otp_code:
+                return jsonify({"requires_2fa": True,
+                                "message": "Two-factor verification code required"}), 200
+            secret = load_secret(user)
+            if not (verify_code(secret, otp_code) or consume_backup_code(user, otp_code)):
+                db.session.commit()  # persist a consumed-code attempt cleanly
+                record_system_log('auth', f'Failed 2FA for {email}', 'WARNING',
+                                  user_id=user.id, commit=True)
+                return jsonify({"error": "Invalid verification code", "requires_2fa": True}), 401
 
         # Update last login
         user.last_login = datetime.now()
+        record_system_log('auth', f'{user.email} logged in', 'INFO', user_id=user.id)
         db.session.commit()
 
         access_token, refresh_token = create_user_tokens(user)
@@ -382,8 +400,10 @@ def update_user(user_id):
             user.role = data['role']
         if 'is_active' in data:
             user.is_active = bool(data['is_active'])
-        
+
         user.updated_at = datetime.now()
+        record_system_log('user', f'{current_user.email} updated user {user.email}',
+                          'INFO', user_id=current_user.id)
         db.session.commit()
         
         return jsonify({
@@ -420,9 +440,12 @@ def delete_user(user_id):
             return jsonify({'error': 'Cannot delete your own account'}), 400
         
         user = User.query.get_or_404(user_id)
+        deleted_email = user.email
         db.session.delete(user)
+        record_system_log('user', f'{current_user.email} deleted user {deleted_email}',
+                          'WARNING', user_id=current_user.id)
         db.session.commit()
-        
+
         return jsonify({
             'success': True,
             'message': 'User deleted successfully'
@@ -431,6 +454,151 @@ def delete_user(user_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to delete user: {str(e)}'}), 500
+
+@auth_bp.route('/users', methods=['POST'])
+@jwt_required()
+def create_user():
+    """Create a user (admin only)."""
+    try:
+        current_user = get_current_user()
+        if not current_user or current_user.role != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+
+        data = request.get_json() or {}
+        for field in ('first_name', 'last_name', 'email', 'password'):
+            if not data.get(field):
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        email = data['email'].strip().lower()
+        if '@' not in email or '.' not in email:
+            return jsonify({'error': 'Invalid email format'}), 400
+        if len(data['password']) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters long'}), 400
+        if User.query.filter_by(email=email).first():
+            return jsonify({'error': 'Email already registered'}), 409
+
+        role = data.get('role', 'support')
+        if role not in ('admin', 'manager', 'support'):
+            return jsonify({'error': 'Invalid role'}), 400
+
+        user = User(
+            email=email,
+            password_hash=generate_password_hash(data['password']),
+            first_name=data['first_name'].strip(),
+            last_name=data['last_name'].strip(),
+            role=role,
+            is_active=bool(data.get('is_active', True)),
+            isp_id=data.get('isp_id', current_user.isp_id),
+        )
+        db.session.add(user)
+        db.session.flush()
+        record_system_log('user', f'{current_user.email} created user {email} ({role})',
+                          'INFO', user_id=current_user.id)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'User created successfully',
+            'user': {
+                'id': user.id, 'email': user.email,
+                'first_name': user.first_name, 'last_name': user.last_name,
+                'role': user.role, 'is_admin': user.role == 'admin',
+                'is_active': user.is_active,
+                'created_at': user.created_at.isoformat() if user.created_at else None,
+            }
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to create user: {str(e)}'}), 500
+
+
+@auth_bp.route('/2fa/status', methods=['GET'])
+@jwt_required()
+def two_factor_status():
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    from services.two_factor import remaining_backup_codes
+    return jsonify({
+        'ok': True,
+        'enabled': bool(user.two_factor_enabled),
+        'backup_codes_remaining': remaining_backup_codes(user) if user.two_factor_enabled else 0,
+    }), 200
+
+
+@auth_bp.route('/2fa/setup', methods=['POST'])
+@jwt_required()
+def two_factor_setup():
+    """Begin enrollment: create a provisional secret, return the QR + otpauth URI."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    if user.two_factor_enabled:
+        return jsonify({'error': '2FA is already enabled. Disable it first to re-enroll.'}), 400
+
+    from services.two_factor import generate_secret, store_secret, provisioning_uri, qr_data_uri
+    secret = generate_secret()
+    store_secret(user, secret)  # provisional — not enabled until verified
+    db.session.commit()
+
+    uri = provisioning_uri(secret, user.email)
+    return jsonify({
+        'ok': True,
+        'secret': secret,
+        'otpauth_uri': uri,
+        'qr_code': qr_data_uri(uri),
+    }), 200
+
+
+@auth_bp.route('/2fa/verify', methods=['POST'])
+@jwt_required()
+def two_factor_verify():
+    """Confirm a code against the provisional secret, enable 2FA, issue backup codes."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    from services.two_factor import load_secret, verify_code, generate_backup_codes
+    secret = load_secret(user)
+    if not secret:
+        return jsonify({'error': 'Start 2FA setup first'}), 400
+
+    code = (request.get_json() or {}).get('code', '')
+    if not verify_code(secret, code):
+        return jsonify({'error': 'Invalid verification code'}), 400
+
+    codes, hashes = generate_backup_codes()
+    user.two_factor_enabled = True
+    user.two_factor_backup_codes = hashes
+    record_system_log('auth', f'{user.email} enabled two-factor auth', 'INFO', user_id=user.id)
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'message': 'Two-factor authentication enabled',
+        'backup_codes': codes,  # shown once
+    }), 200
+
+
+@auth_bp.route('/2fa/disable', methods=['POST'])
+@jwt_required()
+def two_factor_disable():
+    """Disable 2FA. Requires the account password to confirm."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    password = (request.get_json() or {}).get('password', '')
+    if not password or not check_password_hash(user.password_hash, password):
+        return jsonify({'error': 'Password confirmation required'}), 401
+
+    user.two_factor_enabled = False
+    user.two_factor_secret = None
+    user.two_factor_backup_codes = None
+    record_system_log('auth', f'{user.email} disabled two-factor auth', 'WARNING', user_id=user.id)
+    db.session.commit()
+    return jsonify({'ok': True, 'message': 'Two-factor authentication disabled'}), 200
+
 
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)

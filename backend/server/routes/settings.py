@@ -563,6 +563,110 @@ def get_subscription():
     }), 200
 
 
+# Plan tiers and the device/customer quotas each grants.
+SUBSCRIPTION_PLANS = {
+    'basic': {'label': 'Basic', 'max_devices': 10, 'max_customers': 100},
+    'pro': {'label': 'Pro', 'max_devices': 50, 'max_customers': 1000},
+    'enterprise': {'label': 'Enterprise', 'max_devices': 500, 'max_customers': 100000},
+}
+
+
+@settings_bp.route('/subscription', methods=['PUT'])
+@jwt_required()
+def update_subscription():
+    """Change the ISP's subscription tier (admin only) and apply its quotas."""
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    user = get_current_user()
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.get_json() or {}
+    plan = (data.get('plan') or '').strip().lower()
+    if plan not in SUBSCRIPTION_PLANS:
+        return jsonify({'error': 'Invalid plan', 'valid_plans': list(SUBSCRIPTION_PLANS)}), 400
+
+    tier = SUBSCRIPTION_PLANS[plan]
+    isp.subscription_plan = plan
+    isp.max_devices = tier['max_devices']
+    isp.max_customers = tier['max_customers']
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'message': f"Subscription changed to {tier['label']}",
+        'plan': isp.subscription_plan,
+        'plan_label': tier['label'],
+        'quotas': {'max_devices': isp.max_devices, 'max_customers': isp.max_customers},
+    }), 200
+
+
+@settings_bp.route('/plans', methods=['GET'])
+@jwt_required()
+def list_subscription_plans():
+    """Available subscription tiers (for the plan-change UI)."""
+    return jsonify({
+        'ok': True,
+        'plans': [
+            {'key': key, 'label': v['label'],
+             'max_devices': v['max_devices'], 'max_customers': v['max_customers']}
+            for key, v in SUBSCRIPTION_PLANS.items()
+        ],
+    }), 200
+
+
+@settings_bp.route('/logs', methods=['GET'])
+@jwt_required()
+def get_system_logs():
+    """Paginated system activity log (admin only)."""
+    from models import SystemLog, User
+    user = get_current_user()
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 25, type=int)
+    level = (request.args.get('level') or '').strip().upper()
+    log_type = (request.args.get('type') or '').strip().lower()
+    search = (request.args.get('search') or '').strip()
+
+    query = SystemLog.query
+    if level in ('INFO', 'WARNING', 'ERROR'):
+        query = query.filter(SystemLog.log_level == level)
+    if log_type:
+        query = query.filter(SystemLog.log_type == log_type)
+    if search:
+        query = query.filter(SystemLog.log_message.ilike(f'%{search}%'))
+
+    paginated = query.order_by(SystemLog.log_timestamp.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    users = {u.id: u for u in User.query.filter(
+        User.id.in_([r.user_id for r in paginated.items if r.user_id])
+    ).all()} if paginated.items else {}
+
+    def _row(r):
+        u = users.get(r.user_id)
+        return {
+            'id': r.id,
+            'type': r.log_type,
+            'message': r.log_message,
+            'level': r.log_level,
+            'timestamp': r.log_timestamp.isoformat() if r.log_timestamp else None,
+            'user': (f'{u.first_name} {u.last_name}'.strip() or u.email) if u else 'system',
+        }
+
+    return jsonify({
+        'ok': True,
+        'logs': [_row(r) for r in paginated.items],
+        'total': paginated.total,
+        'pages': paginated.pages,
+        'current_page': page,
+    }), 200
+
+
 # ---------------------------------------------------------------------------
 # Hotspot access codes (admin voucher generation)
 # ---------------------------------------------------------------------------

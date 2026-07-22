@@ -1,177 +1,140 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CreditCard, CheckCircle, AlertCircle, Download, Calendar } from 'lucide-react';
+import { CreditCard, Loader2, Check, Router, Users, Zap, ShieldCheck } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { subscriptionService } from '../../services/subscriptionService';
+import { useAuth } from '../../contexts/AuthContext';
 
-const BillingSubscriptionPage = () => {
-  const [currentPlan] = useState({
-    name: 'Professional Plan',
-    price: '$99/month',
-    status: 'active',
-    nextBilling: '2024-02-15'
-  });
+function UsageMeter({ icon: Icon, label, used, max, tone }) {
+  const pct = max > 0 ? Math.min(100, Math.round((used / max) * 100)) : 0;
+  const bar = pct >= 90 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-500' : 'bg-emerald-500';
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-3 flex items-center gap-2">
+        <div className={`rounded-lg p-2 ${tone}`}><Icon className="h-4 w-4" /></div>
+        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{label}</p>
+      </div>
+      <p className="text-2xl font-bold tabular-nums text-slate-900 dark:text-white">{used}<span className="text-base font-medium text-slate-400"> / {max}</span></p>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} /></div>
+      <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{pct}% of your plan limit used</p>
+    </div>
+  );
+}
 
-  const billingHistory = [
-    { id: 1, date: '2024-01-15', amount: '$99.00', status: 'Paid', invoice: 'INV-001' },
-    { id: 2, date: '2023-12-15', amount: '$99.00', status: 'Paid', invoice: 'INV-002' },
-    { id: 3, date: '2023-11-15', amount: '$99.00', status: 'Paid', invoice: 'INV-003' }
-  ];
+export default function BillingSubscriptionPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.is_admin === true;
+  const [sub, setSub] = useState(null);
+  const [plans, setPlans] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [changing, setChanging] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [subRes, planRes] = await Promise.all([
+        subscriptionService.getSubscription(),
+        subscriptionService.getPlans(),
+      ]);
+      if (subRes.success) setSub(subRes.data);
+      else toast.error(subRes.error || 'Failed to load subscription');
+      if (planRes.success) setPlans(planRes.data?.plans || []);
+    } catch (e) {
+      toast.error(e.message || 'Failed to load subscription');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const changePlan = async (planKey) => {
+    if (planKey === sub?.plan) return;
+    if (!window.confirm(`Change subscription to ${planKey}? This updates your device and customer limits.`)) return;
+    setChanging(planKey);
+    try {
+      const result = await subscriptionService.changePlan(planKey);
+      if (result.success) { toast.success(result.data?.message || 'Plan changed'); load(); }
+      else toast.error(result.error || result.data?.error || 'Change failed');
+    } catch (e) { toast.error(e.message || 'Change failed'); } finally { setChanging(null); }
+  };
+
+  const quotas = sub?.quotas || {};
 
   return (
     <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
-      <div className="max-w-6xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <div className="flex items-center space-x-3 mb-4">
-            <div className="p-3 bg-green-100 rounded-lg">
-              <CreditCard className="h-6 w-6 text-green-600" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Billing & Subscription</h1>
-              <p className="text-gray-600 mt-1">Manage your billing information and subscription plan</p>
-            </div>
+      <div className="mx-auto max-w-5xl">
+        <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-6 flex items-center gap-3">
+          <div className="rounded-xl bg-emerald-100 p-3 dark:bg-emerald-950/50"><CreditCard className="h-6 w-6 text-emerald-600 dark:text-emerald-300" /></div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl">Billing &amp; Subscription</h1>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Your plan tier, limits, and live usage.</p>
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Current Plan */}
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="lg:col-span-2"
-          >
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-6">Current Plan</h2>
-              
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-6 mb-6">
-                <div className="flex items-center justify-between mb-4">
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-24 text-slate-500"><Loader2 className="h-5 w-5 animate-spin" />Loading subscription…</div>
+        ) : (
+          <div className="space-y-6">
+            {/* Current plan */}
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="bg-gradient-to-r from-emerald-500/10 to-blue-500/10 p-6">
+                <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-900">{currentPlan.name}</h3>
-                    <p className="text-2xl font-bold text-blue-600">{currentPlan.price}</p>
-                  </div>
-                  <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    currentPlan.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                  }`}>
-                    {currentPlan.status === 'active' ? 'Active' : 'Inactive'}
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-2 text-gray-600 mb-4">
-                  <Calendar className="h-4 w-4" />
-                  <span className="text-sm">Next billing: {currentPlan.nextBilling}</span>
-                </div>
-                
-                <div className="flex space-x-3">
-                  <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                    Upgrade Plan
-                  </button>
-                  <button className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
-                    Cancel Subscription
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-
-          {/* Billing Info */}
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-          >
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-6">Billing Information</h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Payment Method</label>
-                  <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                    <CreditCard className="h-5 w-5 text-gray-600" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">•••• •••• •••• 4242</p>
-                      <p className="text-xs text-gray-500">Expires 12/25</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Current plan</p>
+                    <div className="mt-1 flex items-center gap-3">
+                      <h2 className="text-2xl font-bold text-slate-900 dark:text-white">{sub?.plan_label || '—'}</h2>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${sub?.is_active ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>{sub?.is_active ? 'Active' : 'Inactive'}</span>
                     </div>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      {quotas.max_devices} devices · {quotas.max_customers} customers · {sub?.currency || 'KES'}
+                    </p>
                   </div>
+                  <ShieldCheck className="h-12 w-12 text-emerald-500/40" />
                 </div>
-                
-                <button className="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
-                  Update Payment Method
-                </button>
+              </div>
+            </motion.div>
+
+            {/* Usage meters */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <UsageMeter icon={Router} label="Devices" used={quotas.device_count ?? 0} max={quotas.max_devices ?? 0} tone="bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300" />
+              <UsageMeter icon={Users} label="Customers" used={quotas.customer_count ?? 0} max={quotas.max_customers ?? 0} tone="bg-violet-100 text-violet-600 dark:bg-violet-950/50 dark:text-violet-300" />
+            </div>
+
+            {/* Plan tiers */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <h2 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">Available tiers</h2>
+              <p className="mb-5 text-sm text-slate-500 dark:text-slate-400">
+                {isAdmin ? 'Switch tiers to adjust your device and customer limits.' : 'Contact an admin to change your plan.'}
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {plans.map((p) => {
+                  const current = p.key === sub?.plan;
+                  return (
+                    <div key={p.key} className={`rounded-xl border p-5 ${current ? 'border-emerald-500 ring-1 ring-emerald-500/30' : 'border-slate-200 dark:border-slate-700'}`}>
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-semibold text-slate-900 dark:text-white">{p.label}</h3>
+                        {current && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400"><Check className="h-3.5 w-3.5" />Current</span>}
+                      </div>
+                      <ul className="mt-3 space-y-1.5 text-sm text-slate-600 dark:text-slate-300">
+                        <li className="flex items-center gap-2"><Router className="h-3.5 w-3.5 text-slate-400" />{p.max_devices} devices</li>
+                        <li className="flex items-center gap-2"><Users className="h-3.5 w-3.5 text-slate-400" />{p.max_customers.toLocaleString()} customers</li>
+                      </ul>
+                      {isAdmin && !current && (
+                        <button onClick={() => changePlan(p.key)} disabled={changing === p.key} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
+                          {changing === p.key ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}Switch
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </motion.div>
-        </div>
 
-        {/* Billing History */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mt-6"
-        >
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900">Billing History</h2>
-              <button className="flex items-center px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </button>
-            </div>
-            
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Invoice
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Amount
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {billingHistory.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {item.date}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {item.invoice}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {item.amount}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button className="text-blue-600 hover:text-blue-900">
-                          Download
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <p className="text-center text-xs text-slate-400">Platform billing is managed by your operator. Limits apply immediately when the tier changes.</p>
           </div>
-        </motion.div>
+        )}
       </div>
     </div>
   );
-};
-
-export default BillingSubscriptionPage;
+}

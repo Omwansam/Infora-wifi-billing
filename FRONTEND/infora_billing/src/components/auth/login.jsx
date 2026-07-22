@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import LumenLogo from '../brand/LumenLogo';
@@ -14,6 +14,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState(DEMO_MODE ? DEMO_CREDENTIALS.password : '');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [needsOtp, setNeedsOtp] = useState(false);
+  const [otp, setOtp] = useState('');
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -27,23 +29,31 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
+    if (needsOtp && !otp.trim()) {
+      toast.error('Enter your verification code');
+      setLoading(false);
+      return;
+    }
 
     try {
-      const result = await login(email, password);
+      const result = await login(email, password, needsOtp ? otp.trim() : undefined);
+
+      if (result.requires_2fa) {
+        setNeedsOtp(true);
+        toast('Enter the 6-digit code from your authenticator app', { icon: '🔐' });
+        setLoading(false);
+        return;
+      }
 
       if (result.success) {
         toast.success('Login successful!');
-
-        // Check if user is admin and redirect accordingly
         if (result.user.is_admin) {
-          // Admin users go to dashboard
           navigate('/', { replace: true });
         } else {
-          // Support users go to a different route (you can customize this)
           navigate('/clients', { replace: true });
         }
       } else {
-        toast.error(result.error || 'Login failed');
+        toast.error(result.error || (needsOtp ? 'Invalid verification code' : 'Login failed'));
       }
     } catch (error) {
       toast.error('Network error. Please check your connection.');
@@ -152,6 +162,35 @@ export default function LoginPage() {
               </div>
             </div>
 
+            {/* Two-factor code — shown after password when 2FA is enabled */}
+            {needsOtp && (
+              <div>
+                <label htmlFor="otp" className="block text-sm font-medium text-gray-700 mb-2">
+                  Verification code
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <ShieldCheck className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    id="otp"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
+                    autoFocus
+                    className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg tracking-[0.4em] font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    placeholder="123456"
+                    disabled={loading}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs text-gray-500">
+                  Enter the code from your authenticator app, or a backup code.
+                </p>
+              </div>
+            )}
+
             {/* Remember Me and Forgot Password */}
             <div className="flex items-center justify-between">
               <div className="flex items-center">
@@ -182,10 +221,10 @@ export default function LoginPage() {
               {loading ? (
                 <div className="flex items-center">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Signing In...
+                  {needsOtp ? 'Verifying...' : 'Signing In...'}
                 </div>
               ) : (
-                'Sign In'
+                needsOtp ? 'Verify & Sign In' : 'Sign In'
               )}
             </button>
           </form>

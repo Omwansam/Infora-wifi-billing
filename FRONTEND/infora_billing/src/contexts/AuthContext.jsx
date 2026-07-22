@@ -68,13 +68,22 @@ export const AuthProvider = ({ children }) => {
     return false;
   };
 
-  const login = async (email, password) => {
+  const login = async (email, password, otpCode) => {
     setLoading(true);
+
+    const body = { email, password };
+    if (otpCode) body.otp_code = otpCode;
 
     const result = await apiCall(API_ENDPOINTS.LOGIN, {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(body),
     });
+
+    // Backend asks for a second factor before issuing tokens.
+    if (result.success && result.data?.requires_2fa) {
+      setLoading(false);
+      return { success: false, requires_2fa: true };
+    }
 
     if (result.success && result.data.success) {
       const userData = {

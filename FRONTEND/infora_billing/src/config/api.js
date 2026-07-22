@@ -11,6 +11,11 @@ export const API_ENDPOINTS = {
   PROFILE: `${API_BASE_URL}/api/auth/profile`,
   CHANGE_PASSWORD: `${API_BASE_URL}/api/auth/change-password`,
   USERS: `${API_BASE_URL}/api/auth/users`,
+  authUser: (id) => `${API_BASE_URL}/api/auth/users/${id}`,
+  TWO_FACTOR_STATUS: `${API_BASE_URL}/api/auth/2fa/status`,
+  TWO_FACTOR_SETUP: `${API_BASE_URL}/api/auth/2fa/setup`,
+  TWO_FACTOR_VERIFY: `${API_BASE_URL}/api/auth/2fa/verify`,
+  TWO_FACTOR_DISABLE: `${API_BASE_URL}/api/auth/2fa/disable`,
   
   // Customer endpoints (RADIUS-aware via legacy hooks on /api/customers)
   CUSTOMERS: `${API_BASE_URL}/api/customers`,
@@ -71,6 +76,10 @@ export const API_ENDPOINTS = {
   SETTINGS_PORTAL: `${API_BASE_URL}/api/settings/portal`,
   SETTINGS_ANNOUNCEMENTS: `${API_BASE_URL}/api/settings/announcements`,
   SETTINGS_SUBSCRIPTION: `${API_BASE_URL}/api/settings/subscription`,
+  SETTINGS_SUBSCRIPTION_PLANS: `${API_BASE_URL}/api/settings/plans`,
+  SETTINGS_LOGS: `${API_BASE_URL}/api/settings/logs`,
+  SUPPORT_REQUESTS: `${API_BASE_URL}/api/support/requests`,
+  supportRequest: (id) => `${API_BASE_URL}/api/support/requests/${id}`,
   SETTINGS_PAYMENTS: `${API_BASE_URL}/api/settings/payments`,
   SETTINGS_RADIUS: `${API_BASE_URL}/api/settings/radius`,
   SETTINGS_RADIUS_NAS: `${API_BASE_URL}/api/settings/radius/nas`,
