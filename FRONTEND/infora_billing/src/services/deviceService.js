@@ -503,6 +503,59 @@ class DeviceService {
     }
     return data;
   }
+
+  /** Generate the dual-WAN .rsc for a (possibly unsaved) wan_config. */
+  async loadBalancingScript(token, deviceId, wanConfig) {
+    const response = await fetch(API_ENDPOINTS.deviceLoadBalancingScript(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify(wanConfig),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed (${response.status})`);
+    return data; // { script, remove_script, mode }
+  }
+
+  /** Download a .rsc string as a file client-side (used for dual-WAN scripts). */
+  downloadRsc(text, filename) {
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
+  /** Persist wan_config; push over the tunnel when apply=true. */
+  async configureLoadBalancing(token, deviceId, wanConfig, apply = false) {
+    const response = await fetch(API_ENDPOINTS.deviceConfigureLoadBalancing(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify({ wan_config: wanConfig, apply }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && response.status !== 502) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data;
+  }
+
+  /** Push the remove-by-comment teardown and mark the device single-WAN. */
+  async disableLoadBalancing(token, deviceId, apply = true) {
+    const response = await fetch(API_ENDPOINTS.deviceDisableLoadBalancing(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify({ apply }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && response.status !== 502) {
+      throw new Error(data.error || `Failed (${response.status})`);
+    }
+    return data;
+  }
 }
 
 export default new DeviceService();

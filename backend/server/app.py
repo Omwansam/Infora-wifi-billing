@@ -110,6 +110,7 @@ def ensure_schema_upgrades():
     table_additions = {
         'mikrotik_devices': {
             'monitored_interfaces': 'TEXT',
+            'wan_config': 'TEXT',
             'self_check_result': 'TEXT',
             'self_check_at': 'TIMESTAMP',
             'cpu_load': 'DOUBLE PRECISION',

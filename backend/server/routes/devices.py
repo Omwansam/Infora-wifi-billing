@@ -74,6 +74,7 @@ def serialize_device(device):
             'hdd_total': getattr(device, 'hdd_total', None),
             'hdd_free': getattr(device, 'hdd_free', None),
             'service_config': json.loads(device.service_config) if getattr(device, 'service_config', None) else None,
+            'wan_config': json.loads(device.wan_config) if getattr(device, 'wan_config', None) else None,
             'location': device.location,
             'notes': device.notes,
             'last_synced': device.last_synced.isoformat() if device.last_synced else None,
@@ -1046,6 +1047,92 @@ def device_configure_services(device_id):
         db.session.commit()
 
     return jsonify(result), (200 if result.get('success') else 502)
+
+
+def _lb_authz(device_id):
+    """Fetch the device and enforce ISP scoping; returns (device, error_response)."""
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return None, (jsonify({'error': 'Access denied'}), 403)
+    return device, None
+
+
+@devices_bp.route('/<int:device_id>/load-balancing/script', methods=['POST'])
+@jwt_required()
+def load_balancing_script(device_id):
+    """Generate the dual-WAN .rsc for a (possibly unsaved) wan_config — for the
+    Download button. Does not touch the router or persist anything."""
+    device, denied = _lb_authz(device_id)
+    if denied:
+        return denied
+    from services.load_balancing import validate_wan_config, build_lb_script, build_lb_remove_script
+
+    config, err = validate_wan_config(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({'error': err}), 400
+    return jsonify({
+        'ok': True,
+        'mode': config['mode'],
+        'script': build_lb_script(device, config),
+        'remove_script': build_lb_remove_script(device, config),
+    }), 200
+
+
+@devices_bp.route('/<int:device_id>/configure-load-balancing', methods=['POST'])
+@jwt_required()
+def configure_load_balancing(device_id):
+    """Validate + persist wan_config; push over the tunnel when apply=true."""
+    device, denied = _lb_authz(device_id)
+    if denied:
+        return denied
+    from services.load_balancing import validate_wan_config, build_lb_steps, push_lb_steps
+
+    payload = request.get_json(silent=True) or {}
+    apply_now = bool(payload.get('apply'))
+    config, err = validate_wan_config(payload.get('wan_config') or payload)
+    if err:
+        return jsonify({'error': err}), 400
+
+    result = {'ok': True, 'saved': True, 'applied': False, 'mode': config['mode']}
+    if apply_now and config['mode'] != 'off':
+        push = push_lb_steps(device, build_lb_steps(device, config))
+        result['applied'] = push['success']
+        result['log'] = push['log']
+        result['ok'] = push['success']
+
+    # Persist the chosen config unless a push failed (so the stored state matches
+    # the router). A save-only request (apply=false) always persists.
+    if result['ok']:
+        device.wan_config = json.dumps(config)
+        db.session.commit()
+        result['wan_config'] = config
+    return jsonify(result), (200 if result['ok'] else 502)
+
+
+@devices_bp.route('/<int:device_id>/load-balancing/disable', methods=['POST'])
+@jwt_required()
+def disable_load_balancing(device_id):
+    """Push the remove-by-comment teardown and mark wan_config off."""
+    device, denied = _lb_authz(device_id)
+    if denied:
+        return denied
+    from services.load_balancing import build_lb_remove_steps, push_lb_steps, validate_wan_config
+
+    payload = request.get_json(silent=True) or {}
+    apply_now = bool(payload.get('apply', True))
+    result = {'ok': True, 'applied': False}
+    if apply_now:
+        push = push_lb_steps(device, build_lb_remove_steps())
+        result['applied'] = push['success']
+        result['log'] = push['log']
+        result['ok'] = push['success']
+
+    if result['ok']:
+        off, _ = validate_wan_config({'mode': 'off'})
+        device.wan_config = json.dumps(off)
+        db.session.commit()
+    return jsonify(result), (200 if result['ok'] else 502)
 
 
 @devices_bp.route('/<int:device_id>/management-tunnel-script', methods=['GET'])

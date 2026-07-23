@@ -485,3 +485,157 @@ Nothing in the Infora document changes your design. It confirms the failover sub
 If the Infora system is something you're also building or will use to manage these routers, the practical implication is bigger: your app-steering config should be expressed as a third mode in that same generator, sharing the substrate and the comment= tagging, rather than as a separate hand-maintained script. Same rollback path, same idempotency, same UI.
 
 Which raises the question worth answering before I cut the RB5009 file: is Infora your billing system — the one whose maintenance took FreeRADIUS down — and do you want the production PBR config shaped to slot into that generator pattern, or delivered as a standalone .rsc like the lab one?
+
+
+The Name
+
+Application-Steered Dual-WAN with Recursive Failover — or in shorthand, App-Steered PBR.
+
+If you want something shorter for internal use: Selective WAN Steering. If you want it to sit alongside the Infora modes (off / failover / load-balance), call it app_steer mode — that's the naming that lets it slot into the same generator as a fourth option.
+
+The Explanation (short version)
+
+You have two internet lines. Instead of splitting traffic randomly between them, you decide which apps use which line — and if either line dies, the other picks up its work automatically.
+
+That's it. Three sentences longer:
+
+What it does. Normal browsing goes out ISP1. WhatsApp, Facebook and Instagram go out ISP2. If ISP2 dies, those apps quietly fall back to ISP1. If ISP1 dies, everything falls back to ISP2. When either line recovers, traffic returns to where it belongs — no manual intervention, ever.
+
+How it decides. Meta owns its own network (AS32934), so the router recognises WhatsApp/Facebook/Instagram simply by destination IP — no deep inspection, no CPU cost, works even with encrypted traffic and QUIC. There's a second lever too: a whole subscriber can be assigned to ISP2 (all their traffic, not just Meta), which RADIUS sets automatically per customer.
+
+How it fails over. Not by scripts watching things and flipping switches — by the routing engine itself. Each line has a "canary" IP pinned to it; if the router can't reach that canary through that line, the routing table withdraws the route and the backup takes over. Monitoring exists only to write logs, never to change routing. That separation is what makes it trustworthy.
+
+Why the name matters
+
+"Load balancing" is the wrong word for this and will mislead anyone you hand it to — load balancing means spreading traffic to get more bandwidth, and this design deliberately doesn't do that. It sends specific traffic to a specific line for policy reasons: cost, quality, contention, or because ISP2 is a cheaper social-media bundle. The bandwidth is a side effect, not the goal.
+
+Steering is the honest word: you're directing named traffic to a chosen path. Pair it with recursive failover (the routing technique) and you have a name that tells a network engineer exactly what's inside without them reading a line of config.
+
+One-line elevator version, if you need to explain it to a non-technical stakeholder: "Social apps ride the second line, everything else rides the main line, and either line covers for the other automatically."
+
+i can implement the 2 differently thea user can choose the type of script  to download and use in loadbalancing
+
+That's the right call, and it's the same conclusion the Infora doc reached independently (§0: one feature, three modes). You'd be adding a fourth. The reason it works is that the two scripts aren't really two different things — they're one substrate with a swappable classifier:
+
+SHARED SUBSTRATE (identical in every mode)
+  ├─ reclaim the WAN2 port / define both uplinks
+  ├─ per-WAN masquerade (never a blanket rule)
+  ├─ probe /32 host routes per WAN
+  ├─ recursive defaults, distance-ordered, check-gateway=ping
+  ├─ per-WAN routing tables
+  ├─ netwatch = logging + safe recovery only
+  └─ comment-tagged, idempotent, remove-by-comment rollback
+
+CLASSIFIER (this is the ONLY part that changes)
+  ├─ mode: failover      → no classifier at all
+  ├─ mode: load_balance  → PCC hash on new connections
+  └─ mode: app_steer     → Meta address-list + ISP2-SUBS subscriber list
+
+So in the UI it's a single dropdown, and in the backend it's one generator with a branch at the classifier step — not two codebases to maintain. That matters, because the substrate is where all the hard-won correctness lives (the escaped-script format, the DHCP lease script, the blackhole lesson, the MSS clamp) and you don't want two copies of it drifting apart.
+
+Three things that differ per mode and must be handled in the generator, not left to the operator:
+
+FastTrack. Load-balance mode must strip it entirely (PCC needs every packet). App-steer mode keeps it, constrained to connection-mark=no-mark, so unmarked traffic stays accelerated. Failover-only can leave it fully on. Getting this wrong is the classic "works for ten seconds then traffic goes out the wrong WAN" bug — so the generator should set it, not a checkbox.
+
+Ratio vs. lists. Load-balance needs weights (PCC bucket math from the two link speeds). App-steer needs the Meta prefix list and the subscriber address-list name. Different config fields entirely — the UI should swap the form when the mode changes rather than showing both.
+
+What "ISP2 down" means. In load-balance, losing a WAN means the survivor carries everything at reduced capacity. In app-steer, it means Meta traffic silently rejoins ISP1 and nobody notices. Worth saying differently in the UI copy, because operators will ask.
+
+One thing to carry across all modes regardless of classifier — the lessons your outage taught: the management/RADIUS tunnel route must be interface-bound (gateway=ovpn-out1), never a standing blackhole that can outlive the outage it was covering; embedded scripts must be escaped single-line strings, never {} blocks; and MSS clamping is mandatory on any PPPoE WAN. Those belong in the substrate, so every mode inherits them.
+
+If you want, I can write the app_steer script as a clean, parameterised template — same shape as the Infora {{placeholder}} style, so it drops straight into a generator alongside their failover/load-balance templates rather than being a hand-maintained one-off. That would give you all three modes sharing one substrate and one rollback path.
+
+Before that though — your lab router is still sitting with ISP1 down on test/test and a polluted route table, and real subscribers on it. Worth closing that out first so the template you generate is one you've actually validated end to end. Which do you want to do: finish the lab (settle ISP1, clean routes, run the two failover drills), or draft the parameterised app_steer template now while the design is fresh?
+
+---
+
+## 15. The mode switch — one feature, pick your method (implementation design)
+
+This section turns §0 + the classifier discussion above into the concrete **UI switch +
+data + generator** design: how the operator **chooses the load-balancing method and
+downloads (or applies) the matching `.rsc`**. It supersedes the loose ends in §9.
+
+### 15.1 The modes — one enum, a swappable classifier
+
+`wan_config.mode` has four values. The two the operator will call "load balancing" are
+`load_balance` and `app_steer`; `failover` and `off` round out the switch.
+
+| mode | classifier | what it's for | FastTrack (generator sets this, not a checkbox) |
+|---|---|---|---|
+| `off` | — | single-WAN, today's behaviour (default) | left on |
+| `failover` | none | second line = hot standby | left on |
+| `load_balance` | **PCC** hash on new conns | aggregate throughput, many clients | **removed** (PCC needs every packet) |
+| `app_steer` | **Meta AS32934 address-list + `ISP2-SUBS` subscriber list** | send named apps / whole subscribers to ISP2 | **kept**, constrained to `connection-mark=no-mark` |
+
+All four share the **substrate** (§4/§5), which is where every hard-won correctness lives:
+reclaim the WAN2 port, per-WAN masquerade (never blanket), `/32` probe routes, recursive
+distance-ordered defaults with `check-gateway=ping`, per-WAN routing tables, netwatch =
+logging/recovery only, **interface-bound** tunnel route (not a standing blackhole — the
+outage lesson), MSS clamp on any PPPoE WAN, escaped single-line embedded scripts, and
+`comment="infora-lb"` idempotency + remove-by-comment rollback. **The classifier is the only
+branch.**
+
+### 15.2 Where the switch lives
+
+Load balancing is **per-router** (each device has its own two uplinks), so the switch belongs
+on the device — not a global on/off:
+
+- **Primary — a `DualWanPanel` on the Device Detail page**, a new card/tab beside *Configure
+  Services* (same page, same mental model). The **first control is a mode dropdown**
+  (`Off · Failover only · Load balance · App steering`). Changing it **swaps the form below**
+  (§15.3) and the generated script. Two actions, mirroring Configure services:
+  **`Download .rsc`** (the "choose the type of script to download" the operator asked for —
+  parameterised by the selected mode) and **`Apply now`** (push over the WG tunnel). Plus a
+  **`Disable`** that pushes the remove-by-comment rollback.
+- **Optional — a "Load Balancing" sidebar entry** under *Network*: a fleet table
+  (`router · mode · WAN1/WAN2 up-down · active default · last flip`) with each row deep-linking
+  into that device's DualWanPanel. It's an overview + jump-off, **not** a second place to set
+  the mode — the switch stays per-device so there's one source of truth.
+
+**Recommendation:** ship the per-device panel first (it *is* the switch); add the sidebar
+overview together with the dual-WAN health card (§10) in a later pass.
+
+### 15.3 The form swaps with the mode (don't show fields a mode doesn't use)
+
+- **Common to every non-`off` mode:** WAN1 & WAN2 `port` + `type` (`dhcp|static|pppoe`, with
+  `ip`/`gateway` when static), `primary_wan`, `probe_hosts`, and an advanced
+  `pin_management_to` (null | wan1 | wan2).
+- **`load_balance` adds:** WAN1/WAN2 **weights** → PCC bucket math (§8). No lists.
+- **`app_steer` adds:** the **Meta prefix source** (AS32934, auto-populated address-list) and
+  the **subscriber steer list name** (`ISP2-SUBS`, which RADIUS can fill per customer). No
+  weights.
+- **`failover`:** no classifier fields at all.
+
+The panel swaps the form on mode change so weights and lists never show together.
+
+### 15.4 The generator — one builder, one branch at the classifier
+
+`build_load_balancing_script(device, config)` in
+[`services/provisioning_scripts.py`](backend/server/services/provisioning_scripts.py) (pure,
+v6/v7-aware, `infora-lb`-tagged, unit-testable like the existing builders):
+
+1. Emit the **substrate** (§5.1, §5.3, §5.4).
+2. `mode == 'load_balance'` → append PCC mangle (§5.2) **and strip FastTrack**.
+3. `mode == 'app_steer'` → append Meta/subscriber address-list mangle **and** re-assert
+   FastTrack with `connection-mark=no-mark` (keeps the 95% unmarked traffic accelerated).
+4. `mode == 'failover'` → no classifier (keep only inbound/reply stickiness).
+5. `off` / `Disable` → the remove-by-comment rollback (§11).
+
+Data + routes are as in §9 — `wan_config.mode` simply gains `app_steer`; the three endpoints
+(`GET …/load-balancing-script`, `POST …/configure-load-balancing`,
+`POST …/load-balancing/disable`) are unchanged. **Download .rsc** = the GET endpoint with the
+chosen `mode`.
+
+### 15.5 UI copy that changes with the mode (operators will ask "what happens if ISP2 dies?")
+
+- `load_balance`: "Both lines share traffic; if one drops, the other carries everyone at reduced speed."
+- `app_steer`: "Named apps / subscribers ride ISP2; if ISP2 drops they quietly rejoin ISP1 — nobody notices."
+- `failover`: "ISP2 is a hot standby — it only carries traffic when ISP1 is down."
+
+### 15.6 Build order
+
+1. Substrate + `failover` + `load_balance` generator, `DualWanPanel` with the mode dropdown and
+   **Download .rsc** (copy-paste delivery). Lowest risk, covers the common asks.
+2. **Apply now** (push over tunnel) + `Disable`, and the `app_steer` classifier (Meta list +
+   `ISP2-SUBS`, RADIUS-driven subscriber steering).
+3. Sidebar overview + dual-WAN health card + netwatch notifications + PPPoE-WAN.

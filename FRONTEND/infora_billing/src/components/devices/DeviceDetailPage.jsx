@@ -14,6 +14,7 @@ import { uptimeLabel } from '../../lib/deviceUtils';
 import { formatDate } from '../../lib/utils';
 import DeviceStatusBadge from './DeviceStatusBadge';
 import ConfigureServicesPanel from './ConfigureServicesPanel';
+import DualWanPanel from './DualWanPanel';
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -458,6 +459,8 @@ export default function DeviceDetailPage() {
             </div>
 
             <ConfigureServicesPanel deviceId={id} initial={svc} onApplied={load} />
+
+            <DualWanPanel deviceId={id} device={device} onApplied={load} />
           </div>
         )}
       </div>

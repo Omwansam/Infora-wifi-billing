@@ -380,6 +380,8 @@ class MikrotikDevice(db.Model):
     provision_fetch_count = db.Column(db.Integer, default=0, nullable=False)
     # JSON blob of applied service config (pppoe/hotspot/bridge ports/subnet)
     service_config = db.Column(db.Text, nullable=True)
+    # JSON blob of dual-WAN load-balancing / failover config (see services.load_balancing)
+    wan_config = db.Column(db.Text, nullable=True)
     # JSON list of interface names the operator chose to monitor (wizard Ports step)
     monitored_interfaces = db.Column(db.Text, nullable=True)
     # Cached result of the last configuration self-check (JSON) + when it ran
