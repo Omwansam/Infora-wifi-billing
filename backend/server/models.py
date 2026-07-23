@@ -1968,13 +1968,18 @@ class WebsiteInquiry(db.Model):
     phone = db.Column(db.String(30), nullable=True)
     inquiry_type = db.Column(db.String(50), nullable=True)
     message = db.Column(db.Text, nullable=True)
+    # name= must match the existing Postgres type names, otherwise Alembic
+    # autogenerate keeps detecting a phantom type change (websiteinquirysource
+    # vs website_inquiry_source) and emits an uncastable ALTER TYPE.
     source = db.Column(
-        db.Enum(WebsiteInquirySource, values_callable=lambda x: [e.value for e in x]),
+        db.Enum(WebsiteInquirySource, name='website_inquiry_source',
+                values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=WebsiteInquirySource.CONTACT,
     )
     status = db.Column(
-        db.Enum(WebsiteInquiryStatus, values_callable=lambda x: [e.value for e in x]),
+        db.Enum(WebsiteInquiryStatus, name='website_inquiry_status',
+                values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=WebsiteInquiryStatus.NEW,
     )

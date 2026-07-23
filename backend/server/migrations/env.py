@@ -94,6 +94,38 @@ def run_migrations_online():
     if conf_args.get("process_revision_directives") is None:
         conf_args["process_revision_directives"] = process_revision_directives
 
+    # Objects autogenerate must ignore so `flask db migrate` produces clean
+    # diffs (this project evolves schema via app.ensure_schema_upgrades, not
+    # Alembic autogenerate):
+    #  - partial unique indexes created at boot (not in model metadata), and
+    #  - settings one-to-one uniqueness that the DB stores as a named unique
+    #    CONSTRAINT while the model expresses it as a unique INDEX — ignoring
+    #    both representations keeps the DB's constraints (uniqueness preserved)
+    #    instead of proposing an unsafe drop/swap.
+    _IGNORED_INDEXES = {
+        'uq_customers_isp_radius_login',
+        'uq_customers_isp_account_number',
+        'ix_api_settings_isp_id',
+        'ix_payment_settings_isp_id',
+        'ix_radius_config_isp_id',
+    }
+    _IGNORED_CONSTRAINTS = {
+        'uq_api_key_token',
+        'uq_api_settings_isp',
+        'uq_payment_settings_isp',
+        'uq_radius_config_isp',
+    }
+
+    def include_object(obj, name, type_, reflected, compare_to):
+        if type_ == 'index' and name in _IGNORED_INDEXES:
+            return False
+        if type_ == 'unique_constraint' and name in _IGNORED_CONSTRAINTS:
+            return False
+        return True
+
+    if conf_args.get("include_object") is None:
+        conf_args["include_object"] = include_object
+
     connectable = get_engine()
 
     with connectable.connect() as connection:
