@@ -115,36 +115,50 @@ def _pcc_buckets(w1, w2):
     return [('WAN1_conn' if i < w1 else 'WAN2_conn', total, i) for i in range(total)]
 
 
-def _addr_route_cmds(wan_key, gw, table, probe, ros7):
-    """Gateway-dependent routes for one WAN: the marked-table default + the /32
-    probe route. Returned as bare `/ip route add …` command strings so they can be
-    emitted directly (static) or wrapped in a DHCP lease script (dhcp)."""
-    table_opt = f'routing-table={table}' if ros7 else f'routing-mark={table}'
+def _tbl(name, ros7):
+    return f'routing-table={name}' if ros7 else f'routing-mark={name}'
+
+
+def _addr_route_cmds(wan_key, gw, own_table, other_table, probe, ros7):
+    """Gateway-dependent routes contributed by one WAN's gateway:
+
+    * its own routing table's **primary** default (distance 1),
+    * the **other** table's **backup** default (distance 2) — so PCC/steered
+      traffic pinned to the other WAN fails over here when that WAN dies,
+    * its ``/32`` probe route (for the main-table recursive default).
+
+    Returned as bare ``/ip route add …`` strings so they're emitted directly
+    (static) or wrapped into the DHCP lease script (dhcp)."""
     n = '1' if wan_key == 'wan1' else '2'
     return [
-        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {table_opt} '
-        f'check-gateway=ping comment="{LB_COMMENT}-gw{n}"',
+        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(own_table, ros7)} '
+        f'distance=1 check-gateway=ping comment="{LB_COMMENT}-gw{n}"',
+        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(other_table, ros7)} '
+        f'distance=2 check-gateway=ping comment="{LB_COMMENT}-bk{n}"',
         f'/ip route add dst-address={probe}/32 gateway={gw} scope=10 '
         f'comment="{LB_COMMENT}-probe{n}"',
     ]
 
 
-def _lease_script(wan_key, table, probe, ros7):
-    """Single-line DHCP-client script: (re)build this WAN's gateway-dependent
-    routes whenever the lease binds, using the learned $"gateway-address"."""
+def _lease_script(wan_key, own_table, other_table, probe, ros7):
+    """Single-line DHCP-client script: rebuild this WAN's three gateway-dependent
+    routes (own primary, other-table backup, probe) on every lease bind using the
+    learned $"gateway-address"."""
     n = '1' if wan_key == 'wan1' else '2'
-    table_opt = f'routing-table={table}' if ros7 else f'routing-mark={table}'
-    body = (
+    gw = '\\$\\"gateway-address\\"'
+    return (
         f':if (\\$bound=1) do={{'
-        f' /ip route remove [find comment=\\"{LB_COMMENT}-gw{n}\\"];'
-        f' /ip route remove [find comment=\\"{LB_COMMENT}-probe{n}\\"];'
-        f' /ip route add dst-address=0.0.0.0/0 gateway=\\$\\"gateway-address\\" {table_opt}'
-        f' check-gateway=ping comment=\\"{LB_COMMENT}-gw{n}\\";'
-        f' /ip route add dst-address={probe}/32 gateway=\\$\\"gateway-address\\" scope=10'
+        f' /ip route remove [find comment~\\"{LB_COMMENT}-gw{n}\\"];'
+        f' /ip route remove [find comment~\\"{LB_COMMENT}-bk{n}\\"];'
+        f' /ip route remove [find comment~\\"{LB_COMMENT}-probe{n}\\"];'
+        f' /ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(own_table, ros7)}'
+        f' distance=1 check-gateway=ping comment=\\"{LB_COMMENT}-gw{n}\\";'
+        f' /ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(other_table, ros7)}'
+        f' distance=2 check-gateway=ping comment=\\"{LB_COMMENT}-bk{n}\\";'
+        f' /ip route add dst-address={probe}/32 gateway={gw} scope=10'
         f' comment=\\"{LB_COMMENT}-probe{n}\\"'
         f' }}'
     )
-    return body
 
 
 def build_lb_steps(device, config):
@@ -178,12 +192,17 @@ def build_lb_steps(device, config):
     # --- 2. WAN addressing (static address / dhcp client) ---------------------
     add('wan-addr-reset', f':do {{/ip address remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
     add('dhcp-reset', f':do {{/ip dhcp-client remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
-    for key, wan, table, probe in (('wan1', w1, 'to_WAN1', p1), ('wan2', w2, 'to_WAN2', p2)):
+    # (own_table, other_table) so each WAN also seeds the other table's backup.
+    wan_plan = (
+        ('wan1', w1, 'to_WAN1', 'to_WAN2', p1),
+        ('wan2', w2, 'to_WAN2', 'to_WAN1', p2),
+    )
+    for key, wan, own_tbl, other_tbl, probe in wan_plan:
         if wan['type'] == 'static':
             add(f'{key}-addr',
                 f'/ip address add interface={wan["port"]} address={wan["ip"]} comment="{LB_COMMENT}"')
         elif wan['type'] == 'dhcp':
-            script = _lease_script(key, table, probe, ros7)
+            script = _lease_script(key, own_tbl, other_tbl, probe, ros7)
             add(f'{key}-dhcp',
                 f'/ip dhcp-client add interface={wan["port"]} add-default-route=no '
                 f'use-peer-dns=no comment="{LB_COMMENT}" script="{script}"')
@@ -194,13 +213,25 @@ def build_lb_steps(device, config):
         add('table-wan2', f':do {{/routing table add name=to_WAN2 fib comment="{LB_COMMENT}"}} on-error={{}}')
 
     # --- 4. Gateway-dependent routes: static emits directly; dhcp via lease ----
-    for key, wan, table, probe in (('wan1', w1, 'to_WAN1', p1), ('wan2', w2, 'to_WAN2', p2)):
+    for key, wan, own_tbl, other_tbl, probe in wan_plan:
         if wan['type'] == 'static':
-            for i, cmd in enumerate(_addr_route_cmds(key, wan['gateway'], table, probe, ros7)):
+            for i, cmd in enumerate(_addr_route_cmds(key, wan['gateway'], own_tbl, other_tbl, probe, ros7)):
                 add(f'{key}-route{i}', cmd)
 
-    # --- 5. Recursive, distance-ordered main defaults (failover core) ----------
-    #     Reached via the /32 probe routes above → detects UPSTREAM outages.
+    # --- 5. Probe blackholes (safety net, proven in the field) -----------------
+    #     Each probe /32 has a real route via its WAN gateway (distance 1). Pair
+    #     it with a high-distance blackhole so that if the WAN drops and the real
+    #     route goes inactive, the probe is DROPPED here — it can't leak out the
+    #     surviving WAN and falsely report the dead one healthy. distance=250 >> 1
+    #     means the real route always wins the instant it returns (no shadowing).
+    for probe in (p1, p2):
+        add(f'blackhole-{probe}',
+            f'/ip route add dst-address={probe}/32 type=blackhole distance=250 '
+            f'scope=10 comment="{LB_COMMENT}"')
+
+    # --- 6. Recursive, distance-ordered main defaults (failover core) ----------
+    #     Reached via the /32 probe routes → detects UPSTREAM outages, not just a
+    #     dead local gateway.
     d1, d2 = (1, 2) if primary_is_1 else (2, 1)
     add('main-default-1',
         f'/ip route add dst-address=0.0.0.0/0 gateway={p1} distance={d1} '

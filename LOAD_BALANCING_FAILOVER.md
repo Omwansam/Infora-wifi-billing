@@ -632,6 +632,27 @@ chosen `mode`.
 - `app_steer`: "Named apps / subscribers ride ISP2; if ISP2 drops they quietly rejoin ISP1 — nobody notices."
 - `failover`: "ISP2 is a hot standby — it only carries traffic when ISP1 is down."
 
+### 15.7 As-built refinements (from lab review — the generator does these)
+
+Reviewing the generated `.rsc` against the lab lessons surfaced two gaps in the §5 template
+that `services/load_balancing.py` now closes:
+
+- **Probe blackholes (leak-proof detection).** Each probe `/32` (via its WAN gateway,
+  distance 1) is paired with a **`type=blackhole distance=250 scope=10`** route. If a WAN
+  drops and its real probe route goes inactive, the probe is dropped here instead of leaking
+  out the surviving WAN and falsely reporting the dead WAN healthy. `distance=250 ≫ 1` means
+  the real route wins the instant it returns — no shadowing (the RADIUS-outage lesson).
+- **Per-marked-table failover.** §5.3 gave each marked table a single gateway, so PCC/steered
+  traffic pinned to a dead WAN would have no route (a marked table doesn't fall through to
+  `main` in v7). Each WAN's gateway now also seeds the **other** table's **backup default**
+  (`distance=2`, `check-gateway=ping`): `to_WAN1 = {GW1 d1, GW2 d2}`,
+  `to_WAN2 = {GW2 d1, GW1 d2}`. LAN traffic now fails over too. For DHCP WANs the lease
+  script maintains all three routes (own primary, other-table backup, probe) on each bind.
+
+Still using direct-gateway `check-gateway` for the marked tables (local-gateway failover),
+matching §5.3; **upstream** detection for marked LAN traffic (recursive marked defaults) is a
+candidate refinement pending lab validation of v7 recursion-table semantics.
+
 ### 15.6 Build order
 
 1. Substrate + `failover` + `load_balance` generator, `DualWanPanel` with the mode dropdown and
