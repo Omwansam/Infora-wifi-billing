@@ -607,57 +607,108 @@ def _subnet_params(subnet):
     }
 
 
+VALID_PORT_ROLES = ('hotspot', 'pppoe', 'both')
+
+
+def derive_port_roles(opts):
+    """Normalise opts into {interface: role} with role in hotspot|pppoe|both.
+
+    Prefers the new ``port_roles`` map; falls back to the legacy
+    ``bridge_ports`` + ``pppoe``/``hotspot`` shape (all bridged ports take the
+    combined/only role that was selected) so old stored configs and older
+    clients keep working.
+    """
+    roles = opts.get('port_roles')
+    if isinstance(roles, dict) and roles:
+        out = {}
+        for iface, role in roles.items():
+            r = (role or '').strip().lower()
+            if iface and r in VALID_PORT_ROLES:
+                out[iface] = r
+        return out
+
+    ports = [p for p in (opts.get('bridge_ports') or []) if p]
+    has_pppoe = bool(opts.get('pppoe'))
+    has_hotspot = bool(opts.get('hotspot'))
+    role = 'both' if (has_pppoe and has_hotspot) else 'pppoe' if has_pppoe else 'hotspot' if has_hotspot else None
+    return {p: role for p in ports} if role else {}
+
+
 def build_services_commands(opts):
     """Build the ordered (label, RouterOS-CLI) steps for service configuration.
 
-    opts: dict with keys pppoe, hotspot, anti_sharing, bridge_ports (list),
-    subnet (str). All commands are idempotent (remove-by-comment, then add).
+    opts keys: ``port_roles`` ({iface: hotspot|pppoe|both}; skip = omitted),
+    ``anti_sharing``, ``subnet``. Legacy ``pppoe``/``hotspot``/``bridge_ports``
+    are still accepted (see :func:`derive_port_roles`).
+
+    Isolated-per-role topology:
+      * Hotspot / Both ports  → members of the hotspot bridge (DHCP + captive portal).
+      * PPPoE (only) ports    → a PPPoE server bound to that *raw* port, no DHCP.
+      * Both ports            → also reachable by a PPPoE server bound to the bridge.
+    All commands are idempotent (remove-by-comment/name, then add).
     """
     params = _subnet_params(opts.get('subnet') or DEFAULT_SUBNET)
-    ports = [p for p in (opts.get('bridge_ports') or []) if p]
+    roles = derive_port_roles(opts)
+
+    hotspot_ports = [p for p, r in roles.items() if r in ('hotspot', 'both')]
+    pppoe_only_ports = [p for p, r in roles.items() if r == 'pppoe']
+    both_ports = [p for p, r in roles.items() if r == 'both']
+    run_hotspot = bool(hotspot_ports)
+    run_pppoe = bool(pppoe_only_ports) or bool(both_ports)
+
+    # Expose the derived plan for the summary / persisted service_config.
+    params['hotspot_ports'] = hotspot_ports
+    params['pppoe_only_ports'] = pppoe_only_ports
+    params['both_ports'] = both_ports
+    params['run_hotspot'] = run_hotspot
+    params['run_pppoe'] = run_pppoe
+
     steps = []
 
-    # 1. Bridge
-    steps.append((
-        'bridge',
-        f':if ([:len [/interface bridge find name={BRIDGE_NAME}]]=0) do={{'
-        f'/interface bridge add name={BRIDGE_NAME} comment="infora-billing"}}',
-    ))
+    # 1. Bridge (only needed when some port joins it — hotspot/both).
+    if run_hotspot:
+        steps.append((
+            'bridge',
+            f':if ([:len [/interface bridge find name={BRIDGE_NAME}]]=0) do={{'
+            f'/interface bridge add name={BRIDGE_NAME} comment="infora-billing"}}',
+        ))
 
-    # 2. Bridge ports (skip uplink — caller must not include it)
-    for port in ports:
+    # 2. Reset our managed bridge memberships, then add the hotspot/both ports.
+    #    Removing by comment first makes role changes (hotspot→pppoe/skip) stick.
+    steps.append((
+        'bridge-reset',
+        ':do {/interface bridge port remove [find comment="infora"]} on-error={}',
+    ))
+    for port in hotspot_ports:
         steps.append((
             f'bridge-port:{port}',
             f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}; '
-            f'/interface bridge port add bridge={BRIDGE_NAME} interface={port}',
+            f'/interface bridge port add bridge={BRIDGE_NAME} interface={port} comment="infora"',
         ))
 
-    # 3. Bridge IP address
-    steps.append((
-        'address',
-        f':do {{/ip address remove [find comment="infora-billing"]}} on-error={{}}; '
-        f'/ip address add address={params["gateway_cidr"]} interface={BRIDGE_NAME} comment="infora-billing"',
-    ))
+    # 3-5. Bridge IP + DHCP only when the hotspot bridge is in use.
+    if run_hotspot:
+        steps.append((
+            'address',
+            f':do {{/ip address remove [find comment="infora-billing"]}} on-error={{}}; '
+            f'/ip address add address={params["gateway_cidr"]} interface={BRIDGE_NAME} comment="infora-billing"',
+        ))
+        steps.append((
+            'pool',
+            f':do {{/ip pool remove [find name={POOL_NAME}]}} on-error={{}}; '
+            f'/ip pool add name={POOL_NAME} ranges={params["pool_range"]}',
+        ))
+        steps.append((
+            'dhcp',
+            f':do {{/ip dhcp-server remove [find name={DHCP_NAME}]}} on-error={{}}; '
+            f'/ip dhcp-server add name={DHCP_NAME} interface={BRIDGE_NAME} address-pool={POOL_NAME} disabled=no; '
+            f':do {{/ip dhcp-server network remove [find address={params["subnet"]}]}} on-error={{}}; '
+            f'/ip dhcp-server network add address={params["subnet"]} gateway={params["gateway"]} dns-server=8.8.8.8,1.1.1.1',
+        ))
 
-    # 4. IP pool
-    steps.append((
-        'pool',
-        f':do {{/ip pool remove [find name={POOL_NAME}]}} on-error={{}}; '
-        f'/ip pool add name={POOL_NAME} ranges={params["pool_range"]}',
-    ))
-
-    # 5. DHCP server + network
-    steps.append((
-        'dhcp',
-        f':do {{/ip dhcp-server remove [find name={DHCP_NAME}]}} on-error={{}}; '
-        f'/ip dhcp-server add name={DHCP_NAME} interface={BRIDGE_NAME} address-pool={POOL_NAME} disabled=no; '
-        f':do {{/ip dhcp-server network remove [find address={params["subnet"]}]}} on-error={{}}; '
-        f'/ip dhcp-server network add address={params["subnet"]} gateway={params["gateway"]} dns-server=8.8.8.8,1.1.1.1',
-    ))
-
-    # 6. PPPoE server — dedicated pool + profile so every session gets an
-    # address even when RADIUS replies carry no Framed-IP-Address.
-    if opts.get('pppoe'):
+    # 6. PPPoE — dedicated pool + profile, then one server per raw pppoe-only
+    #    port (no DHCP there) plus a bridge-bound server when 'both' ports exist.
+    if run_pppoe:
         steps.append((
             'pppoe-pool',
             f':do {{/ip pool remove [find name={PPPOE_POOL_NAME}]}} on-error={{}}; '
@@ -669,16 +720,30 @@ def build_services_commands(opts):
             f'/ppp profile add name={PPPOE_PROFILE_NAME} local-address={params["gateway"]} '
             f'remote-address={PPPOE_POOL_NAME} dns-server=8.8.8.8,1.1.1.1 use-encryption=no',
         ))
+        # Clear every prior infora pppoe-server before re-adding the current set.
         steps.append((
-            'pppoe',
+            'pppoe-reset',
             ':do {/interface pppoe-server server remove [find service-name=infora]} on-error={}; '
-            f'/interface pppoe-server server add service-name=infora interface={BRIDGE_NAME} '
-            f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no; '
             '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
         ))
+        for port in pppoe_only_ports:
+            steps.append((
+                f'pppoe:{port}',
+                # A raw interface can't be a bridge member and a PPPoE server
+                # interface at once — free it from the bridge first.
+                f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}; '
+                f'/interface pppoe-server server add service-name=infora interface={port} '
+                f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no',
+            ))
+        if both_ports:
+            steps.append((
+                'pppoe:bridge',
+                f'/interface pppoe-server server add service-name=infora interface={BRIDGE_NAME} '
+                f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no',
+            ))
 
-    # 7. Hotspot (profile + server using RADIUS)
-    if opts.get('hotspot'):
+    # 7. Hotspot (profile + server using RADIUS) on the bridge.
+    if run_hotspot:
         shared = '1' if opts.get('anti_sharing') else '3'
         steps.append((
             'hotspot',
@@ -714,7 +779,7 @@ def build_services_commands(opts):
             ))
 
     # 8. Hotspot anti-sharing (fix TTL so devices behind a shared NAT are detectable)
-    if opts.get('hotspot') and opts.get('anti_sharing'):
+    if run_hotspot and opts.get('anti_sharing'):
         steps.append((
             'anti-sharing',
             ':do {/ip firewall mangle remove [find comment="infora-anti-sharing"]} on-error={}; '
@@ -864,8 +929,10 @@ def configure_services(device, opts):
     from services.portal_urls import portal_hostnames, public_base_url, is_router_reachable_base
 
     isp = ISP.query.get(device.isp_id) if device.isp_id else None
+    roles = derive_port_roles(opts)
+    wants_hotspot = any(r in ('hotspot', 'both') for r in roles.values())
     portal_warning = None
-    if opts.get('hotspot'):
+    if wants_hotspot:
         if not opts.get('walled_garden_hosts'):
             opts['walled_garden_hosts'] = portal_hostnames(isp)
         base = public_base_url()
@@ -917,12 +984,17 @@ def configure_services(device, opts):
         'detail': 'Configuration complete.' if success else 'Configuration completed with errors.',
     })
 
+    services = []
+    if params.get('run_hotspot'):
+        services.append('Hotspot')
+    if params.get('run_pppoe'):
+        services.append('PPPoE')
     summary = {
-        'services': [s for s in ('PPPoE' if opts.get('pppoe') else None,
-                                 'Hotspot' if opts.get('hotspot') else None) if s],
-        'ports': [p for p in (opts.get('bridge_ports') or []) if p],
+        'services': services,
+        'ports': sorted(set(params.get('hotspot_ports', []) + params.get('pppoe_only_ports', []))),
+        'port_roles': roles,
         'subnet': params['subnet'],
         'gateway': params['gateway'],
-        'anti_sharing': bool(opts.get('hotspot') and opts.get('anti_sharing')),
+        'anti_sharing': bool(params.get('run_hotspot') and opts.get('anti_sharing')),
     }
     return {'success': success, 'log': log, 'summary': summary}

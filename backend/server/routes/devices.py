@@ -1029,6 +1029,9 @@ def device_configure_services(device_id):
 
     payload = request.get_json(silent=True) or {}
     opts = {
+        # New per-interface roles ({iface: hotspot|pppoe|both}); build_services_commands
+        # falls back to the legacy keys below when this is absent.
+        'port_roles': payload.get('port_roles') if isinstance(payload.get('port_roles'), dict) else None,
         'pppoe': bool(payload.get('pppoe')),
         'hotspot': bool(payload.get('hotspot')),
         'anti_sharing': bool(payload.get('anti_sharing')),

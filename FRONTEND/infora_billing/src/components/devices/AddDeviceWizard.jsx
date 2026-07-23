@@ -45,6 +45,14 @@ const PHYSICAL_KINDS = ['ether', 'sfp', 'wlan'];
 const SUBNET_RE = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
 const DEFAULT_SUBNET = '172.31.0.0/16';
 
+// Per-interface service role options (Step 4).
+const PORT_ROLES = [
+  { value: 'skip', label: '— Skip —' },
+  { value: 'hotspot', label: 'Hotspot' },
+  { value: 'pppoe', label: 'PPPoE' },
+  { value: 'both', label: 'Both (Hotspot + PPPoE)' },
+];
+
 export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
@@ -75,12 +83,10 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
   const [togglingPort, setTogglingPort] = useState(null);
   const [savingPorts, setSavingPorts] = useState(false);
 
-  // Step 4 — services
+  // Step 4 — services (per-interface roles: { ether2: 'hotspot'|'pppoe'|'both'|'skip' })
   const [serviceForm, setServiceForm] = useState({
-    pppoe: true,
-    hotspot: false,
+    port_roles: {},
     anti_sharing: false,
-    bridge_ports: [],
     subnet: DEFAULT_SUBNET,
   });
   const [useCustomSubnet, setUseCustomSubnet] = useState(false);
@@ -155,9 +161,13 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
       );
       setServiceForm((prev) => ({
         ...prev,
-        bridge_ports: data.interfaces
-          .filter((i) => i.kind === 'ether' && !i.is_uplink)
-          .map((i) => i.name),
+        // Default every non-uplink ethernet port to "both" (parity with the old
+        // behaviour where all LAN ports ran both services) unless already chosen.
+        port_roles: Object.fromEntries(
+          data.interfaces
+            .filter((i) => i.kind === 'ether' && !i.is_uplink)
+            .map((i) => [i.name, prev.port_roles[i.name] || 'both'])
+        ),
       }));
     } catch (e) {
       setIfaceError(e.message || 'Could not read interfaces');
@@ -295,18 +305,17 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
     }
   };
 
-  const toggleBridgePort = (name) => {
-    setServiceForm((prev) => {
-      const set = new Set(prev.bridge_ports);
-      if (set.has(name)) set.delete(name);
-      else set.add(name);
-      return { ...prev, bridge_ports: Array.from(set) };
-    });
-  };
+  const setPortRole = (name, role) =>
+    setServiceForm((prev) => ({ ...prev, port_roles: { ...prev.port_roles, [name]: role } }));
+
+  const anyHotspotRole = Object.values(serviceForm.port_roles).some((r) => r === 'hotspot' || r === 'both');
 
   const handleApplyServices = async () => {
-    if (!serviceForm.pppoe && !serviceForm.hotspot) {
-      toast.error('Select at least one service (PPPoE or Hotspot)');
+    const roles = Object.fromEntries(
+      Object.entries(serviceForm.port_roles).filter(([, r]) => r && r !== 'skip')
+    );
+    if (Object.keys(roles).length === 0) {
+      toast.error('Assign at least one port to Hotspot, PPPoE, or Both');
       return;
     }
     const subnet = useCustomSubnet ? serviceForm.subnet.trim() : DEFAULT_SUBNET;
@@ -318,10 +327,8 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
     try {
       const token = getAccessToken();
       const opts = {
-        pppoe: serviceForm.pppoe,
-        hotspot: serviceForm.hotspot,
-        anti_sharing: serviceForm.hotspot && serviceForm.anti_sharing,
-        bridge_ports: serviceForm.bridge_ports,
+        port_roles: roles,
+        anti_sharing: anyHotspotRole && serviceForm.anti_sharing,
         subnet,
       };
       const res = await deviceService.configureServices(token, createdDevice.id, opts);
@@ -902,40 +909,67 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
               {step === 4 && (
                 <motion.div key="step-4" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-6">
                   <div>
-                    <p className="text-base font-semibold text-gray-900">Service types</p>
-                    <p className="text-sm text-gray-500 mb-3">Choose what this router should run for subscribers.</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => handleServiceChange('pppoe', !serviceForm.pppoe)}
-                        className={`text-left flex items-start gap-3 p-4 rounded-xl border-2 transition-colors ${
-                          serviceForm.pppoe ? 'border-orange-500 bg-orange-50' : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-orange-100 text-orange-700 text-xs font-bold shrink-0">PPP</div>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-gray-900">PPPoE</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Always-on broadband subscribers</p>
-                        </div>
-                        {serviceForm.pppoe && <Check className="h-4 w-4 text-orange-600 shrink-0" />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleServiceChange('hotspot', !serviceForm.hotspot)}
-                        className={`text-left flex items-start gap-3 p-4 rounded-xl border-2 transition-colors ${
-                          serviceForm.hotspot ? 'border-orange-500 bg-orange-50' : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-orange-100 text-orange-700 text-xs font-bold shrink-0">HS</div>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-gray-900">Hotspot</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Captive portal &amp; vouchers</p>
-                        </div>
-                        {serviceForm.hotspot && <Check className="h-4 w-4 text-orange-600 shrink-0" />}
-                      </button>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-base font-semibold text-gray-900 flex items-center gap-1.5">
+                        <Cable className="h-4 w-4 text-gray-500" /> Bridge &amp; service assignment
+                      </p>
+                      {loadingIfaces && <Loader2 className="h-4 w-4 text-gray-400 animate-spin" />}
                     </div>
+                    <p className="text-sm text-gray-500 mb-3">
+                      Assign each port a role: <strong>Hotspot</strong> joins the captive-portal bridge,
+                      {' '}<strong>PPPoE</strong> runs a dial-up server on that port (no DHCP),
+                      {' '}<strong>Both</strong> allows either.
+                    </p>
 
-                    {serviceForm.hotspot && (
+                    {etherInterfaces.some((i) => i.is_uplink) && (
+                      <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-xs text-amber-800 mb-3">
+                        <Info className="h-3.5 w-3.5 inline mr-1 -mt-0.5" />
+                        The <strong>uplink / WAN</strong> port (internet feed) is hidden — it is never assigned to a service.
+                      </div>
+                    )}
+
+                    {ifaceError ? (
+                      <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-500">
+                        Interfaces will be read once the router is online. You can still apply config — the uplink is left untouched.
+                      </div>
+                    ) : etherInterfaces.filter((i) => !i.is_uplink).length === 0 && !loadingIfaces ? (
+                      <p className="text-xs text-gray-400">No assignable ethernet interfaces detected yet.</p>
+                    ) : (
+                      <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                        <div className="hidden sm:flex items-center px-4 py-2 bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                          <span className="flex-1">Interface</span>
+                          <span className="w-24">Status</span>
+                          <span className="w-56">Assign to</span>
+                        </div>
+                        {etherInterfaces.filter((i) => !i.is_uplink).map((iface) => {
+                          const role = serviceForm.port_roles[iface.name] || 'skip';
+                          const active = iface.running && !iface.disabled;
+                          return (
+                            <div key={iface.name} className="flex flex-col sm:flex-row sm:items-center gap-2 px-4 py-3">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <Network className="h-4 w-4 text-gray-400 shrink-0" />
+                                <span className="font-mono font-medium text-gray-800">{iface.name}</span>
+                              </div>
+                              <div className="w-24 flex items-center gap-1.5 text-xs shrink-0">
+                                <span className={`h-2 w-2 rounded-full ${active ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                                <span className="text-gray-500">{iface.disabled ? 'Disabled' : iface.running ? 'Active' : 'Inactive'}</span>
+                              </div>
+                              <select
+                                value={role}
+                                onChange={(e) => setPortRole(iface.name, e.target.value)}
+                                className="sm:w-56 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                              >
+                                {PORT_ROLES.map((r) => (
+                                  <option key={r.value} value={r.value}>{r.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {anyHotspotRole && (
                       <label className={`mt-3 flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer ${
                         serviceForm.anti_sharing ? 'border-rose-400 bg-rose-50' : 'border-gray-200'
                       }`}>
@@ -952,67 +986,6 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                           </p>
                         </div>
                       </label>
-                    )}
-                  </div>
-
-                  {/* Bridge ports */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-base font-semibold text-gray-900 flex items-center gap-1.5">
-                        <Cable className="h-4 w-4 text-gray-500" /> Bridge ports
-                      </p>
-                      {loadingIfaces && <Loader2 className="h-4 w-4 text-gray-400 animate-spin" />}
-                    </div>
-                    <p className="text-sm text-gray-500 mb-3">Interfaces that join the infora-bridge for subscriber traffic.</p>
-
-                    <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-xs text-amber-800 mb-3">
-                      <Info className="h-3.5 w-3.5 inline mr-1 -mt-0.5" />
-                      <strong>Don&apos;t bridge the uplink port.</strong> The first port (usually ether1) is the
-                      internet feed — adding it cuts off WAN. Leave it unticked.
-                    </div>
-
-                    {ifaceError ? (
-                      <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-500">
-                        Interfaces will be read once the router is online. You can still apply config — the uplink is left untouched.
-                      </div>
-                    ) : etherInterfaces.length === 0 && !loadingIfaces ? (
-                      <p className="text-xs text-gray-400">No ethernet interfaces detected yet.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {etherInterfaces.map((iface) => {
-                          const selected = serviceForm.bridge_ports.includes(iface.name);
-                          return (
-                            <button
-                              type="button"
-                              key={iface.name}
-                              onClick={() => !iface.is_uplink && toggleBridgePort(iface.name)}
-                              disabled={iface.is_uplink}
-                              className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm transition-colors ${
-                                iface.is_uplink
-                                  ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
-                                  : selected
-                                    ? 'border-orange-500 bg-orange-50'
-                                    : 'border-gray-200 hover:border-gray-300'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className={`h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                                  selected ? 'border-orange-500 bg-orange-500' : 'border-gray-300'
-                                }`}>
-                                  {selected && <Check className="h-2.5 w-2.5 text-white" />}
-                                </span>
-                                <span className="font-mono font-medium text-gray-800">{iface.name}</span>
-                                {iface.is_uplink && (
-                                  <span className="text-[10px] uppercase tracking-wide text-orange-500 font-semibold ml-1">uplink / wan</span>
-                                )}
-                              </div>
-                              <span className="text-xs text-gray-400">
-                                {iface.is_uplink ? 'Leave unticked — internet feed' : 'Add to infora-bridge'}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
                     )}
                   </div>
 
