@@ -63,6 +63,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       PROVISION_BASE_URL: ${PROVISION_BASE_URL:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Captive-portal SPA origin. MUST be passed here — otherwise the container
+      # inherits the base compose's dev default (http://localhost:5173) and the
+      # hotspot login page redirects to an address phones can't reach (blank).
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-}
       ROUTER_TIMEZONE: ${ROUTER_TIMEZONE:-Africa/Nairobi}
       LOGO_UPLOAD_DIR: /app/uploads/logos
       MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}
