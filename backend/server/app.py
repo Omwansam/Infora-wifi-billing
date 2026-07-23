@@ -120,6 +120,14 @@ def ensure_schema_upgrades():
         },
         'customers': {
             'fup_throttled': 'BOOLEAN DEFAULT FALSE NOT NULL',
+            # Migration/identity: operator login decoupled from email + stable
+            # customer-facing account number (see radius_provisioning).
+            'radius_login': 'VARCHAR(120)',
+            'account_number': 'VARCHAR(40)',
+        },
+        'isps': {
+            'account_number_prefix': 'VARCHAR(12)',
+            'account_number_seq': 'INTEGER DEFAULT 100000',
         },
         'users': {
             'two_factor_enabled': 'BOOLEAN DEFAULT FALSE NOT NULL',
@@ -138,12 +146,69 @@ def ensure_schema_upgrades():
                 for column, ddl in missing.items():
                     conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {ddl}'))
             app.logger.info('Schema upgrade: added %s columns %s', table, ', '.join(missing))
+
+        # Email is now optional (login no longer derives from it). Drop the
+        # legacy NOT NULL if it's still there. Idempotent.
+        try:
+            email_col = next(
+                (c for c in inspector.get_columns('customers') if c['name'] == 'email'),
+                None,
+            )
+            if email_col is not None and not email_col.get('nullable', True):
+                with db.engine.begin() as conn:
+                    conn.execute(text('ALTER TABLE customers ALTER COLUMN email DROP NOT NULL'))
+                app.logger.info('Schema upgrade: customers.email is now nullable')
+        except Exception as exc:
+            app.logger.warning('Schema upgrade (email nullable) skipped: %s', exc)
+
+        # Per-ISP uniqueness for the decoupled login and the account number.
+        # Partial unique indexes so many NULLs coexist. IF NOT EXISTS => idempotent.
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                'CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_isp_radius_login '
+                'ON customers (isp_id, lower(radius_login)) WHERE radius_login IS NOT NULL'
+            ))
+            conn.execute(text(
+                'CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_isp_account_number '
+                'ON customers (isp_id, account_number) WHERE account_number IS NOT NULL'
+            ))
     except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
         app.logger.warning('Schema upgrade check skipped: %s', exc)
 
 
+def backfill_account_numbers():
+    """Assign account numbers to any customers that predate the column.
+
+    Idempotent: only touches rows where account_number IS NULL, so after the
+    first successful run subsequent boots are no-ops.
+    """
+    try:
+        from models import Customer, ISP
+        from services.radius_provisioning import ensure_account_number
+        pending = Customer.query.filter(Customer.account_number.is_(None)).all()
+        if not pending:
+            return
+        isp_cache = {}
+        for customer in pending:
+            if not customer.isp_id:
+                continue
+            isp = isp_cache.get(customer.isp_id)
+            if isp is None:
+                isp = ISP.query.get(customer.isp_id)
+                isp_cache[customer.isp_id] = isp
+            if isp is None:
+                continue
+            ensure_account_number(customer, isp)
+        db.session.commit()
+        app.logger.info('Backfilled account numbers for %d customers', len(pending))
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.warning('Account-number backfill skipped: %s', exc)
+
+
 with app.app_context():
     ensure_schema_upgrades()
+    backfill_account_numbers()
 
 
 @app.before_request

@@ -1,5 +1,5 @@
 import { API_ENDPOINTS } from '../config/api';
-import { authenticatedApiCall } from '../utils/api';
+import { authenticatedApiCall, authenticatedApiCallText } from '../utils/api';
 import { getAccessToken } from '../utils/authToken';
 
 export const customerService = {
@@ -123,6 +123,31 @@ export const customerService = {
   async getCustomerStats() {
     const url = `${API_ENDPOINTS.CUSTOMERS}/stats`;
     return authenticatedApiCall(url, getAccessToken());
+  },
+
+  /**
+   * Bulk-import subscribers from another billing system. Pass raw CSV text
+   * (dryRun=true previews without writing; dryRun=false commits).
+   */
+  async importCustomers({ csv, rows, dryRun = true, defaultStatus, planMap, createPlans } = {}) {
+    const url = `${API_ENDPOINTS.CUSTOMERS}/import`;
+    return authenticatedApiCall(url, getAccessToken(), {
+      method: 'POST',
+      body: JSON.stringify({
+        csv,
+        rows,
+        dry_run: dryRun,
+        default_status: defaultStatus,
+        plan_map: planMap,
+        create_plans: createPlans,
+      }),
+    });
+  },
+
+  /** Fetch the import CSV template as text (for a client-side download). */
+  async getImportTemplate() {
+    const url = `${API_ENDPOINTS.CUSTOMERS}/import/template`;
+    return authenticatedApiCallText(url, getAccessToken());
   },
 
   async getActiveSessions(params = {}) {

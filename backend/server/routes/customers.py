@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_
 from extensions import db
@@ -14,6 +14,8 @@ from services.radius_provisioning import (
     get_customer_radius_password,
     radius_username,
     sync_customer_radius_status,
+    ensure_account_number,
+    find_customer_by_login,
 )
 import secrets
 
@@ -76,7 +78,9 @@ def serialize_customer(customer):
             'subscription_start': customer.subscription_start.isoformat() if customer.subscription_start else None,
             'subscription_end': customer.subscription_end.isoformat() if customer.subscription_end else None,
             'connection_type': customer.connection_type or 'pppoe',
-            'radius_username': customer.email.strip().lower() if customer.email else None,
+            'radius_login': customer.radius_login,
+            'account_number': customer.account_number,
+            'radius_username': radius_username(customer) or None,
             'wireguard_peer': _serialize_wireguard_peer(customer),
             'service_plan': {
                 'id': customer.service_plan.id,
@@ -91,6 +95,8 @@ def serialize_customer(customer):
             'id': customer.id,
             'name': customer.full_name,
             'email': customer.email,
+            'radius_login': getattr(customer, 'radius_login', None),
+            'account_number': getattr(customer, 'account_number', None),
             'phone': customer.phone,
             'address': customer.address,
             'status': customer.status.value if customer.status else 'active',
@@ -277,26 +283,28 @@ def get_active_online_sessions():
         customer_ids = {r.customer_id for r in records if r.customer_id}
         usernames = {(r.username or '').strip().lower() for r in records if r.username}
         customers_by_id = {}
+        # Keyed by the effective RADIUS username (radius_login, else email) so it
+        # matches the radacct username regardless of which handle the client uses.
         customers_by_email = {}
         if customer_ids or usernames:
+            username_match = or_(
+                db.func.lower(Customer.email).in_(list(usernames)),
+                db.func.lower(Customer.radius_login).in_(list(usernames)),
+            )
             customer_query = Customer.query
             if customer_ids and usernames:
                 customer_query = customer_query.filter(
-                    or_(
-                        Customer.id.in_(customer_ids),
-                        db.func.lower(Customer.email).in_(list(usernames)),
-                    )
+                    or_(Customer.id.in_(customer_ids), username_match)
                 )
             elif customer_ids:
                 customer_query = customer_query.filter(Customer.id.in_(customer_ids))
             else:
-                customer_query = customer_query.filter(
-                    db.func.lower(Customer.email).in_(list(usernames))
-                )
+                customer_query = customer_query.filter(username_match)
             for customer in customer_query.all():
                 customers_by_id[customer.id] = customer
-                if customer.email:
-                    customers_by_email[customer.email.strip().lower()] = customer
+                key = radius_username(customer)
+                if key:
+                    customers_by_email[key] = customer
 
         device_ids = {r.mikrotik_device_id for r in records if r.mikrotik_device_id}
         nas_ips = {r.nasipaddress for r in records if r.nasipaddress}
@@ -375,22 +383,34 @@ def create_customer():
     """Create a new customer"""
     try:
         data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ['name', 'email', 'phone']
+
+        # Validate required fields. Email is optional now that the connection
+        # login is decoupled from it; name + phone remain required.
+        required_fields = ['name', 'phone']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field} is required'}), 400
-        
-        # Check if email already exists
-        if Customer.query.filter_by(email=data['email']).first():
-            return jsonify({'error': 'Email already registered'}), 409
-        
-        # Create customer
-        status = CustomerStatus(data.get('status', 'active')) if data.get('status') else CustomerStatus.ACTIVE
+
         isp = _resolve_isp_for_user()
         if not isp:
             return jsonify({'error': 'No ISP context — assign user to an ISP or create an ISP first'}), 400
+
+        email = (data.get('email') or '').strip().lower() or None
+        radius_login = (data.get('radius_login') or '').strip().lower() or None
+
+        # A client needs at least one login handle.
+        if not email and not radius_login:
+            return jsonify({'error': 'Provide an email or a connection username (radius_login)'}), 400
+
+        # Uniqueness: email is globally unique when present; radius_login is
+        # unique per ISP.
+        if email and Customer.query.filter_by(email=email).first():
+            return jsonify({'error': 'Email already registered'}), 409
+        if radius_login and find_customer_by_login(radius_login, isp_id=isp.id):
+            return jsonify({'error': 'Connection username already in use'}), 409
+
+        # Create customer
+        status = CustomerStatus(data.get('status', 'active')) if data.get('status') else CustomerStatus.ACTIVE
 
         plan = _resolve_plan_for_customer(data, isp)
         package_name = plan.name if plan else data.get('package', 'Basic WiFi')
@@ -411,7 +431,8 @@ def create_customer():
 
         customer = Customer(
             full_name=data['name'],
-            email=data['email'].strip().lower(),
+            email=email,
+            radius_login=radius_login,
             phone=data['phone'],
             address=data.get('address'),
             status=status,
@@ -431,6 +452,9 @@ def create_customer():
 
         db.session.add(customer)
         db.session.flush()
+
+        # Stable, customer-facing account number (also the M-Pesa reference).
+        ensure_account_number(customer, isp, preferred=data.get('account_number'))
 
         generated_password = None
         radius_provisioned = False
@@ -473,6 +497,74 @@ def create_customer():
         db.session.rollback()
         return jsonify({'error': f'Failed to create customer: {str(e)}'}), 500
 
+@customers_bp.route('/import/template', methods=['GET'])
+@jwt_required()
+def download_import_template():
+    """Download the client-import CSV template (header + sample rows)."""
+    from services.customer_import import build_template_csv
+    return Response(
+        build_template_csv(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=infora_client_import_template.csv'},
+    )
+
+
+@customers_bp.route('/import', methods=['POST'])
+@jwt_required()
+def import_customers():
+    """Bulk-import subscribers from another billing system.
+
+    Accepts either a multipart CSV upload (field ``file``) or a JSON body
+    ``{"rows": [...], "dry_run": true}`` (``rows`` may instead be raw CSV text
+    under ``csv``). ``dry_run`` defaults to true — it validates and previews
+    without writing; pass ``dry_run=false`` to commit.
+    """
+    from services.customer_import import parse_csv, process_import
+
+    isp = _resolve_isp_for_user()
+    if not isp:
+        return jsonify({'error': 'No ISP context — assign user to an ISP or create an ISP first'}), 400
+
+    plan_map = None
+    create_plans = None
+    auto_create_plans = True
+    if 'file' in request.files:
+        try:
+            rows = parse_csv(request.files['file'].read())
+        except Exception as exc:
+            return jsonify({'error': f'Could not parse CSV: {exc}'}), 400
+        dry_run = (request.form.get('dry_run', 'true').strip().lower() != 'false')
+        default_status = (request.form.get('default_status') or 'active').strip().lower()
+    else:
+        data = request.get_json(silent=True) or {}
+        rows = data.get('rows')
+        if rows is None and data.get('csv'):
+            rows = parse_csv(data['csv'])
+        dry_run = bool(data.get('dry_run', True))
+        default_status = (data.get('default_status') or 'active').strip().lower()
+        plan_map = data.get('plan_map') if isinstance(data.get('plan_map'), dict) else None
+        create_plans = data.get('create_plans') if isinstance(data.get('create_plans'), list) else None
+        if 'auto_create_plans' in data:
+            auto_create_plans = bool(data.get('auto_create_plans'))
+
+    if not rows:
+        return jsonify({'error': 'No rows to import (empty file or body)'}), 400
+    if not isinstance(rows, list):
+        return jsonify({'error': 'rows must be a list'}), 400
+
+    try:
+        summary = process_import(
+            isp, rows, dry_run=dry_run, default_status=default_status,
+            plan_map=plan_map, create_plans=create_plans,
+            auto_create_plans=auto_create_plans,
+        )
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'error': f'Import failed: {exc}'}), 500
+
+    return jsonify(summary), 200
+
+
 @customers_bp.route('/<int:customer_id>', methods=['PUT'])
 @jwt_required()
 def update_customer(customer_id):
@@ -481,16 +573,39 @@ def update_customer(customer_id):
         customer = Customer.query.get_or_404(customer_id)
         data = request.get_json()
         old_status = customer.status
+        # Capture the login before any change so we can clean up stale RADIUS
+        # rows if the username effectively changes.
+        old_username = radius_username(customer)
 
         # Update fields
         if 'name' in data:
             customer.full_name = data['name']
         if 'email' in data:
-            # Check if email is already taken by another customer
-            existing_customer = Customer.query.filter_by(email=data['email']).first()
-            if existing_customer and existing_customer.id != customer.id:
-                return jsonify({'error': 'Email already taken'}), 409
-            customer.email = data['email'].strip().lower()
+            new_email = (data['email'] or '').strip().lower() or None
+            if new_email:
+                existing_customer = Customer.query.filter_by(email=new_email).first()
+                if existing_customer and existing_customer.id != customer.id:
+                    return jsonify({'error': 'Email already taken'}), 409
+            customer.email = new_email
+        if 'radius_login' in data:
+            new_login = (data['radius_login'] or '').strip().lower() or None
+            if new_login:
+                clash = find_customer_by_login(new_login, isp_id=customer.isp_id)
+                if clash and clash.id != customer.id:
+                    return jsonify({'error': 'Connection username already in use'}), 409
+            customer.radius_login = new_login
+        # Guard the login invariant after applying email/radius_login edits.
+        if not customer.email and not customer.radius_login:
+            return jsonify({'error': 'Client must keep an email or a connection username'}), 400
+        if 'account_number' in data:
+            new_acct = (data['account_number'] or '').strip() or None
+            if new_acct and new_acct != customer.account_number:
+                clash = Customer.query.filter_by(
+                    account_number=new_acct, isp_id=customer.isp_id
+                ).first()
+                if clash and clash.id != customer.id:
+                    return jsonify({'error': 'Account number already in use'}), 409
+            customer.account_number = new_acct
         if 'phone' in data:
             customer.phone = data['phone']
         if 'address' in data:
@@ -509,7 +624,17 @@ def update_customer(customer_id):
             if plan:
                 customer.package = plan.name
 
-        if customer.status != old_status or 'service_plan_id' in data:
+        new_username = radius_username(customer)
+        login_changed = new_username != old_username
+
+        # If the login changed, the old radcheck/radreply/radusergroup rows are
+        # keyed under the old username and must be removed before re-provisioning
+        # under the new one.
+        if login_changed and customer.isp_id:
+            from services.radius_provisioning import delete_radius_rows_for_username
+            delete_radius_rows_for_username(old_username, customer.isp_id)
+
+        if customer.status != old_status or 'service_plan_id' in data or login_changed:
             sync_customer_radius_status(customer, old_status=old_status)
 
         db.session.commit()

@@ -13,6 +13,8 @@ import {
   Phone,
   MapPin,
   ShieldCheck,
+  AtSign,
+  KeyRound,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
 import { getActivePlans } from '../../services/planService';
@@ -91,11 +93,14 @@ export default function ClientForm() {
   const [form, setForm] = useState({
     name: '',
     email: '',
+    radius_login: '',
     phone: '',
     address: '',
     service_plan_id: '',
     connection_type: 'pppoe',
     connect_on_create: true,
+    auto_password: true,
+    password: '',
   });
   const [loading, setLoading] = useState(false);
   const [credentials, setCredentials] = useState(null);
@@ -130,25 +135,39 @@ export default function ClientForm() {
       toast.error('Select a package');
       return;
     }
+    const login = form.radius_login.trim();
+    const email = form.email.trim();
+    if (!login && !email) {
+      toast.error('Enter a connection username or an email');
+      return;
+    }
+    if (!form.auto_password && !form.password.trim()) {
+      toast.error('Enter a password or switch to auto-generate');
+      return;
+    }
     setLoading(true);
     try {
       const result = await customerService.createCustomer({
         name: form.name,
-        email: form.email,
+        email: email || undefined,
+        radius_login: login || undefined,
         phone: form.phone,
         address: form.address,
         service_plan_id: Number(form.service_plan_id),
         package: selectedPlan?.name,
         connection_type: 'pppoe',
         status: form.connect_on_create ? 'active' : 'pending',
+        password: form.auto_password ? undefined : form.password.trim(),
       });
       if (result.success) {
         const data = result.data;
-        const pwd = data.radius_password;
+        const pwd = data.radius_password || (!form.auto_password ? form.password.trim() : '');
+        const username = data.customer?.radius_username || login.toLowerCase() || email.toLowerCase();
         if (pwd && form.connect_on_create && data.radius_provisioned) {
           setCredentials({
-            username: form.email.toLowerCase(),
+            username,
             password: pwd,
+            account_number: data.customer?.account_number,
             speed: selectedPlan?.speed,
             plan: selectedPlan?.name,
           });
@@ -174,8 +193,9 @@ export default function ClientForm() {
 
   const copyCreds = async () => {
     if (!credentials) return;
+    const acct = credentials.account_number ? `\nAccount no: ${credentials.account_number}` : '';
     await navigator.clipboard.writeText(
-      `Username: ${credentials.username}\nPassword: ${credentials.password}`
+      `Username: ${credentials.username}\nPassword: ${credentials.password}${acct}`
     );
     setCopied(true);
     toast.success('Copied to clipboard');
@@ -222,6 +242,14 @@ export default function ClientForm() {
                     </dt>
                     <dd className="font-mono text-slate-900 mt-1">{credentials.password}</dd>
                   </div>
+                  {credentials.account_number && (
+                    <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                      <dt className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide">
+                        Account number (M-Pesa reference)
+                      </dt>
+                      <dd className="font-mono text-slate-900 mt-1">{credentials.account_number}</dd>
+                    </div>
+                  )}
                   {credentials.speed && (
                     <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
                       <dt className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide">
@@ -356,21 +384,69 @@ export default function ClientForm() {
                   />
                 </div>
               </div>
-              <div className="md:col-span-2">
-                <FieldLabel required>Email (PPPoE username)</FieldLabel>
+              <div>
+                <FieldLabel>Connection username</FieldLabel>
+                <div className="relative">
+                  <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    name="radius_login"
+                    value={form.radius_login}
+                    onChange={onInput}
+                    placeholder="Eg. jane_wanjiku"
+                    autoCapitalize="none"
+                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  The PPPoE dial-up login. Leave blank to use the email instead.
+                </p>
+              </div>
+              <div>
+                <FieldLabel>Email</FieldLabel>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <input
                     name="email"
                     type="email"
-                    required
                     value={form.email}
                     onChange={onInput}
-                    placeholder="subscriber@example.com"
+                    placeholder="subscriber@example.com (optional)"
                     className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
-                <p className="text-xs text-slate-500 mt-2">Used as the dial-up login on MikroTik / RADIUS.</p>
+                <p className="text-xs text-slate-500 mt-2">
+                  Optional — used as the login only if no username is set. Editable later.
+                </p>
+              </div>
+              <div className="md:col-span-2">
+                <FieldLabel>Connection password</FieldLabel>
+                <div className="flex flex-col gap-3">
+                  <SwitchToggle
+                    checked={form.auto_password}
+                    onChange={(v) => setField('auto_password', v)}
+                    label={
+                      <span className="text-sm text-slate-700">
+                        Auto-generate a secure password
+                      </span>
+                    }
+                  />
+                  {!form.auto_password && (
+                    <div className="relative max-w-md">
+                      <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                      <input
+                        name="password"
+                        value={form.password}
+                        onChange={onInput}
+                        placeholder="Set the subscriber's password"
+                        autoCapitalize="none"
+                        className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-500">
+                    This is also the subscriber&rsquo;s portal login password.
+                  </p>
+                </div>
               </div>
               <div className="md:col-span-2">
                 <FieldLabel>Installation address</FieldLabel>

@@ -861,19 +861,33 @@ def configure_services(device, opts):
     on router-side failures — the log captures what happened for the UI.
     """
     from models import ISP
-    from services.portal_urls import portal_hostnames, public_base_url
+    from services.portal_urls import portal_hostnames, public_base_url, is_router_reachable_base
 
     isp = ISP.query.get(device.isp_id) if device.isp_id else None
+    portal_warning = None
     if opts.get('hotspot'):
         if not opts.get('walled_garden_hosts'):
             opts['walled_garden_hosts'] = portal_hostnames(isp)
         base = public_base_url()
         if base and isp and not opts.get('captive_redirect_fetch_url'):
-            opts['captive_redirect_fetch_url'] = (
-                f'{base}/api/portal/captive-redirect?isp_id={isp.id}&router_id={device.id}'
-            )
+            if is_router_reachable_base(base):
+                opts['captive_redirect_fetch_url'] = (
+                    f'{base}/api/portal/captive-redirect?isp_id={isp.id}&router_id={device.id}'
+                )
+            else:
+                # A loopback/dev base can't be fetched by the router, so the
+                # hotspot login page would come out blank. Don't push a doomed
+                # fetch — surface the real fix instead.
+                portal_warning = (
+                    f'Captive portal base URL "{base}" is not reachable from the router. '
+                    'Set PUBLIC_BASE_URL (API) and PORTAL_BASE_URL (captive portal) to your '
+                    'public server address, then re-run Configure services — otherwise the '
+                    'hotspot sign-in page stays blank.'
+                )
 
     log = [{'step': 'queued', 'status': 'ok', 'detail': 'Starting device configuration...'}]
+    if portal_warning:
+        log.append({'step': 'captive-portal', 'status': 'error', 'detail': portal_warning})
     steps, params = build_services_commands(opts)
 
     try:

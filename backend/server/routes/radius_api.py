@@ -11,7 +11,11 @@ import time
 
 from extensions import db
 from models import Customer, CustomerStatus, ISP, MikrotikDevice, RadCheck, RadiusSession
-from services.radius_provisioning import radius_username, verify_radius_password
+from services.radius_provisioning import (
+    find_customer_by_login,
+    radius_username,
+    verify_radius_password,
+)
 
 radius_api_bp = Blueprint('radius_api', __name__, url_prefix='/api/radius-api')
 
@@ -47,7 +51,7 @@ def authenticate_user():
         password = data['password']
         nas_ip = data['nas_ip']
 
-        customer = Customer.query.filter_by(email=username).first()
+        customer = find_customer_by_login(username)
         if not customer:
             return jsonify({'ok': False, 'message': 'User not found', 'code': 'USER_NOT_FOUND'}), 401
 

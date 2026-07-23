@@ -55,8 +55,78 @@ def resolve_isp_radius_host(isp, default=''):
 
 
 def radius_username(customer):
-    """RADIUS username = lowercased email (PPPoE login)."""
-    return customer.email.strip().lower()
+    """RADIUS/portal username: the operator-set login, else the email.
+
+    Decoupling the login from the email is what lets imported clients keep their
+    original PPPoE username so the CPE keeps dialing unchanged (see
+    MIGRATION_FROM_OTHER_BILLING.md §4).
+    """
+    login = customer.radius_login or customer.email or ''
+    return login.strip().lower()
+
+
+def find_customer_by_login(username, isp_id=None):
+    """Resolve a login string back to a Customer — the inverse of radius_username.
+
+    Matches an explicit ``radius_login`` first; falls back to ``email`` only for
+    customers that have no ``radius_login`` (so an email can't shadow someone
+    else's login). Scoped to an ISP when given.
+    """
+    from sqlalchemy import and_, func, or_
+    if not username:
+        return None
+    username = username.strip().lower()
+    query = Customer.query.filter(
+        or_(
+            func.lower(Customer.radius_login) == username,
+            and_(Customer.radius_login.is_(None), func.lower(Customer.email) == username),
+        )
+    )
+    if isp_id is not None:
+        query = query.filter(Customer.isp_id == isp_id)
+    return query.first()
+
+
+def _derive_account_prefix(isp):
+    """Fallback account-number prefix from the ISP name (e.g. 'Infora' -> 'INF')."""
+    import re
+    source = (getattr(isp, 'name', None) or getattr(isp, 'company_name', None) or 'ACC')
+    letters = re.sub(r'[^A-Za-z]', '', source).upper()
+    return (letters[:3] or 'ACC')
+
+
+def generate_account_number(isp):
+    """Issue the next unique account number for an ISP (e.g. 'INF-100001').
+
+    Atomically bumps the per-ISP counter under a row lock so concurrent creates
+    (and bulk imports) never collide.
+    """
+    prefix = (isp.account_number_prefix or _derive_account_prefix(isp)).strip().upper()
+    locked = ISP.query.filter_by(id=isp.id).with_for_update().first() or isp
+    current = locked.account_number_seq or 100000
+    locked.account_number_seq = current + 1
+    db.session.flush()
+    return f'{prefix}-{locked.account_number_seq}'
+
+
+def ensure_account_number(customer, isp, preferred=None):
+    """Assign an account number to a customer if it doesn't have one.
+
+    ``preferred`` (e.g. carried over from an import) is used verbatim when it's
+    free; otherwise a fresh number is generated. Returns the number.
+    """
+    if customer.account_number:
+        return customer.account_number
+    preferred = (preferred or '').strip()
+    if preferred:
+        clash = Customer.query.filter_by(
+            account_number=preferred, isp_id=isp.id
+        ).first()
+        if not clash:
+            customer.account_number = preferred
+            return preferred
+    customer.account_number = generate_account_number(isp)
+    return customer.account_number
 
 
 def format_radius_expiration(dt):
@@ -212,6 +282,16 @@ def deprovision_customer_radius(customer, isp):
     """Remove RADIUS access for a customer (hard delete)."""
     username = radius_username(customer)
     _delete_user_radius_rows(username, isp.id)
+    db.session.flush()
+
+
+def delete_radius_rows_for_username(username, isp_id):
+    """Hard-delete RADIUS rows for an explicit username (e.g. an old login that
+    a customer just renamed away from). Use when the username no longer matches
+    ``radius_username(customer)`` so ``deprovision_customer_radius`` can't reach it."""
+    if not username:
+        return
+    _delete_user_radius_rows(username.strip().lower(), isp_id)
     db.session.flush()
 
 

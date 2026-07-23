@@ -9,7 +9,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from extensions import db
 from models import ISP, Customer, MikrotikDevice, RadCheck, WireGuardPeer, WireGuardServer
-from services.radius_provisioning import radius_username
+from services.radius_provisioning import find_customer_by_login, radius_username
 from services.rate_limit import rate_limit
 
 health_bp = Blueprint('health', __name__, url_prefix='/api/health')
@@ -147,6 +147,20 @@ def build_deployment_report():
         issues.append('Set FREERADIUS_HOST to the IP/hostname your MikroTik routers use for RADIUS (UDP 1812/1813).')
     elif radius_host in ('10.0.0.10',):
         issues.append('FREERADIUS_HOST still uses the dev placeholder 10.0.0.10 — set PUBLIC_SERVER_HOST to your real server IP.')
+
+    # Captive portal must be reachable by the router (login page) and the phone
+    # (redirect target); a loopback/dev base URL yields a blank sign-in page.
+    from services.portal_urls import (
+        public_base_url,
+        portal_frontend_base_url,
+        is_router_reachable_base,
+    )
+    if not is_router_reachable_base(public_base_url()) or not is_router_reachable_base(portal_frontend_base_url()):
+        issues.append(
+            'Captive portal URLs are not publicly reachable (loopback/dev host). Set '
+            'PUBLIC_BASE_URL and PORTAL_BASE_URL to your public server/portal URL, or the '
+            'hotspot sign-in page will be blank.'
+        )
     if not radius_secret or radius_secret == 'radius_secret_key':
         issues.append('Change RADIUS_SECRET from the default and match it on each MikroTik / ISP record.')
     if not encryption_key:
@@ -224,7 +238,7 @@ def radius_user_health():
     if not email:
         return jsonify({'ok': False, 'error': 'email query parameter is required'}), 400
 
-    customer = Customer.query.filter_by(email=email).first()
+    customer = find_customer_by_login(email)
     if not customer:
         return jsonify({
             'ok': False,

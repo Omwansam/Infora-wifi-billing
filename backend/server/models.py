@@ -118,7 +118,17 @@ class Customer(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(50), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
+    # Email is optional: imported/rural PPPoE clients may not have one, and the
+    # login is no longer derived from it (see radius_login). Still globally unique
+    # when present (Postgres allows many NULLs under a UNIQUE constraint).
+    email = db.Column(db.String(120), unique=True, nullable=True)
+    # Operator-chosen connection login (PPPoE/hotspot). When set it — not the
+    # email — is the RADIUS username, so imported clients keep their original
+    # credentials and the CPE keeps dialing unchanged. Unique per ISP.
+    radius_login = db.Column(db.String(120), nullable=True)
+    # Human-facing, stable account number (e.g. "INF-100001"). Doubles as the
+    # M-Pesa payment reference. Unique per ISP. Auto-generated at creation.
+    account_number = db.Column(db.String(40), nullable=True)
     phone = db.Column(db.String(20), nullable=False)
     address = db.Column(db.String(255), nullable=True)
     status = db.Column(db.Enum(CustomerStatus, name="customer_status"), default=CustomerStatus.ACTIVE, nullable=False)
@@ -1879,6 +1889,11 @@ class ISP(db.Model):
     data_retention_days = db.Column(db.Integer, nullable=True)
     hotspot_username_prefix = db.Column(db.String(30), nullable=True)
     hotspot_password_length = db.Column(db.Integer, nullable=True)
+    # Prefix + running counter for customer account numbers (e.g. "INF-100001").
+    # Prefix falls back to a slug of the ISP name when unset; the counter is
+    # atomically incremented per issued number (see radius_provisioning).
+    account_number_prefix = db.Column(db.String(12), nullable=True)
+    account_number_seq = db.Column(db.Integer, default=100000, nullable=True)
 
     # --- Modules (Settings > Modules) ---
     pppoe_enabled = db.Column(db.Boolean, default=True)

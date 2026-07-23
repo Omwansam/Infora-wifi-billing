@@ -145,6 +145,7 @@ view should list the online device.
 |---|---|
 | Phone gets `192.168.0.x`, no portal | Tenda DHCP still on, or uplink is in the Tenda **WAN** port. Disable Tenda DHCP; move uplink to a **LAN** port (or use AP mode). |
 | Phone gets `172.31.0.x` but no portal page | Open `http://neverssl.com` (HTTPS won't trigger a redirect). Check `/ip hotspot print` server is `enabled` on `infora-bridge`. |
+| **Captive page opens but is blank** (e.g. `10.20.0.1` white screen) | The router couldn't fetch `hotspot/login.html` because the server URL is a **dev/localhost address it can't reach**. Set `PUBLIC_BASE_URL` + `PORTAL_BASE_URL` to your **public** server/portal URL and `FLASK_ENV=production`, then re-run *Configure services*. `GET /api/health/deployment` now flags this. |
 | Portal loads but payment/login fails | RADIUS not reaching the server: `/radius monitor 0`; confirm the device is Online (tunnel up). |
 | Portal loads but pages/assets blocked | Walled-garden missing your portal host — re-run *Configure services*. |
 

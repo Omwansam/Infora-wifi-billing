@@ -13,6 +13,7 @@ import SignupPage from './components/auth/signup';
 import DashboardRedirect from './components/auth/DashboardRedirect';
 import ClientsPage from './components/clients/ClientsPage';
 import ClientForm from './components/clients/ClientForm';
+import ImportClients from './components/clients/ImportClients';
 import ClientDetail from './components/clients/ClientDetail';
 import OnlineUsersPage from './components/clients/OnlineUsersPage';
 import ClientEdit from './components/clients/ClientEdit';
@@ -126,6 +127,7 @@ function AppRoutes() {
       {/* Client management */}
       <Route path="/clients" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/new" element={<ProtectedRoute><MainLayout><ClientForm /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/import" element={<ProtectedRoute><MainLayout><ImportClients /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/pppoe/new" element={<ProtectedRoute><MainLayout><ClientForm /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/pppoe" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/hotspot" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />

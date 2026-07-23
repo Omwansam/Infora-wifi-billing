@@ -364,10 +364,14 @@ def find_or_create_hotspot_customer(isp, plan, phone, full_name=None):
             isp_id=isp.id,
             service_plan_id=plan.id,
         )
-        from services.radius_provisioning import set_customer_radius_password
+        from services.radius_provisioning import (
+            set_customer_radius_password,
+            ensure_account_number,
+        )
         set_customer_radius_password(customer, password=generate_hotspot_password(isp))
         db.session.add(customer)
         db.session.flush()
+        ensure_account_number(customer, isp)
     else:
         customer.service_plan_id = plan.id
         customer.package = plan.name

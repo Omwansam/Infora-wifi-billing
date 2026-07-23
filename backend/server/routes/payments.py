@@ -51,7 +51,12 @@ def mpesa_stk_push():
                 return jsonify({'ok': False, 'message': 'Invoice not found'}), 404
             amount = float(invoice.amount)
 
-        account_ref = invoice.invoice_number if invoice else f'CUST{customer.id}'
+        # Account reference the subscriber sees / reuses on paybill. Prefer the
+        # invoice number for an invoice payment, else the stable account number.
+        account_ref = (
+            invoice.invoice_number if invoice
+            else (customer.account_number or f'CUST{customer.id}')
+        )
         description = 'WiFi Billing'
 
         stk = initiate_stk_push(phone, amount, account_ref, description, isp=isp)

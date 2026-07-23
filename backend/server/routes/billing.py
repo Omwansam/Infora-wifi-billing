@@ -16,6 +16,9 @@ from services.radius_provisioning import (
     set_customer_radius_password,
     suspend_customer_access,
     activate_customer_after_payment,
+    ensure_account_number,
+    find_customer_by_login,
+    radius_username,
 )
 
 billing_bp = Blueprint('billing', __name__, url_prefix='/api/billing')
@@ -174,6 +177,8 @@ def create_customer():
 
         db.session.add(customer)
         db.session.flush()
+        if target_isp:
+            ensure_account_number(customer, target_isp, preferred=data.get('account_number'))
 
         radius_provisioned = False
         wireguard_provisioned = False
@@ -503,13 +508,16 @@ def get_usage_report(username):
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Find customer
-        customer = Customer.query.filter_by(email=username).first()
+        # Find customer by login (radius_login or email)
+        customer = find_customer_by_login(username)
         if not customer:
             return jsonify({
                 'ok': False,
                 'message': 'Customer not found'
             }), 404
+        # radacct is keyed by the RADIUS username, which may differ from the
+        # path arg when the client has a distinct radius_login.
+        username = radius_username(customer)
         
         # Check access
         if current_user.role != 'admin' and customer.isp_id != isp.id:

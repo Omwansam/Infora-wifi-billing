@@ -64,6 +64,25 @@ def public_base_url():
     return ''
 
 
+# Hosts a router/phone on the hotspot can never reach — the dev defaults.
+_UNREACHABLE_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0', '::1'}
+
+
+def is_router_reachable_base(url):
+    """True if ``url``'s host is one a CPE/phone on the captive network can reach.
+
+    The captive portal login page and its redirect target are fetched/opened by
+    the router and the subscriber's phone — a loopback/empty host (the dev
+    default) is unreachable for them, so the sign-in page renders blank. Use this
+    to refuse to push a portal target that can't work.
+    """
+    if not url:
+        return False
+    parsed = urlparse(url if '://' in url else f'https://{url}')
+    host = (parsed.hostname or '').lower()
+    return bool(host) and host not in _UNREACHABLE_HOSTS
+
+
 def _isp_for_portal(isp_id):
     if not isp_id:
         return None

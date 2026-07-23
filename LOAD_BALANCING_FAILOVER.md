@@ -418,3 +418,70 @@ last flip time) fed by the data we already poll (netwatch state / SNMP / self‑
 - Delivery preference: **copy‑paste `.rsc` only**, or also **push over the tunnel** like
   Configure services (recommended)?
 - Balancing ratio: **equal 1:1** default, with optional weights — good?
+
+
+
+Two documents, two different jobs — and read side by side, the Infora design actually validates most of what your lab proved, while differing where the requirements differ, not where one is right and the other wrong. Here's the analysis.
+
+Where they agree — and that agreement is your strongest evidence
+
+The Infora doc lands independently on the same failover core you built and tested:
+
+Recursive routes with pinned /32 probe host routes + check-gateway=ping for failover, explicitly because it catches upstream ISP failure rather than just a dead local gateway. That's exactly your ISP1→9.9.9.9 / ISP2→1.0.0.1 pinning.
+Distance ordering (1 primary, 2 backup) as the failover mechanism, with the routing engine in control.
+Netwatch as notifier only — not as the thing that swaps routes. Same conclusion you reached, and your RADIUS blackhole incident is the practical proof of why: control-plane scripting making data-plane decisions strands you.
+Per-WAN masquerade replacing any blanket rule, for the same asymmetric-NAT reason.
+Router-originated traffic (RADIUS, management tunnel) rides the main-table failover default, deliberately unmarked. Your setup does this too — the mangle chain is prerouting only, so probes/DHCP/OVPN aren't marked.
+Idempotent, comment-tagged, one-shot .rsc with a matching remove-by-comment rollback. Their infora-lb tag is your PBR:/WAN1:/WAN2:/MONITOR: convention.
+Same edge cases: no session survival across failover, MSS clamping on PPPoE WANs, DNS should follow the active WAN.
+
+When two independently-derived designs converge this hard on the failover layer, that layer is settled. Your production RB5009 file can be written with confidence.
+
+Where they diverge — and why both are correct
+
+The split is entirely about classification, and it traces to different goals:
+
+	Infora	Yours
+Goal	Aggregate throughput across two links	Send specific apps to a specific link
+Classifier	PCC hash on new connections	Meta AS32934 address-list + per-subscriber list
+FastTrack	Removed entirely (PCC needs every packet)	Kept, constrained to connection-mark=no-mark
+
+Infora is right that PCC is the correct tool for "many clients, want more total bandwidth." You're right that PCC is the wrong tool for "WhatsApp goes here" — PCC has no concept of destination or subscriber identity, and you established that early. These aren't competing answers; they're different modes of the same feature, which is precisely how Infora frames it (§0: three modes — off / failover-only / load-balance). Your design is effectively a fourth mode: app-and-subscriber steering, sharing the same failover substrate.
+
+That's the solidifying insight: one skeleton, swappable classifier.
+
+COMMON SUBSTRATE (proven in your lab, independently confirmed by Infora)
+  ├─ per-WAN masquerade
+  ├─ probe /32 host routes + blackholes
+  ├─ recursive defaults, distance-ordered, check-gateway=ping
+  ├─ routing tables per WAN
+  ├─ netwatch = monitoring only
+  └─ comment-tagged, idempotent, removable
+
+CLASSIFIER (choose one)
+  ├─ none              → failover-only
+  ├─ PCC hash          → load-balance          (Infora)
+  └─ address-list      → app/subscriber steer  (yours)
+Three things Infora has that your build should adopt
+
+1. FastTrack: your approach is strictly better. Infora removes FastTrack entirely because PCC needs every packet. But you only need the marked subset out of the fast path — so connection-mark=no-mark on the fasttrack rule keeps acceleration for the 95%+ of traffic that isn't Meta. On an RB5009 with hundreds of subscribers that's a meaningful CPU difference. Keep yours; it's the more surgical version.
+
+2. The DHCP-gateway problem — you solved it the way they recommend. Infora §6 flags dynamic gateways as the hard case and prescribes a dhcp-client script that rewrites the routes on lease bind. That's exactly your WAN2: ISP2 DHCP lease script maintaining the 1.0.0.1 probe route. Independent confirmation your approach is the well-trodden one.
+
+3. Two items worth stealing outright:
+
+WireGuard/tunnel persistent-keepalive=25s so the management tunnel rehandshakes in seconds after a WAN flip. Your OVPN-to-RADIUS tunnel has the same exposure — and you lived this failure. Worth the equivalent setting.
+Inbound/reply stickiness rules (mangle input + output chains marking connections that arrive on a WAN so replies leave the same WAN). Your chain is prerouting-only. You don't need this today because nothing inbound terminates on the router, but the moment you add a port-forward or anything reachable from outside, you will. Note it as a production addition.
+One item Infora got wrong for your case, and one it got right that you hit the hard way
+
+Wrong for you: their §5.3 puts probe routes at plain scope=10 with target-scope=11 but no blackhole. Your blackholes are the safety net that stops a probe leaking out the wrong WAN and falsely reporting health. Keep them — with the caveat you learned painfully.
+
+Right, and you paid for it: §11's rollback explicitly removes routes and restores the prior state. Your RADIUS blackhole outage happened because a distance-200 blackhole outlived the tunnel outage it was meant to cover and then shadowed the recovered route. The production lesson: any blackhole must be paired with a guaranteed-present real route, or bound to the interface rather than left standing alone. Your fix — 10.9.0.0/24 gateway=ovpn-out1, interface-bound — is the correct pattern and should go into the RB5009 file instead of the blackhole.
+
+What this means concretely for your production file
+
+Nothing in the Infora document changes your design. It confirms the failover substrate, isolates the classifier as the only genuine difference, and contributes four refinements: tunnel keepalive, inbound stickiness rules (for later), interface-bound tunnel route instead of a standing blackhole, and the mode-selection framing.
+
+If the Infora system is something you're also building or will use to manage these routers, the practical implication is bigger: your app-steering config should be expressed as a third mode in that same generator, sharing the substrate and the comment= tagging, rather than as a separate hand-maintained script. Same rollback path, same idempotency, same UI.
+
+Which raises the question worth answering before I cut the RB5009 file: is Infora your billing system — the one whose maintenance took FreeRADIUS down — and do you want the production PBR config shaped to slot into that generator pattern, or delivered as a standalone .rsc like the lab one?

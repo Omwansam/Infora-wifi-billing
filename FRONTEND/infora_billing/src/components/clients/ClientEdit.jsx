@@ -8,6 +8,8 @@ import {
   Loader2,
   User,
   Mail,
+  AtSign,
+  Hash,
   Phone,
   MapPin,
   ShieldCheck,
@@ -72,6 +74,7 @@ export default function ClientEdit() {
   const [form, setForm] = useState({
     name: '',
     email: '',
+    radius_login: '',
     phone: '',
     address: '',
     service_plan_id: '',
@@ -102,6 +105,7 @@ export default function ClientEdit() {
       setForm({
         name: c.name || '',
         email: c.email || '',
+        radius_login: c.radius_login || '',
         phone: c.phone || '',
         address: c.address || '',
         service_plan_id: c.service_plan_id ? String(c.service_plan_id) : '',
@@ -140,9 +144,14 @@ export default function ClientEdit() {
     setSaving(true);
     try {
       const { status, ...rest } = form;
+      if (!rest.radius_login.trim() && !rest.email.trim()) {
+        toast.error('Keep a connection username or an email');
+        return;
+      }
       const payload = {
         name: rest.name,
-        email: rest.email,
+        email: rest.email.trim(),
+        radius_login: rest.radius_login.trim(),
         phone: rest.phone,
         address: rest.address,
         service_plan_id: rest.service_plan_id ? Number(rest.service_plan_id) : undefined,
@@ -272,25 +281,58 @@ export default function ClientEdit() {
                   />
                 </div>
               </div>
-              <div className="md:col-span-2">
-                <FieldLabel required>
-                  {connectionType === 'pppoe' ? 'Email (PPPoE username)' : 'Email'}
-                </FieldLabel>
+              {connectionType === 'pppoe' && (
+                <div>
+                  <FieldLabel>Connection username</FieldLabel>
+                  <div className="relative">
+                    <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input
+                      name="radius_login"
+                      value={form.radius_login}
+                      onChange={onInput}
+                      placeholder="Leave blank to use the email"
+                      autoCapitalize="none"
+                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <p className="text-xs text-amber-700 mt-2">
+                    Changing this rewrites the RADIUS login — the subscriber&rsquo;s router must be updated.
+                  </p>
+                </div>
+              )}
+              <div>
+                <FieldLabel>Email</FieldLabel>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <input
                     name="email"
                     type="email"
-                    required
                     value={form.email}
                     onChange={onInput}
+                    placeholder="Optional"
                     className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
-                {connectionType === 'pppoe' && (
-                  <p className="text-xs text-slate-500 mt-2">Changing email updates the RADIUS login username.</p>
-                )}
+                <p className="text-xs text-slate-500 mt-2">
+                  {connectionType === 'pppoe'
+                    ? 'Used as the login only when no connection username is set.'
+                    : 'Optional contact email.'}
+                </p>
               </div>
+              {client?.account_number && (
+                <div>
+                  <FieldLabel>Account number</FieldLabel>
+                  <div className="relative">
+                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input
+                      value={client.account_number}
+                      readOnly
+                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm font-mono bg-slate-50 text-slate-600"
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">M-Pesa payment reference — not editable.</p>
+                </div>
+              )}
               <div className="md:col-span-2">
                 <FieldLabel>Installation address</FieldLabel>
                 <div className="relative">

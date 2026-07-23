@@ -16,6 +16,7 @@ import {
   PlugZap,
   Unplug,
   UserPlus,
+  Upload,
   Clock,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
@@ -258,6 +259,15 @@ export default function ClientsPage() {
                 <ShieldCheck className="h-4 w-4 mr-2" />
                 KYC
               </Link>
+              {(isPppoe || isAll) && (
+                <Link
+                  to="/clients/import"
+                  className="inline-flex items-center px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-medium bg-white hover:bg-slate-50"
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Import
+                </Link>
+              )}
               {(isPppoe || isAll) && (
                 <Link
                   to="/clients/new"

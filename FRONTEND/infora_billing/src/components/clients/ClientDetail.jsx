@@ -7,6 +7,7 @@ import {
   Trash2,
   User,
   Mail,
+  Hash,
   Phone,
   MapPin,
   Router,
@@ -529,7 +530,10 @@ export default function ClientDetail() {
             >
               <SectionHeader title="Contact details" subtitle="Subscriber contact and login information." />
               <div className="divide-y divide-slate-100">
-                <InfoRow icon={Mail} label="Email" value={client.email} />
+                {client.account_number && (
+                  <InfoRow icon={Hash} label="Account number (M-Pesa ref)" value={client.account_number} mono />
+                )}
+                <InfoRow icon={Mail} label="Email" value={client.email || 'Not provided'} />
                 <InfoRow icon={Phone} label="Phone" value={client.phone} />
                 <InfoRow icon={MapPin} label="Installation address" value={client.address || 'Not provided'} />
                 {client.connection_type === 'pppoe' && (
