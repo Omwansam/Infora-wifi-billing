@@ -285,6 +285,44 @@ class DeviceService {
     return { ok: true };
   }
 
+  /** Open the router's WebFig through the platform proxy (one-click, over the VPN).
+   *  Mints a scoped session on the server, then opens the proxied URL in a new tab. */
+  async openWebfig(token, deviceId) {
+    const response = await fetch(API_ENDPOINTS.deviceWebfigSession(deviceId), {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Could not open WebFig (${response.status})`);
+    }
+    window.open(data.url, '_blank', 'noopener');
+    return data;
+  }
+
+  /** Download a WireGuard client .conf that puts this operator's laptop on the
+   *  management tunnel, so WebFig + Winbox work directly by the router's VPN IP. */
+  async downloadVpnClientConfig(token) {
+    const response = await fetch(API_ENDPOINTS.webfigVpnClientConfig, {
+      method: 'GET',
+      headers: getAuthHeaders(token),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `Download failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'infora-mgmt-vpn.conf';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    return { ok: true };
+  }
+
   async getDeploymentHealth() {
     const response = await fetch(API_ENDPOINTS.HEALTH_DEPLOYMENT);
     const data = await response.json().catch(() => ({}));

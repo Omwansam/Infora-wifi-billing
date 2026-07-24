@@ -11,6 +11,7 @@ const PORT_ROLES = [
   { value: 'hotspot', label: 'Hotspot' },
   { value: 'pppoe', label: 'PPPoE' },
   { value: 'both', label: 'Both (Hotspot + PPPoE)' },
+  { value: 'management', label: 'Management (Winbox/WebFig)' },
 ];
 
 /**
@@ -43,6 +44,7 @@ export default function ConfigureServicesPanel({ deviceId, initial, onApplied })
   const [portRoles, setPortRoles] = useState(() => seedRoles(initial));
   const [antiSharing, setAntiSharing] = useState(initial?.anti_sharing ?? false);
   const [subnet, setSubnet] = useState(initial?.subnet || '172.31.0.0/16');
+  const [uplinkDhcp, setUplinkDhcp] = useState(initial?.uplink_dhcp_client ? true : false);
 
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState(null);
@@ -78,12 +80,15 @@ export default function ConfigureServicesPanel({ deviceId, initial, onApplied })
     const roles = Object.fromEntries(
       Object.entries(portRoles).filter(([, r]) => r && r !== 'skip')
     );
-    if (Object.keys(roles).length === 0) return toast.error('Assign at least one port to Hotspot, PPPoE, or Both');
+    if (Object.keys(roles).length === 0) return toast.error('Assign at least one port to Hotspot, PPPoE, Both, or Management');
     setApplying(true);
     setResult(null);
     try {
+      const uplink = interfaces.find((i) => i.is_uplink);
       const res = await deviceService.configureServices(getAccessToken(), deviceId, {
         port_roles: roles, anti_sharing: anyHotspot && antiSharing, subnet,
+        uplink_dhcp_client: uplinkDhcp,
+        uplink_interface: uplink?.name || null,
       });
       setResult(res);
       if (res.success) {
@@ -121,7 +126,7 @@ export default function ConfigureServicesPanel({ deviceId, initial, onApplied })
       )}
 
       <p className="mb-2 text-xs text-slate-500">
-        <strong>Hotspot</strong> joins the captive-portal bridge · <strong>PPPoE</strong> runs a dial-up server on that port (no DHCP) · <strong>Both</strong> allows either.
+        <strong>Hotspot</strong> joins the captive-portal bridge · <strong>PPPoE</strong> runs a dial-up server on that port (no DHCP) · <strong>Both</strong> allows either · <strong>Management</strong> gives a laptop a <code>192.168.88.x</code> lease + Winbox/WebFig on that port.
       </p>
       {interfaces.some((i) => i.is_uplink) && (
         <p className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800">
@@ -184,6 +189,10 @@ export default function ConfigureServicesPanel({ deviceId, initial, onApplied })
             <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-slate-400" /> Anti account-sharing (Hotspot)</span>
           </label>
         )}
+        <label className="flex cursor-pointer items-center gap-2 self-end rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-700">
+          <input type="checkbox" checked={uplinkDhcp} onChange={(e) => setUplinkDhcp(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-emerald-600" />
+          <span className="inline-flex items-center gap-1.5"><Network className="h-4 w-4 text-slate-400" /> Uplink gets IP via DHCP (plug-and-play WAN)</span>
+        </label>
       </div>
 
       <div className="mt-6 flex items-center justify-end border-t border-slate-100 pt-5">

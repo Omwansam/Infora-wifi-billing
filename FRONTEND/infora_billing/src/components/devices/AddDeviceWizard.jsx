@@ -51,6 +51,7 @@ const PORT_ROLES = [
   { value: 'hotspot', label: 'Hotspot' },
   { value: 'pppoe', label: 'PPPoE' },
   { value: 'both', label: 'Both (Hotspot + PPPoE)' },
+  { value: 'management', label: 'Management (Winbox/WebFig)' },
 ];
 
 export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
@@ -88,6 +89,7 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
     port_roles: {},
     anti_sharing: false,
     subnet: DEFAULT_SUBNET,
+    uplink_dhcp_client: false,
   });
   const [useCustomSubnet, setUseCustomSubnet] = useState(false);
   const [configuring, setConfiguring] = useState(false);
@@ -315,7 +317,7 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
       Object.entries(serviceForm.port_roles).filter(([, r]) => r && r !== 'skip')
     );
     if (Object.keys(roles).length === 0) {
-      toast.error('Assign at least one port to Hotspot, PPPoE, or Both');
+      toast.error('Assign at least one port to Hotspot, PPPoE, Both, or Management');
       return;
     }
     const subnet = useCustomSubnet ? serviceForm.subnet.trim() : DEFAULT_SUBNET;
@@ -326,10 +328,13 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
     setConfiguring(true);
     try {
       const token = getAccessToken();
+      const uplink = allInterfaces.find((i) => i.is_uplink);
       const opts = {
         port_roles: roles,
         anti_sharing: anyHotspotRole && serviceForm.anti_sharing,
         subnet,
+        uplink_dhcp_client: serviceForm.uplink_dhcp_client,
+        uplink_interface: uplink?.name || null,
       };
       const res = await deviceService.configureServices(token, createdDevice.id, opts);
       setConfigResult(res);
@@ -987,6 +992,23 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                         </div>
                       </label>
                     )}
+
+                    <label className={`mt-3 flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer ${
+                      serviceForm.uplink_dhcp_client ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={serviceForm.uplink_dhcp_client}
+                        onChange={(e) => handleServiceChange('uplink_dhcp_client', e.target.checked)}
+                        className="mt-1 h-4 w-4 text-emerald-600 rounded"
+                      />
+                      <div>
+                        <p className="font-medium text-gray-900 text-sm">Uplink gets IP via DHCP (plug-and-play WAN)</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Runs a DHCP client on the uplink so the router auto-addresses from upstream. Leave off if the WAN has a static IP or dials PPPoE.
+                        </p>
+                      </div>
+                    </label>
                   </div>
 
                   {/* Subnet */}

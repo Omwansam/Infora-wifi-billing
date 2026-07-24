@@ -8,6 +8,7 @@ from routes.customers import customers_bp
 from routes.invoices import invoices_bp
 from routes.plans import plans_bp
 from routes.devices import devices_bp
+from routes.webfig_proxy import webfig_bp
 from routes.equipment import equipment_bp
 from routes.isps import isps_bp
 from routes.ldap import ldap_bp
@@ -76,6 +77,7 @@ app.register_blueprint(customers_bp)
 app.register_blueprint(invoices_bp)
 app.register_blueprint(plans_bp)
 app.register_blueprint(devices_bp)
+app.register_blueprint(webfig_bp)
 app.register_blueprint(equipment_bp)
 app.register_blueprint(isps_bp)
 app.register_blueprint(ldap_bp)

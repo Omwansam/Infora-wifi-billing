@@ -88,27 +88,144 @@ def _write_server_wg_conf(state):
             '',
         ])
 
+    # Operator laptops (WebFig/Winbox access peers). Private keys are never
+    # stored — only the public key + assigned IP live in operators.json.
+    for op in _load_operators():
+        if not op.get('public_key') or not op.get('ip'):
+            continue
+        lines.extend([
+            f"# operator:{op.get('name') or op.get('owner')}",
+            '[Peer]',
+            f"PublicKey = {op['public_key']}",
+            f"AllowedIPs = {op['ip']}/32",
+            '',
+        ])
+
     conf_path = os.path.join(_mgmt_config_dir(), 'wg-mgmt.conf')
     with open(conf_path, 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(lines))
 
 
-def _allocate_device_tunnel_ip():
-    """Pick next free host in management subnet (server is .1)."""
-    network = ipaddress.ip_network(_mgmt_subnet(), strict=False)
-    server_host = _mgmt_server_ip().split('/')[0]
-    used = {server_host}
+def _operators_path():
+    return os.path.join(_mgmt_config_dir(), 'operators.json')
+
+
+def _load_operators():
+    path = _operators_path()
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        return data if isinstance(data, list) else []
+    except (ValueError, OSError):
+        return []
+
+
+def _save_operators(operators):
+    os.makedirs(_mgmt_config_dir(), exist_ok=True)
+    with open(_operators_path(), 'w', encoding='utf-8') as fh:
+        json.dump(operators, fh, indent=2)
+
+
+def _used_tunnel_ips():
+    """Every management-subnet IP already handed out (server, devices, operators)."""
+    used = {_mgmt_server_ip().split('/')[0]}
     for device in MikrotikDevice.query.filter(
         MikrotikDevice.management_wg_ip.isnot(None),
     ).all():
         if device.management_wg_ip:
             used.add(device.management_wg_ip.split('/')[0])
+    for op in _load_operators():
+        if op.get('ip'):
+            used.add(op['ip'])
+    return used
 
+
+def _allocate_device_tunnel_ip():
+    """Pick next free host in management subnet (server is .1)."""
+    network = ipaddress.ip_network(_mgmt_subnet(), strict=False)
+    used = _used_tunnel_ips()
     for host in network.hosts():
         ip = str(host)
         if ip not in used:
             return ip
     raise ValueError(f'No free management tunnel IPs in {_mgmt_subnet()}')
+
+
+def _allocate_operator_ip():
+    """Operator laptops get IPs from the top of the subnet, downward, so they
+    stay clear of the device IPs allocated from the bottom."""
+    network = ipaddress.ip_network(_mgmt_subnet(), strict=False)
+    used = _used_tunnel_ips()
+    for host in reversed(list(network.hosts())):
+        ip = str(host)
+        if ip not in used:
+            return ip
+    raise ValueError(f'No free management tunnel IPs in {_mgmt_subnet()}')
+
+
+def _mgmt_endpoint_host():
+    return (
+        current_app.config.get('WIREGUARD_MGMT_ENDPOINT')
+        or current_app.config.get('PUBLIC_SERVER_HOST')
+        or current_app.config.get('FREERADIUS_HOST', '')
+    )
+
+
+def provision_operator_peer(owner, name=None):
+    """Create (or rotate) an operator's WireGuard peer for router management.
+
+    ``owner`` is a stable key (e.g. ``user-42``) so re-downloading replaces that
+    operator's peer in place rather than leaking a new one each time. The private
+    key is returned once for the client config and never stored.
+    Returns (peer_dict, private_key).
+    """
+    state = ensure_management_server()
+    private_key, public_key = generate_wireguard_keypair()
+
+    operators = _load_operators()
+    existing = next((o for o in operators if o.get('owner') == owner), None)
+    if existing:
+        existing['public_key'] = public_key
+        existing['name'] = name or existing.get('name') or owner
+        peer = existing
+    else:
+        peer = {
+            'owner': owner,
+            'name': name or owner,
+            'ip': _allocate_operator_ip(),
+            'public_key': public_key,
+        }
+        operators.append(peer)
+    _save_operators(operators)
+
+    # The wireguard sidecar watches wg-mgmt.conf and reloads it automatically.
+    _write_server_wg_conf(state)
+    return peer, private_key
+
+
+def build_operator_client_config(peer, private_key):
+    """Return a WireGuard client .conf that puts an operator laptop on the
+    management tunnel so it can reach every router's WebFig/Winbox directly."""
+    state = ensure_management_server()
+    network = ipaddress.ip_network(state['subnet'], strict=False)
+    endpoint = _mgmt_endpoint_host()
+    lines = [
+        f"# Infora management VPN — operator: {peer.get('name') or peer.get('owner')}",
+        '# Import into WireGuard, activate, then open the router WebFig/Winbox by its VPN IP.',
+        '[Interface]',
+        f"PrivateKey = {private_key}",
+        f"Address = {peer['ip']}/32",
+        '',
+        '[Peer]',
+        f"PublicKey = {state['public_key']}",
+        f"Endpoint = {endpoint}:{state['port']}",
+        f"AllowedIPs = {network}",
+        'PersistentKeepalive = 25',
+        '',
+    ]
+    return '\n'.join(lines)
 
 
 def provision_device_management_tunnel(device):
@@ -192,7 +309,7 @@ def build_mikrotik_management_tunnel_script(device):
             f'/interface wireguard peers add interface=wg-mgmt name=infora-billing-server '
             f'public-key="{state["public_key"]}" '
             f'endpoint-address={endpoint} endpoint-port={port} '
-            f'allowed-address={server_ip}/32 persistent-keepalive=25 '
+            f'allowed-address={network} persistent-keepalive=25 '
             f'comment="infora-billing-mgmt"'
         ),
         f'/ip route add dst-address={server_ip}/32 gateway=wg-mgmt comment="infora-radius-via-tunnel"',

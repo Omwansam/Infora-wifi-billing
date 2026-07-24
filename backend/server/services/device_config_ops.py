@@ -38,6 +38,19 @@ MGMT_ACCESS_COMMENT = 'infora-mgmt-access'
 WG_WATCHDOG_COMMENT = 'infora-wg-watchdog'
 INTERFACE_NAME_RE = re.compile(r'^[\w.\-/]+$')
 
+# Local "Management" port — a bare ether an operator can plug a laptop into and
+# always reach Winbox/WebFig on, independent of the WireGuard tunnel. Fixed to
+# RouterOS's familiar default LAN so it never collides with the service subnet.
+MGMT_PORT_SUBNET = '192.168.88.0/24'
+MGMT_PORT_GATEWAY = '192.168.88.1'
+MGMT_PORT_POOL_RANGE = '192.168.88.10-192.168.88.254'
+MGMT_BRIDGE_NAME = 'infora-mgmt-bridge'
+MGMT_PORT_POOL_NAME = 'infora-mgmt-pool'
+MGMT_PORT_DHCP_NAME = 'infora-mgmt-dhcp'
+MGMT_PORT_COMMENT = 'infora-mgmt-port'
+WAN_DHCP_COMMENT = 'infora-wan-dhcp'
+HOTSPOT_ISOLATE_COMMENT = 'infora-hotspot-isolate'
+
 
 def connection_host(device):
     """Host to connect to: management tunnel IP for NAT routers, else device_ip."""
@@ -303,6 +316,40 @@ def run_self_check(device):
         if wg_enabled:
             add('wg_watchdog', 'WireGuard watchdog (netwatch) exists',
                 WG_WATCHDOG_COMMENT in cli('/tool netwatch print terse'))
+
+        # Service artifacts — verify only what this device is configured for, so
+        # a "configured OK" result can no longer hide a missing hotspot/PPPoE
+        # server (the gap that let the captive portal / PPPoE dial silently fail).
+        import json as _json
+        svc_cfg = {}
+        if device.service_config:
+            try:
+                svc_cfg = (_json.loads(device.service_config)
+                           if isinstance(device.service_config, str)
+                           else (device.service_config or {}))
+            except (ValueError, TypeError):
+                svc_cfg = {}
+        svc_summary = svc_cfg.get('summary') or {}
+        svc_services = svc_summary.get('services') or svc_cfg.get('services') or []
+        svc_roles = svc_cfg.get('port_roles') or svc_summary.get('port_roles') or {}
+        role_vals = list(svc_roles.values())
+        want_hotspot = 'Hotspot' in svc_services or any(r in ('hotspot', 'both') for r in role_vals)
+        want_pppoe = 'PPPoE' in svc_services or any(r in ('pppoe', 'both') for r in role_vals)
+        want_mgmt = 'Management' in svc_services or any(r == 'management' for r in role_vals)
+
+        if want_hotspot:
+            add('hotspot_server', 'Hotspot server exists',
+                'infora' in cli('/ip hotspot print terse'))
+            add('hotspot_dhcp', 'Hotspot DHCP server exists',
+                DHCP_NAME in cli('/ip dhcp-server print terse'))
+            add('hotspot_login', 'Captive-portal login page present (else portal is blank)',
+                'login.html' in cli('/file print terse'))
+        if want_pppoe:
+            add('pppoe_server', 'PPPoE server exists',
+                'infora' in cli('/interface pppoe-server server print terse'))
+        if want_mgmt:
+            add('mgmt_port', 'Management port address exists',
+                MGMT_PORT_COMMENT in cli('/ip address print terse'))
 
     passed = sum(1 for c in checks if c['ok'])
     return {
@@ -607,7 +654,7 @@ def _subnet_params(subnet):
     }
 
 
-VALID_PORT_ROLES = ('hotspot', 'pppoe', 'both')
+VALID_PORT_ROLES = ('hotspot', 'pppoe', 'both', 'management')
 
 
 def derive_port_roles(opts):
@@ -645,7 +692,12 @@ def build_services_commands(opts):
       * Hotspot / Both ports  → members of the hotspot bridge (DHCP + captive portal).
       * PPPoE (only) ports    → a PPPoE server bound to that *raw* port, no DHCP.
       * Both ports            → also reachable by a PPPoE server bound to the bridge.
-    All commands are idempotent (remove-by-comment/name, then add).
+      * Management ports      → a local mgmt bridge with a static IP + its own DHCP
+                                so a plugged-in laptop always reaches Winbox/WebFig
+                                (no service, independent of the tunnel).
+    Optional ``uplink_dhcp_client`` (+ ``uplink_interface``) runs a DHCP client on
+    the WAN so the router auto-addresses from upstream. All commands are
+    idempotent (remove-by-comment/name, then add).
     """
     params = _subnet_params(opts.get('subnet') or DEFAULT_SUBNET)
     roles = derive_port_roles(opts)
@@ -653,17 +705,32 @@ def build_services_commands(opts):
     hotspot_ports = [p for p, r in roles.items() if r in ('hotspot', 'both')]
     pppoe_only_ports = [p for p, r in roles.items() if r == 'pppoe']
     both_ports = [p for p, r in roles.items() if r == 'both']
+    management_ports = [p for p, r in roles.items() if r == 'management']
     run_hotspot = bool(hotspot_ports)
     run_pppoe = bool(pppoe_only_ports) or bool(both_ports)
+    run_management = bool(management_ports)
 
     # Expose the derived plan for the summary / persisted service_config.
     params['hotspot_ports'] = hotspot_ports
     params['pppoe_only_ports'] = pppoe_only_ports
     params['both_ports'] = both_ports
+    params['management_ports'] = management_ports
     params['run_hotspot'] = run_hotspot
     params['run_pppoe'] = run_pppoe
+    params['run_management'] = run_management
 
     steps = []
+
+    # 0. Optional DHCP client on the uplink/WAN (plug-and-play addressing).
+    uplink = str(opts.get('uplink_interface') or 'ether1').strip()
+    if opts.get('uplink_dhcp_client') and INTERFACE_NAME_RE.match(uplink):
+        params['uplink_dhcp_client'] = uplink
+        steps.append((
+            'wan-dhcp',
+            f':do {{/ip dhcp-client remove [find comment="{WAN_DHCP_COMMENT}"]}} on-error={{}}; '
+            f'/ip dhcp-client add interface={uplink} use-peer-dns=yes use-peer-ntp=yes '
+            f'add-default-route=yes disabled=no comment="{WAN_DHCP_COMMENT}"',
+        ))
 
     # 1. Bridge (only needed when some port joins it — hotspot/both).
     if run_hotspot:
@@ -777,6 +844,68 @@ def build_services_commands(opts):
                 '/ip hotspot profile set [find name=infora] html-directory=hotspot '
                 'login-by=http-chap,cookie,http-pap',
             ))
+
+        # Self-protection: hotspot clients must not reach the router's own
+        # management services. Drop input from the hotspot bridge to winbox/ssh/
+        # api — but NOT 80/443, which the captive-portal login page runs on.
+        steps.append((
+            'hotspot-isolate',
+            f':do {{/ip firewall filter remove [find comment="{HOTSPOT_ISOLATE_COMMENT}"]}} on-error={{}}; '
+            f'/ip firewall filter add chain=input action=drop in-interface={BRIDGE_NAME} '
+            f'protocol=tcp dst-port=22,23,8291,8728,8729 comment="{HOTSPOT_ISOLATE_COMMENT}" place-before=0',
+        ))
+
+    # 7b. Management ports — own bridge with a static IP + local DHCP so a
+    #     plugged-in laptop always reaches Winbox/WebFig, independent of the
+    #     tunnel. Not bridged into a service; www/winbox/ssh forced on.
+    if run_management:
+        steps.append((
+            'mgmt-bridge',
+            f':if ([:len [/interface bridge find name={MGMT_BRIDGE_NAME}]]=0) do={{'
+            f'/interface bridge add name={MGMT_BRIDGE_NAME} comment="infora-billing"}}',
+        ))
+        steps.append((
+            'mgmt-bridge-reset',
+            f':do {{/interface bridge port remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}',
+        ))
+        for port in management_ports:
+            steps.append((
+                f'mgmt-port:{port}',
+                # Free the port from any prior bridge/pppoe use, then add to the mgmt bridge.
+                f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}; '
+                f':do {{/interface pppoe-server server remove [find interface={port}]}} on-error={{}}; '
+                f'/interface bridge port add bridge={MGMT_BRIDGE_NAME} interface={port} comment="{MGMT_PORT_COMMENT}"',
+            ))
+        steps.append((
+            'mgmt-address',
+            f':do {{/ip address remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}; '
+            f'/ip address add address={MGMT_PORT_GATEWAY}/24 interface={MGMT_BRIDGE_NAME} comment="{MGMT_PORT_COMMENT}"',
+        ))
+        steps.append((
+            'mgmt-pool',
+            f':do {{/ip pool remove [find name={MGMT_PORT_POOL_NAME}]}} on-error={{}}; '
+            f'/ip pool add name={MGMT_PORT_POOL_NAME} ranges={MGMT_PORT_POOL_RANGE}',
+        ))
+        steps.append((
+            'mgmt-dhcp',
+            f':do {{/ip dhcp-server remove [find name={MGMT_PORT_DHCP_NAME}]}} on-error={{}}; '
+            f'/ip dhcp-server add name={MGMT_PORT_DHCP_NAME} interface={MGMT_BRIDGE_NAME} '
+            f'address-pool={MGMT_PORT_POOL_NAME} disabled=no; '
+            f':do {{/ip dhcp-server network remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}; '
+            f'/ip dhcp-server network add address={MGMT_PORT_SUBNET} gateway={MGMT_PORT_GATEWAY} '
+            f'dns-server=8.8.8.8,1.1.1.1 comment="{MGMT_PORT_COMMENT}"',
+        ))
+        steps.append((
+            'mgmt-services',
+            '/ip service set www disabled=no; /ip service set winbox disabled=no; '
+            '/ip service set ssh disabled=no',
+        ))
+        steps.append((
+            'mgmt-firewall',
+            f':do {{/ip firewall filter remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}; '
+            f'/ip firewall filter add chain=input action=accept in-interface={MGMT_BRIDGE_NAME} '
+            f'comment="{MGMT_PORT_COMMENT}" place-before=0',
+        ))
 
     # 8. Hotspot anti-sharing (fix TTL so devices behind a shared NAT are detectable)
     if run_hotspot and opts.get('anti_sharing'):
@@ -989,10 +1118,18 @@ def configure_services(device, opts):
         services.append('Hotspot')
     if params.get('run_pppoe'):
         services.append('PPPoE')
+    if params.get('run_management'):
+        services.append('Management')
     summary = {
         'services': services,
-        'ports': sorted(set(params.get('hotspot_ports', []) + params.get('pppoe_only_ports', []))),
+        'ports': sorted(set(
+            params.get('hotspot_ports', [])
+            + params.get('pppoe_only_ports', [])
+            + params.get('management_ports', [])
+        )),
         'port_roles': roles,
+        'management_ports': params.get('management_ports', []),
+        'uplink_dhcp_client': params.get('uplink_dhcp_client'),
         'subnet': params['subnet'],
         'gateway': params['gateway'],
         'anti_sharing': bool(params.get('run_hotspot') and opts.get('anti_sharing')),

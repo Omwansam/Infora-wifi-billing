@@ -180,9 +180,17 @@ export default function DeviceDetailPage() {
   const isOnline = status === 'online';
   const configured = !!device.service_config;
   const svc = device.service_config || {};
-  const svcList = Array.isArray(svc.services) ? svc.services : [];
-  const hotspotOn = svc.hotspot === true || svcList.includes('Hotspot');
-  const pppoeOn = svc.pppoe === true || svcList.includes('PPPoE');
+  const svcSummary = svc.summary || {};
+  const roles = svc.port_roles || svcSummary.port_roles || {};
+  const roleVals = Object.values(roles);
+  const svcList = svcSummary.services || (Array.isArray(svc.services) ? svc.services : []);
+  const hotspotOn = svc.hotspot === true || svcList.includes('Hotspot') || roleVals.some((r) => r === 'hotspot' || r === 'both');
+  const pppoeOn = svc.pppoe === true || svcList.includes('PPPoE') || roleVals.some((r) => r === 'pppoe' || r === 'both');
+  const managementOn = svc.management === true || svcList.includes('Management') || roleVals.some((r) => r === 'management');
+  const portsByRole = (...want) => Object.entries(roles).filter(([, r]) => want.includes(r)).map(([p]) => p);
+  const hotspotPorts = portsByRole('hotspot', 'both');
+  const pppoePorts = portsByRole('pppoe', 'both');
+  const managementPorts = portsByRole('management');
   const vpnOn = !!(device.management_wg_enabled && device.management_wg_ip);
   const wgHost = device.management_wg_ip ? String(device.management_wg_ip).split('/')[0] : device.device_ip;
 
@@ -332,9 +340,25 @@ export default function DeviceDetailPage() {
                     <button onClick={() => setShowPw((s) => !s)} className="text-slate-400 hover:text-slate-600">{showPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}</button>
                   </div>
                 </div>
-                <a href={`http://${wgHost}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
-                  <ExternalLink className="h-4 w-4" /> Open WebFig
-                </a>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => deviceService.openWebfig(getAccessToken(), id).catch((e) => toast.error(e.message))}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                  >
+                    <ExternalLink className="h-4 w-4" /> Open WebFig
+                  </button>
+                  <button
+                    onClick={() => deviceService.downloadVpnClientConfig(getAccessToken())
+                      .then(() => toast.success('VPN client config downloaded — import it into WireGuard'))
+                      .catch((e) => toast.error(e.message))}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <Download className="h-4 w-4" /> Download VPN client config
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  “Open WebFig” proxies through the platform (one click). For Winbox or if a WebFig skin renders oddly, import the VPN client config and open the router by its VPN IP directly.
+                </p>
               </div>
             </div>
 
@@ -435,13 +459,13 @@ export default function DeviceDetailPage() {
                 <h3 className="text-base font-semibold text-slate-900">Current Configuration</h3>
               </div>
               {configured ? (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="rounded-xl bg-emerald-50 p-4">
                     <div className="flex items-center justify-between">
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-emerald-700"><Wifi className="h-3.5 w-3.5" /> Hotspot</span>
                       <span className={`text-[10px] font-bold ${hotspotOn ? 'text-emerald-700' : 'text-slate-400'}`}>{hotspotOn ? 'ON' : 'OFF'}</span>
                     </div>
-                    <p className="mt-1 font-mono text-sm text-slate-700">{(svc.bridge_ports || []).join(', ') || '—'}</p>
+                    <p className="mt-1 font-mono text-sm text-slate-700">{hotspotPorts.join(', ') || '—'}</p>
                     {svc.subnet && <p className="mt-0.5 font-mono text-xs text-slate-400">{svc.subnet}</p>}
                   </div>
                   <div className="rounded-xl bg-violet-50 p-4">
@@ -449,8 +473,16 @@ export default function DeviceDetailPage() {
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-violet-700"><Network className="h-3.5 w-3.5" /> PPPoE</span>
                       <span className={`text-[10px] font-bold ${pppoeOn ? 'text-violet-700' : 'text-slate-400'}`}>{pppoeOn ? 'ON' : 'OFF'}</span>
                     </div>
-                    <p className="mt-1 font-mono text-sm text-slate-700">{(svc.bridge_ports || []).join(', ') || '—'}</p>
+                    <p className="mt-1 font-mono text-sm text-slate-700">{pppoePorts.join(', ') || '—'}</p>
                     {svc.subnet && <p className="mt-0.5 font-mono text-xs text-slate-400">{svc.subnet}</p>}
+                  </div>
+                  <div className="rounded-xl bg-sky-50 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-sky-700"><Globe className="h-3.5 w-3.5" /> Management</span>
+                      <span className={`text-[10px] font-bold ${managementOn ? 'text-sky-700' : 'text-slate-400'}`}>{managementOn ? 'ON' : 'OFF'}</span>
+                    </div>
+                    <p className="mt-1 font-mono text-sm text-slate-700">{managementPorts.join(', ') || '—'}</p>
+                    {managementOn && <p className="mt-0.5 font-mono text-xs text-slate-400">192.168.88.1/24</p>}
                   </div>
                 </div>
               ) : (

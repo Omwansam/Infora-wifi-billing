@@ -80,6 +80,7 @@ def _build_wireguard_tunnel_lines(device):
     prefix = network.prefixlen
     tunnel_ip = device.management_wg_ip.split('/')[0]
     server_ip = state['server_ip'].split('/')[0]
+    tunnel_subnet = str(network)
     endpoint = _resolve_endpoint_ip(
         current_app.config.get('WIREGUARD_MGMT_ENDPOINT')
         or current_app.config.get('PUBLIC_SERVER_HOST')
@@ -100,20 +101,23 @@ def _build_wireguard_tunnel_lines(device):
             f'/interface wireguard peers add interface=wg-mgmt '
             f'public-key="{state["public_key"]}" '
             f'endpoint-address={endpoint} endpoint-port={port} '
-            f'allowed-address={server_ip}/32 persistent-keepalive=25 '
+            # Whole tunnel subnet so the router can also answer operator laptops
+            # (WebFig/Winbox client peers), not just the billing server (.1).
+            f'allowed-address={tunnel_subnet} persistent-keepalive=25 '
             f'comment="infora-billing-mgmt"'
         ),
         f':do {{ /ip route remove [find comment="infora-radius-via-tunnel"] }} on-error={{}}',
         f'/ip route add dst-address={server_ip}/32 gateway=wg-mgmt comment="infora-radius-via-tunnel"',
     ]
 
-    # Firewall: allow Winbox/SSH/API from the billing server through the tunnel only,
-    # only, placed above any drop rules. Comment-tagged so the self-check can
-    # verify it (infora-mgmt-access).
+    # Firewall: allow Winbox/SSH/API/WebFig from the tunnel only, placed above any
+    # drop rules. Comment-tagged so the self-check can verify it. 80/443 are
+    # needed for the WebFig reverse proxy + operator client access; the whole
+    # tunnel subnet covers the billing server (.1) and operator laptops.
     fw_rule = (
         'chain=input action=accept protocol=tcp '
-        f'src-address={server_ip}/32 in-interface=wg-mgmt '
-        'dst-port=8291,22,8728,8729 comment="infora-mgmt-access"'
+        f'src-address={tunnel_subnet} in-interface=wg-mgmt '
+        'dst-port=8291,22,8728,8729,80,443 comment="infora-mgmt-access"'
     )
     lines += [
         '',
@@ -215,6 +219,10 @@ def build_radius_script(device, snmp_community='infora'):
             f'/user add name="{mgmt_user}" password="{mgmt_pass}" group=full comment="infora-billing"',
             '/ip service set api disabled=no',
             '/ip service set ssh disabled=no',
+            # WebFig (www) + Winbox so the platform proxy and operator VPN client
+            # can reach the router's web/winbox management over the tunnel.
+            ':do { /ip service set www disabled=no } on-error={}',
+            ':do { /ip service set winbox disabled=no } on-error={}',
         ]
 
     lines += [

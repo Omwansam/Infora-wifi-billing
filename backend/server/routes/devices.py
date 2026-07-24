@@ -1030,20 +1030,41 @@ def device_configure_services(device_id):
 
     payload = request.get_json(silent=True) or {}
     opts = {
-        # New per-interface roles ({iface: hotspot|pppoe|both}); build_services_commands
-        # falls back to the legacy keys below when this is absent.
+        # New per-interface roles ({iface: hotspot|pppoe|both|management});
+        # build_services_commands falls back to the legacy keys below when absent.
         'port_roles': payload.get('port_roles') if isinstance(payload.get('port_roles'), dict) else None,
         'pppoe': bool(payload.get('pppoe')),
         'hotspot': bool(payload.get('hotspot')),
         'anti_sharing': bool(payload.get('anti_sharing')),
         'bridge_ports': payload.get('bridge_ports') or [],
         'subnet': payload.get('subnet') or '172.31.0.0/16',
+        # Optional plug-and-play WAN: run a DHCP client on the uplink.
+        'uplink_dhcp_client': bool(payload.get('uplink_dhcp_client')),
+        'uplink_interface': payload.get('uplink_interface') or None,
     }
 
     result = configure_services(device, opts)
 
     if result.get('success'):
-        device.service_config = json.dumps({**opts, 'summary': result.get('summary')})
+        # Persist a canonical shape the UI can read directly: hoist the real
+        # applied services/ports/roles from the summary to the top level (the
+        # old code stored hotspot/pppoe=False here, which made the overview show
+        # everything as "Not set" even after a successful apply).
+        summary = result.get('summary') or {}
+        services = summary.get('services') or []
+        device.service_config = json.dumps({
+            'port_roles': summary.get('port_roles') or (opts.get('port_roles') or {}),
+            'services': services,
+            'hotspot': 'Hotspot' in services,
+            'pppoe': 'PPPoE' in services,
+            'management': 'Management' in services,
+            'ports': summary.get('ports') or [],
+            'subnet': summary.get('subnet') or opts.get('subnet'),
+            'gateway': summary.get('gateway'),
+            'anti_sharing': summary.get('anti_sharing', opts.get('anti_sharing')),
+            'uplink_dhcp_client': summary.get('uplink_dhcp_client'),
+            'summary': summary,
+        })
         db.session.commit()
 
     return jsonify(result), (200 if result.get('success') else 502)

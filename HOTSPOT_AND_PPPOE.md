@@ -245,7 +245,11 @@ sessions** lists the live PPPoE session with its Framed-IP.
 
 **Names created on the MikroTik:** `infora-bridge`, `infora-pool`, `infora-dhcp`,
 `infora` (hotspot + hotspot profile), `infora` (pppoe-server), `infora-pppoe`
-(ppp profile), `infora-pppoe-pool`, `infora-masquerade` (NAT), `infora-billing` (radius).
+(ppp profile), `infora-pppoe-pool`, `infora-masquerade` (NAT), `infora-billing` (radius),
+`infora-hotspot-isolate` (firewall: blocks hotspot clients from the router's own
+winbox/ssh/api), plus for the Management role: `infora-mgmt-bridge`, `infora-mgmt-pool`,
+`infora-mgmt-dhcp`, `infora-mgmt-port` (address/firewall comment); and `infora-wan-dhcp`
+(the optional uplink DHCP client).
 
 **PPPoE login:** username = customer email (lowercased); password = `radius_password`
 issued at customer creation.
@@ -270,3 +274,56 @@ with only `ether3` + the hotspot server, and a PPPoE bridge with only `ether5` +
 PPPoE server. This is **not** what the wizard builds and it isn't managed by the app,
 so you'd maintain those bridges by hand on the router and keep the uplink/NAT + RADIUS
 in place. For almost all deployments the shared bridge (§0) is simpler and correct.
+
+---
+
+## 6. Management port, DHCP client, and WebFig over the VPN
+
+### 6.1 Management port (guaranteed local Winbox/WebFig)
+
+Assign an otherwise-unused ether (e.g. `ether3`) the **Management** role in *Configure
+services*. The platform then builds `infora-mgmt-bridge` with a static `192.168.88.1/24`,
+its own DHCP server (`infora-mgmt-dhcp`, pool `192.168.88.10–254`), enables `www`/`winbox`/
+`ssh`, and adds an input-accept firewall rule for that port. Plug a laptop into `ether3`
+→ it leases `192.168.88.x` and reaches **WebFig at `http://192.168.88.1`** and **Winbox at
+`192.168.88.1`** — always, independent of the WireGuard tunnel or the internet uplink.
+
+### 6.2 Uplink DHCP client (plug-and-play WAN)
+
+Tick **“Uplink gets IP via DHCP”** in *Configure services* to add `/ip dhcp-client` on the
+uplink (`infora-wan-dhcp`), so the MikroTik auto-addresses from an upstream router. Leave
+it **off** when the WAN has a static IP or itself dials PPPoE upstream. (The provisioning
+one-liner still pings `8.8.8.8` first and aborts if the WAN has no internet at all.)
+
+### 6.3 DHCP on the MikroTik vs. on the user router
+
+- **On the MikroTik:** hotspot clients lease from `infora-dhcp` (service subnet, e.g.
+  `172.31.0.x`); management-port laptops lease from `infora-mgmt-dhcp` (`192.168.88.x`);
+  PPPoE clients get their address from the PPPoE pool via RADIUS/`infora-pppoe-pool`.
+- **On the user router (Tenda):**
+  - **Hotspot → AP/bridge mode, DHCP-client OFF.** The Tenda must *not* run its own DHCP or
+    NAT; its clients then lease `172.31.0.x` straight from the MikroTik and see the captive
+    portal. A Tenda left in **router mode with WAN=DHCP** takes a single `172.31.x` lease
+    and NATs its own LAN behind it — so its clients get internet **without** the portal and
+    can reach the MikroTik; that is exactly the “no captive portal” symptom. Fix: AP mode.
+  - **PPPoE → router mode, WAN=PPPoE.** The Tenda dials the session with the customer’s
+    RADIUS credentials; its own LAN DHCP/NAT stay on (normal double-NAT CPE).
+
+### 6.4 WebFig / Winbox over the platform WireGuard VPN
+
+The router’s web/winbox live on the management tunnel (`10.250.0.x`), which only the
+platform reaches — not your browser directly. Two supported ways from the device page:
+- **Open WebFig** — one click; the platform proxies your browser to the router’s WebFig
+  over the tunnel. If a WebFig skin renders oddly through the proxy, use the client config:
+- **Download VPN client config** — a WireGuard `.conf` that puts *your laptop* on the
+  management tunnel. Import it into WireGuard, activate, then open the router directly by
+  its VPN IP: **WebFig `http://10.250.0.x`**, **Winbox `10.250.0.x:8291`**. Provisioning
+  enables `www`/`winbox` and opens ports `80,443,8291,22,8728,8729` from the tunnel, so a
+  router provisioned before this change must be **re-provisioned** (re-import the one-liner,
+  or run the *Download tunnel script*) to pick up the widened firewall + web service.
+
+> Blank hotspot login page? The router couldn’t fetch `hotspot/login.html` because
+> `PUBLIC_BASE_URL`/`PORTAL_BASE_URL` weren’t set to a **public** address it can reach. Set
+> them in your production `.env` (`config/deployment/production.env.example`), then re-run
+> *Configure services*. The device **self-check** now flags a missing hotspot/PPPoE server
+> or login page, so a “configured OK” result no longer hides these.

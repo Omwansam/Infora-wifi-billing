@@ -33,6 +33,8 @@ export const API_ENDPOINTS = {
   DEVICES: `${API_BASE_URL}/api/devices`,
   deviceRadiusScript: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/radius-script`,
   deviceManagementTunnelScript: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/management-tunnel-script`,
+  deviceWebfigSession: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/webfig/session`,
+  webfigVpnClientConfig: `${API_BASE_URL}/api/devices/webfig/vpn-client-config`,
   deviceProvisionToken: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/provision-token`,
   deviceProvisionStatus: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/provision-status`,
   deviceInterfaces: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/interfaces`,
