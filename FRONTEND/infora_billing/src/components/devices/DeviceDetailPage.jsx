@@ -342,22 +342,22 @@ export default function DeviceDetailPage() {
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => deviceService.openWebfig(getAccessToken(), id).catch((e) => toast.error(e.message))}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-                  >
-                    <ExternalLink className="h-4 w-4" /> Open WebFig
-                  </button>
-                  <button
                     onClick={() => deviceService.downloadVpnClientConfig(getAccessToken())
-                      .then(() => toast.success('VPN client config downloaded — import it into WireGuard'))
+                      .then(() => toast.success('VPN config downloaded — import into WireGuard and connect'))
                       .catch((e) => toast.error(e.message))}
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
                   >
                     <Download className="h-4 w-4" /> Download VPN client config
                   </button>
+                  <a
+                    href={`http://${wgHost}`} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <ExternalLink className="h-4 w-4" /> Open WebFig ({wgHost})
+                  </a>
                 </div>
                 <p className="mt-1 text-[11px] text-slate-400">
-                  “Open WebFig” proxies through the platform (one click). For Winbox or if a WebFig skin renders oddly, import the VPN client config and open the router by its VPN IP directly.
+                  RouterOS 7’s web UI must be reached over the VPN — it can’t be proxied under a subpath. Import the client config into WireGuard and <strong>connect</strong>, then “Open WebFig” (<code>http://{wgHost}</code>) and Winbox (<code>{wgHost}:8291</code>) work directly.
                 </p>
               </div>
             </div>

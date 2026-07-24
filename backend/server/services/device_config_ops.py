@@ -41,9 +41,11 @@ INTERFACE_NAME_RE = re.compile(r'^[\w.\-/]+$')
 # Local "Management" port — a bare ether an operator can plug a laptop into and
 # always reach Winbox/WebFig on, independent of the WireGuard tunnel. Fixed to
 # RouterOS's familiar default LAN so it never collides with the service subnet.
-MGMT_PORT_SUBNET = '192.168.88.0/24'
-MGMT_PORT_GATEWAY = '192.168.88.1'
-MGMT_PORT_POOL_RANGE = '192.168.88.10-192.168.88.254'
+# Kept off 192.168.88.x on purpose: that is the RouterOS default LAN (defconf
+# bridge), so reusing it collides with the factory config on fresh boards.
+MGMT_PORT_SUBNET = '192.168.99.0/24'
+MGMT_PORT_GATEWAY = '192.168.99.1'
+MGMT_PORT_POOL_RANGE = '192.168.99.10-192.168.99.254'
 MGMT_BRIDGE_NAME = 'infora-mgmt-bridge'
 MGMT_PORT_POOL_NAME = 'infora-mgmt-pool'
 MGMT_PORT_DHCP_NAME = 'infora-mgmt-dhcp'
@@ -688,13 +690,16 @@ def build_services_commands(opts):
     ``anti_sharing``, ``subnet``. Legacy ``pppoe``/``hotspot``/``bridge_ports``
     are still accepted (see :func:`derive_port_roles`).
 
-    Isolated-per-role topology:
-      * Hotspot / Both ports  → members of the hotspot bridge (DHCP + captive portal).
-      * PPPoE (only) ports    → a PPPoE server bound to that *raw* port, no DHCP.
-      * Both ports            → also reachable by a PPPoE server bound to the bridge.
-      * Management ports      → a local mgmt bridge with a static IP + its own DHCP
-                                so a plugged-in laptop always reaches Winbox/WebFig
-                                (no service, independent of the tunnel).
+    Shared-bridge topology (robust on switch-chip boards like the hEX, where a
+    raw per-port PPPoE server conflicts with a bridge one):
+      * Hotspot / PPPoE / Both ports → all members of ``infora-bridge``.
+      * One hotspot server on the bridge (DHCP + captive portal) when any
+        hotspot/both port exists; one PPPoE server on the bridge when any
+        pppoe/both port exists. A downstream CPE picks the service by how it is
+        wired (AP mode → hotspot; WAN=PPPoE → PPPoE).
+      * Management ports → a separate ``infora-mgmt-bridge`` with a static IP +
+        its own DHCP so a plugged-in laptop always reaches Winbox/WebFig,
+        independent of the tunnel.
     Optional ``uplink_dhcp_client`` (+ ``uplink_interface``) runs a DHCP client on
     the WAN so the router auto-addresses from upstream. All commands are
     idempotent (remove-by-comment/name, then add).
@@ -703,17 +708,22 @@ def build_services_commands(opts):
     roles = derive_port_roles(opts)
 
     hotspot_ports = [p for p, r in roles.items() if r in ('hotspot', 'both')]
-    pppoe_only_ports = [p for p, r in roles.items() if r == 'pppoe']
+    pppoe_ports = [p for p, r in roles.items() if r in ('pppoe', 'both')]
     both_ports = [p for p, r in roles.items() if r == 'both']
     management_ports = [p for p, r in roles.items() if r == 'management']
+    # Every service port shares one bridge; the role only decides which servers
+    # run, not which port they bind to.
+    service_ports = [p for p, r in roles.items() if r in ('hotspot', 'pppoe', 'both')]
     run_hotspot = bool(hotspot_ports)
-    run_pppoe = bool(pppoe_only_ports) or bool(both_ports)
+    run_pppoe = bool(pppoe_ports)
+    run_bridge = bool(service_ports)
     run_management = bool(management_ports)
 
     # Expose the derived plan for the summary / persisted service_config.
     params['hotspot_ports'] = hotspot_ports
-    params['pppoe_only_ports'] = pppoe_only_ports
+    params['pppoe_only_ports'] = [p for p, r in roles.items() if r == 'pppoe']
     params['both_ports'] = both_ports
+    params['service_ports'] = service_ports
     params['management_ports'] = management_ports
     params['run_hotspot'] = run_hotspot
     params['run_pppoe'] = run_pppoe
@@ -722,31 +732,33 @@ def build_services_commands(opts):
     steps = []
 
     # 0. Optional DHCP client on the uplink/WAN (plug-and-play addressing).
+    #    Only add when the interface has no DHCP client yet — the factory config
+    #    usually already has one, and RouterOS refuses a second on the same port.
     uplink = str(opts.get('uplink_interface') or 'ether1').strip()
     if opts.get('uplink_dhcp_client') and INTERFACE_NAME_RE.match(uplink):
         params['uplink_dhcp_client'] = uplink
         steps.append((
             'wan-dhcp',
-            f':do {{/ip dhcp-client remove [find comment="{WAN_DHCP_COMMENT}"]}} on-error={{}}; '
+            f':if ([:len [/ip dhcp-client find interface={uplink}]]=0) do={{'
             f'/ip dhcp-client add interface={uplink} use-peer-dns=yes use-peer-ntp=yes '
-            f'add-default-route=yes disabled=no comment="{WAN_DHCP_COMMENT}"',
+            f'add-default-route=yes disabled=no comment="{WAN_DHCP_COMMENT}"}}',
         ))
 
-    # 1. Bridge (only needed when some port joins it — hotspot/both).
-    if run_hotspot:
+    # 1. Bridge — one shared bridge for every hotspot/pppoe/both port.
+    if run_bridge:
         steps.append((
             'bridge',
             f':if ([:len [/interface bridge find name={BRIDGE_NAME}]]=0) do={{'
             f'/interface bridge add name={BRIDGE_NAME} comment="infora-billing"}}',
         ))
 
-    # 2. Reset our managed bridge memberships, then add the hotspot/both ports.
-    #    Removing by comment first makes role changes (hotspot→pppoe/skip) stick.
+    # 2. Reset our managed bridge memberships, then add every service port.
+    #    Removing by comment first makes role changes (e.g. dropping a port) stick.
     steps.append((
         'bridge-reset',
         ':do {/interface bridge port remove [find comment="infora"]} on-error={}',
     ))
-    for port in hotspot_ports:
+    for port in service_ports:
         steps.append((
             f'bridge-port:{port}',
             f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}; '
@@ -787,51 +799,48 @@ def build_services_commands(opts):
             f'/ppp profile add name={PPPOE_PROFILE_NAME} local-address={params["gateway"]} '
             f'remote-address={PPPOE_POOL_NAME} dns-server=8.8.8.8,1.1.1.1 use-encryption=no',
         ))
-        # Clear every prior infora pppoe-server before re-adding the current set.
+        # Clear every prior infora pppoe-server, then bind ONE server to the
+        # shared bridge. A single bridge-bound server serves PPPoE on any member
+        # port and avoids the raw-port/bridge conflict that marks servers INVALID
+        # on switch-chip boards.
         steps.append((
             'pppoe-reset',
             ':do {/interface pppoe-server server remove [find service-name=infora]} on-error={}; '
             '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
         ))
-        for port in pppoe_only_ports:
-            steps.append((
-                f'pppoe:{port}',
-                # A raw interface can't be a bridge member and a PPPoE server
-                # interface at once — free it from the bridge first.
-                f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}; '
-                f'/interface pppoe-server server add service-name=infora interface={port} '
-                f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no',
-            ))
-        if both_ports:
-            steps.append((
-                'pppoe:bridge',
-                f'/interface pppoe-server server add service-name=infora interface={BRIDGE_NAME} '
-                f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no',
-            ))
+        steps.append((
+            'pppoe:bridge',
+            f'/interface pppoe-server server add service-name=infora interface={BRIDGE_NAME} '
+            f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no',
+        ))
 
     # 7. Hotspot (profile + server using RADIUS) on the bridge.
+    #    Note: shared-users is NOT a /ip hotspot profile parameter (it lives on
+    #    the user profile / RADIUS reply) — putting it here makes the whole
+    #    profile add fail, which silently leaves the router with no hotspot.
     if run_hotspot:
-        shared = '1' if opts.get('anti_sharing') else '3'
         steps.append((
             'hotspot',
             ':do {/ip hotspot remove [find name=infora]} on-error={}; '
             ':do {/ip hotspot profile remove [find name=infora]} on-error={}; '
             '/ip hotspot profile add name=infora hotspot-address='
             f'{params["gateway"]} use-radius=yes radius-accounting=yes '
-            f'radius-interim-update=5m login-by=cookie,http-chap,http-pap shared-users={shared}; '
+            f'radius-interim-update=5m login-by=cookie,http-chap,http-pap; '
             f'/ip hotspot add name=infora interface={BRIDGE_NAME} address-pool={POOL_NAME} '
             'profile=infora disabled=no',
         ))
 
-        # Walled garden — allow portal, API, payments, captive probes before auth
+        # Walled garden — allow portal, API, payments, captive probes before auth.
+        # Hostnames use `/ip hotspot walled-garden` (action=allow); the `ip`
+        # sub-menu is for literal addresses (dst-address, action=accept).
         for host in opts.get('walled_garden_hosts') or []:
             safe_host = host.replace('"', '').strip()
             if not safe_host:
                 continue
             steps.append((
                 f'walled-garden:{safe_host}',
-                f':do {{/ip hotspot walled-garden ip remove [find dst-host="{safe_host}"]}} on-error={{}}; '
-                f'/ip hotspot walled-garden ip add dst-host="{safe_host}" action=allow comment="infora"',
+                f':do {{/ip hotspot walled-garden remove [find dst-host="{safe_host}"]}} on-error={{}}; '
+                f'/ip hotspot walled-garden add dst-host="{safe_host}" action=allow comment="infora"',
             ))
 
         # External captive portal — fetch redirect page that sends users to our SPA
