@@ -1,13 +1,43 @@
 """
 Generate FreeRADIUS clients.conf from radius_clients + mikrotik_devices + ISPs.
 """
+import ipaddress
 import os
+import socket
 from datetime import datetime
 
 from flask import current_app
 
 from models import ISP, MikrotikDevice, RadiusClient, RadiusNasClient
 from services.encryption import decrypt_value
+
+
+def usable_client_host(host):
+    """Return ``host`` if FreeRADIUS can parse it as a client address, else None.
+
+    FreeRADIUS resolves every non-literal ``ipaddr`` at startup and **aborts the
+    whole server** if one fails::
+
+        clients.conf[26]: Failed resolving "radius.company.com" to IPv4 address
+        clients.conf[26]: Error parsing client section
+
+    One stale or seeded NAS row must never be able to take RADIUS down for every
+    subscriber, so anything that isn't a literal IP/CIDR is resolved here first
+    and dropped (with a comment in the file) when it doesn't resolve.
+    """
+    host = (host or '').strip()
+    if not host:
+        return None
+    try:
+        ipaddress.ip_network(host, strict=False)
+        return host
+    except ValueError:
+        pass
+    try:
+        socket.getaddrinfo(host, None, socket.AF_INET)
+        return host
+    except OSError:
+        return None
 
 
 def radius_clients_conf_path():
@@ -57,9 +87,13 @@ def generate_clients_conf(default_secret=None):
     ]
 
     seen_hosts = {'127.0.0.1'}
+    skipped = []
 
     for client in RadiusClient.query.filter_by(is_active=True).all():
-        host = client.host.strip()
+        host = usable_client_host(client.host)
+        if not host:
+            skipped.append(f'{client.name or client.id} ({client.host})')
+            continue
         if host in seen_hosts:
             continue
         seen_hosts.add(host)
@@ -77,7 +111,10 @@ def generate_clients_conf(default_secret=None):
         ])
 
     for device in MikrotikDevice.query.filter_by(is_active=True).all():
-        host = _nas_host_for_device(device)
+        host = usable_client_host(_nas_host_for_device(device))
+        if not host:
+            skipped.append(f'device {device.device_name}')
+            continue
         if host in seen_hosts:
             continue
         seen_hosts.add(host)
@@ -96,8 +133,11 @@ def generate_clients_conf(default_secret=None):
 
     # NAS clients registered manually in Settings > RADIUS
     for nas in RadiusNasClient.query.all():
-        host = (nas.ip_address or '').strip()
-        if not host or host in seen_hosts:
+        host = usable_client_host(nas.ip_address)
+        if not host:
+            skipped.append(f'NAS {nas.name or nas.id} ({nas.ip_address})')
+            continue
+        if host in seen_hosts:
             continue
         seen_hosts.add(host)
         isp = ISP.query.get(nas.isp_id) if nas.isp_id else None
@@ -124,6 +164,15 @@ def generate_clients_conf(default_secret=None):
         '}',
         '',
     ])
+
+    # Record what was dropped. Silently omitting a NAS would be its own outage
+    # (that router's requests get ignored as an unknown client), so make it
+    # visible right where an operator is already looking.
+    if skipped:
+        lines.append('# Skipped — address is not an IP/CIDR and does not resolve,')
+        lines.append('# which would abort FreeRADIUS startup for every subscriber:')
+        lines.extend(f'#   - {entry}' for entry in skipped)
+        lines.append('')
 
     return '\n'.join(lines)
 
