@@ -80,7 +80,10 @@ export default function ServicePlansPage() {
   const loadStats = useCallback(async () => {
     try {
       const response = await getPlanStats();
-      if (response.success) setStats(response.data);
+      // Deliberately quiet: loadPlans already toasts on failure, and the cards
+      // degrade to zeros on their own. Clear them so a failed refresh can't
+      // leave stale totals above a list that did reload.
+      setStats(response.success ? response.data : {});
     } catch {
       setStats({});
     }
