@@ -209,6 +209,27 @@ def ensure_plan_group(plan, isp):
             ))
 
 
+def remove_plan_group(plan):
+    """Delete the RADIUS group rows a plan owns.
+
+    Counterpart to :func:`ensure_plan_group`. Without this a deleted package
+    leaves its ``plan_<id>`` reply attributes behind forever, and because plan
+    ids are reused by nothing but still allocated sequentially, stale rows just
+    accumulate in the tables FreeRADIUS reads on every request.
+    """
+    groupname = f'plan_{plan.id}'
+    removed = RadGroupReply.query.filter_by(groupname=groupname).delete(
+        synchronize_session=False
+    )
+    removed += RadGroupCheck.query.filter_by(groupname=groupname).delete(
+        synchronize_session=False
+    )
+    removed += RadUserGroup.query.filter_by(groupname=groupname).delete(
+        synchronize_session=False
+    )
+    return removed
+
+
 def purge_auth_type_accept_rows():
     """Delete legacy ``Auth-Type := Accept`` rows from radgroupcheck/radcheck.
 

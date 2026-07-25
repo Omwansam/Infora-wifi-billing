@@ -4,7 +4,11 @@ from auth_utils import get_current_user
 from extensions import db
 from models import ServicePlan, HotspotAccessCode, User, Customer, Invoice, ISP
 from routes.customers import serialize_customer
-from services.radius_provisioning import ensure_plan_group, reprovision_plan_customers
+from services.radius_provisioning import (
+    ensure_plan_group,
+    remove_plan_group,
+    reprovision_plan_customers,
+)
 from services.mikrotik_wireguard import reprovision_plan_wireguard_peers
 from services.plan_utils import (
     get_plan_speed_mbps,
@@ -431,11 +435,14 @@ def delete_plan(plan_id):
             }), 400
 
         try:
+            # Drop the plan's RADIUS group with it, or its reply attributes
+            # outlive the package in the tables FreeRADIUS reads.
+            remove_plan_group(plan)
             db.session.delete(plan)
             db.session.commit()
-            
+
             return jsonify({'message': 'Service plan deleted successfully'}), 200
-            
+
         except Exception as delete_error:
             db.session.rollback()
             
