@@ -827,12 +827,11 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml <command>
 8. [ ] Verify health URLs (Part 9)
 9. [ ] Admin + ISP + MikroTik (Parts 10–11)
 
-## WebFig one-click proxy (per-device hostname)
+## WebFig one-click proxy
 
 `Open WebFig` proxies a router's web UI through the platform, so an operator does
-not need the WireGuard client. It is served on a **per-device hostname** —
-`webfig-<id>.<domain>` — not a subpath, because RouterOS 7's WebFig is
-root-absolute:
+not need the WireGuard client. It is served on a **dedicated hostname**, not a
+subpath, because RouterOS 7's WebFig is root-absolute:
 
 ```html
 <link href="/assets/style-2d2fe181ac93.css" rel="stylesheet">
@@ -843,24 +842,45 @@ That inline redirect is hardcoded to the origin root, so under any prefix the
 browser is thrown out of the proxy. Serving the root of a dedicated origin makes
 those absolute paths land back on us.
 
+**One hostname serves every router.** The device comes from the signed session
+token, not the hostname. That is deliberate: Cloudflare only proxies *wildcard*
+records on Enterprise plans, and the record must be proxied (see below), so
+per-device names would mean a new DNS record for every router ever onboarded.
+(`webfig-<id>.` still works if you ever want DNS-level isolation — the token has
+to name the same router.)
+
 **Development** needs no setup: browsers resolve any `*.localhost` to loopback,
-so `http://webfig-37.localhost:5000` works as-is.
+so `http://webfig.localhost:5000` works as-is.
 
-**Production** needs three things:
+### Production
 
-1. A wildcard DNS record pointing at the server, on a name the TLS certificate
-   covers. `ruirufactory.crt` covers `*.ruirufactorymabati.com`, so use
-   `webfig-<id>.ruirufactorymabati.com` — **not** `webfig-<id>.billing.…`, which
-   is a second-level wildcard the cert does not cover.
-2. `WEBFIG_PROXY_DOMAIN=ruirufactorymabati.com` in the prod `.env`, passed
-   through to `flask_app`. Without it the host is derived from the request and
-   you get the uncovered sub-sub-domain.
-3. A dan-proxy vhost forwarding the whole origin to Flask:
+1. **Cloudflare DNS** — one record, forever:
+
+   | Field | Value |
+   |---|---|
+   | Type | `A` |
+   | Name | `webfig` |
+   | IPv4 | `5.189.178.15` |
+   | Proxy status | **Proxied** (orange cloud) |
+   | TTL | Auto |
+
+   Proxied is not optional. The origin presents a **Cloudflare Origin CA**
+   certificate, which only Cloudflare's edge trusts — a grey-cloud record sends
+   the browser straight to the origin and it rejects the certificate. Cloudflare's
+   Universal SSL edge cert covers `*.ruirufactorymabati.com`, so
+   `webfig.ruirufactorymabati.com` is covered; `webfig.billing.ruirufactorymabati.com`
+   would **not** be (second-level wildcard).
+
+2. **Env** — `WEBFIG_PROXY_DOMAIN=ruirufactorymabati.com` in the prod `.env`, and
+   passed through to `flask_app` in `docker-compose.prod.yml`. Without it the host
+   is derived from the request and you get the uncovered sub-sub-domain.
+
+3. **dan-proxy vhost** — forward the whole origin to Flask:
 
 ```nginx
 server {
     listen 443 ssl;
-    server_name ~^webfig-\d+\.ruirufactorymabati\.com$;
+    server_name webfig.ruirufactorymabati.com;
     ssl_certificate     /etc/nginx/ssl/ruirufactory.crt;
     ssl_certificate_key /etc/nginx/ssl/ruirufactory.key;
     location / {
@@ -872,6 +892,6 @@ server {
 }
 ```
 
-`Host` must be preserved — Flask picks the device out of it. Reload with
+`Host` must be preserved — Flask keys off it. Reload with
 `docker exec dan-proxy-1 nginx -t && docker exec dan-proxy-1 nginx -s reload`;
 never recreate that container (it fronts other live sites).

@@ -67,6 +67,11 @@ services:
       # inherits the base compose's dev default (http://localhost:5173) and the
       # hotspot login page redirects to an address phones can't reach (blank).
       PORTAL_BASE_URL: ${PORTAL_BASE_URL:-}
+      # Domain the WebFig proxy hostname hangs off (webfig.<domain>). Must be a
+      # name the TLS cert covers — Universal SSL covers *.ruirufactorymabati.com
+      # but not a second level under billing. Unset ⇒ derived from the request,
+      # which yields the uncovered sub-sub-domain.
+      WEBFIG_PROXY_DOMAIN: ${WEBFIG_PROXY_DOMAIN:-}
       ROUTER_TIMEZONE: ${ROUTER_TIMEZONE:-Africa/Nairobi}
       LOGO_UPLOAD_DIR: /app/uploads/logos
       MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}

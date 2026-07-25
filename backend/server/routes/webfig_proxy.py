@@ -61,43 +61,61 @@ def _serializer():
     return URLSafeTimedSerializer(secret, salt=_TOKEN_SALT)
 
 
-def _cookie_name(device_id):
-    return f'infora_webfig_{device_id}'
+# One cookie name: the hostname already scopes the session, and a single
+# WebFig host means a single jar. Holds the same signed token, which carries the
+# device id, so the cookie alone identifies the target router.
+_COOKIE = 'infora_webfig'
+
+_HOST_LABEL = 'webfig'
 
 
-_HOST_PREFIX = 'webfig-'
+def webfig_host_for(request_host):
+    """Hostname (with port) whose root proxies WebFig.
 
+    Deliberately ONE name for every router rather than webfig-<id>.*: Cloudflare
+    only proxies wildcard records on Enterprise plans, and the record must be
+    proxied because the origin presents a Cloudflare Origin CA certificate that
+    browsers do not trust. Per-device names would therefore mean adding a DNS
+    record for every router ever onboarded. The device comes from the signed
+    token instead, so one record covers all of them forever.
 
-def webfig_host_for(device_id, request_host):
-    """Hostname (with port) that proxies this device's WebFig at its root.
-
-    ``WEBFIG_PROXY_DOMAIN`` wins when set — production needs a name the wildcard
-    TLS certificate actually covers, which a sub-sub-domain of the app host
-    usually is not. Otherwise derive from whatever host the operator is already
-    on, which gives ``webfig-37.localhost:5000`` in development for free.
+    ``WEBFIG_PROXY_DOMAIN`` wins when set — production needs a name the TLS
+    certificate actually covers, which a sub-sub-domain of the app host is not.
+    Otherwise derive from the operator's current host, giving
+    ``webfig.localhost:5000`` in development for free.
     """
     configured = (os.getenv('WEBFIG_PROXY_DOMAIN') or '').strip().strip('/')
     if configured:
-        return f'{_HOST_PREFIX}{device_id}.{configured}'
+        return f'{_HOST_LABEL}.{configured}'
 
     host = (request_host or 'localhost').split('@')[-1]
     name, _, port = host.partition(':')
-    # A label cannot be prefixed onto an IP literal — webfig-37.127.0.0.1 does
-    # not resolve. Browsers do resolve any *.localhost to loopback, so that is
-    # the right dev fallback when the operator is on a bare IP.
+    # A label cannot be prefixed onto an IP literal — webfig.127.0.0.1 does not
+    # resolve. Browsers resolve any *.localhost to loopback, so that is the right
+    # dev fallback when the operator is on a bare IP.
     if not name or name.replace('.', '').isdigit() or ':' in name:
         name = 'localhost'
     suffix = f':{port}' if port else ''
-    return f'{_HOST_PREFIX}{device_id}.{name}{suffix}'
+    return f'{_HOST_LABEL}.{name}{suffix}'
+
+
+def is_webfig_host(host):
+    """True when this request arrived on the WebFig proxy hostname.
+
+    Accepts the per-device form (``webfig-37.…``) too, so an operator who does
+    want DNS-level isolation between routers can add those records and it keeps
+    working.
+    """
+    label = (host or '').split(':')[0].split('.')[0]
+    return label == _HOST_LABEL or label.startswith(_HOST_LABEL + '-')
 
 
 def device_id_from_host(host):
-    """Device id when ``host`` is one of our WebFig hostnames, else None."""
-    name = (host or '').split(':')[0]
-    label = name.split('.')[0]
-    if not label.startswith(_HOST_PREFIX):
+    """Device id pinned by the hostname, or None when the token decides."""
+    label = (host or '').split(':')[0].split('.')[0]
+    if not label.startswith(_HOST_LABEL + '-'):
         return None
-    raw = label[len(_HOST_PREFIX):]
+    raw = label[len(_HOST_LABEL) + 1:]
     return int(raw) if raw.isdigit() else None
 
 
@@ -124,32 +142,41 @@ def webfig_session(device_id):
 
     token = _serializer().dumps({'d': device_id, 'u': get_jwt_identity()})
     scheme = 'https' if request.is_secure else 'http'
-    host = webfig_host_for(device_id, request.host)
+    host = webfig_host_for(request.host)
     return jsonify({'url': f'{scheme}://{host}/?t={token}', 'host': host}), 200
 
 
-def _valid_token(device_id):
-    """True when the request carries a valid ?t= token or session cookie."""
-    raw = request.args.get('t') or request.cookies.get(_cookie_name(device_id))
+def _token_device_id():
+    """Device id carried by a valid ?t= token or session cookie, else None.
+
+    The token is the only authority on which router this session may reach, so a
+    hostname that pins a device still has to agree with it.
+    """
+    raw = request.args.get('t') or request.cookies.get(_COOKIE)
     if not raw:
-        return False
+        return None
     try:
         data = _serializer().loads(raw, max_age=_COOKIE_MAX_AGE)
     except (BadSignature, SignatureExpired):
-        return False
-    return data.get('d') == device_id
+        return None
+    value = data.get('d')
+    return value if isinstance(value, int) else None
 
 
-def serve_webfig_host(device_id):
-    """Proxy this request to the device's WebFig. Serves the whole origin root.
+def serve_webfig_host(pinned_device_id=None):
+    """Proxy this request to a device's WebFig. Serves the whole origin root.
 
     Called from an app-level ``before_request`` hook whenever the Host header is
-    one of our per-device WebFig names, so it sees every path — ``/``,
-    ``/assets/...``, ``/webfig/``, and whatever the bundled JS calls at runtime.
-    Nothing is rewritten: the origin root *is* the router, so its own absolute
-    paths already point back here.
+    the WebFig proxy name, so it sees every path — ``/``, ``/assets/...``,
+    ``/webfig/``, and whatever the bundled JS calls at runtime. Nothing is
+    rewritten: the origin root *is* the router, so its own absolute paths already
+    point back here.
+
+    ``pinned_device_id`` comes from a per-device hostname when one is used; the
+    signed token still has to name the same router.
     """
-    if not _valid_token(device_id):
+    device_id = _token_device_id()
+    if device_id is None or (pinned_device_id is not None and device_id != pinned_device_id):
         return Response(
             'WebFig session expired — reopen it from the device page.',
             status=401, mimetype='text/plain',
@@ -203,7 +230,7 @@ def serve_webfig_host(device_id):
     if request.args.get('t'):
         # Host-scoped, so it only ever unlocks this one device.
         resp.set_cookie(
-            _cookie_name(device_id),
+            _COOKIE,
             request.args['t'],
             max_age=_COOKIE_MAX_AGE,
             httponly=True,
@@ -220,10 +247,9 @@ def webfig_host_dispatch():
     Returning None lets normal routing continue, so the hook is inert for every
     ordinary request to the app.
     """
-    device_id = device_id_from_host(request.host)
-    if device_id is None:
+    if not is_webfig_host(request.host):
         return None
-    return serve_webfig_host(device_id)
+    return serve_webfig_host(device_id_from_host(request.host))
 
 
 @webfig_bp.route('/<int:device_id>/webfig/', defaults={'subpath': ''},
@@ -237,7 +263,7 @@ def webfig_legacy_redirect(device_id, subpath):
     """
     token = request.args.get('t', '')
     scheme = 'https' if request.is_secure else 'http'
-    host = webfig_host_for(device_id, request.host)
+    host = webfig_host_for(request.host)
     suffix = f'/?t={token}' if token else '/'
     return Response(
         status=302,
