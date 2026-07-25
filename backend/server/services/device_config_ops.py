@@ -509,16 +509,43 @@ def _classify_interface(name, itype):
     return t or 'other'
 
 
-def detect_uplink_interface(client):
-    """Name of the port actually carrying the internet feed, or ''.
+def detect_uplink_interfaces(client):
+    """Every interface that must never be bridged into a service bridge.
 
-    Resolved from the active default route first (``immediate-gw`` is
-    ``IP%iface``), then from any DHCP client. Convention — ether1 — is only a
-    last resort: on a board where the WAN is wired to, say, ether5, trusting the
-    convention lets the wizard bridge the uplink into the LAN, which merges the
-    ISP's broadcast domain with the hotspot's. That shows up as link LEDs
-    blinking and every service dropping a second after a device is plugged in.
+    Returns a set holding the interface carrying the active default route, any
+    interface running a DHCP client, and — when either of those is a bridge —
+    that bridge's **member ports**.
+
+    Resolving bridge members is the point. RouterOS boards commonly route the
+    WAN through a factory bridge (``bridgeLocal``), so ``immediate-gw`` names the
+    *bridge*, not the port. Guarding only that name leaves the actual physical
+    uplink (e.g. ether1) looking like a free port: the wizard offers it, the
+    operator assigns it a service, and the ISP's broadcast domain gets merged
+    into the subscriber one — the router loses its own internet and every port
+    flaps as two DHCP servers fight.
+
+    Our own bridges are never treated as uplinks, so a stray DHCP client on the
+    service bridge can't lock the operator out of assigning any port at all.
     """
+    ours = {BRIDGE_NAME, MGMT_BRIDGE_NAME}
+    names = set()
+
+    def add_with_members(name):
+        name = (name or '').strip()
+        if not name or name in ours:
+            return
+        names.add(name)
+        try:
+            out, _err = client.run_cli(
+                f'/interface bridge port print terse where bridge={name}'
+            )
+            for row in _parse_terse_rows(out):
+                member = row.get('interface')
+                if member and member not in ours:
+                    names.add(member)
+        except Exception:  # noqa: BLE001 — detection is best-effort
+            pass
+
     try:
         out, _err = client.run_cli(
             ':local r [/ip route find where dst-address="0.0.0.0/0" active=yes];'
@@ -526,19 +553,18 @@ def detect_uplink_interface(client):
         )
         value = (out or '').strip()
         if '%' in value:
-            iface = value.split('%')[-1].strip().split(',')[0].split()[0]
-            if iface:
-                return iface
-    except Exception:  # noqa: BLE001 — detection is best-effort
+            add_with_members(value.split('%')[-1].strip().split(',')[0].split()[0])
+    except Exception:  # noqa: BLE001
         pass
+
     try:
         out, _err = client.run_cli('/ip dhcp-client print terse')
         for row in _parse_terse_rows(out):
-            if row.get('interface'):
-                return row['interface']
+            add_with_members(row.get('interface'))
     except Exception:  # noqa: BLE001
         pass
-    return ''
+
+    return names
 
 
 def list_interfaces(device):
@@ -553,7 +579,7 @@ def list_interfaces(device):
         all_out, _ = client.run_cli('/interface print terse')
         eth_out, _ = client.run_cli('/interface ethernet print terse')
         res_out, _ = client.run_cli('/system resource print')
-        uplink_name = detect_uplink_interface(client)
+        uplink_names = detect_uplink_interfaces(client)
 
     eth_rows = {r.get('name'): r for r in _parse_terse_rows(eth_out) if r.get('name')}
 
@@ -565,9 +591,10 @@ def list_interfaces(device):
             continue
         kind = _classify_interface(name, row.get('type'))
         eth = eth_rows.get(name, {})
-        if uplink_name:
-            # The port with the default route wins over the ether1 convention.
-            is_uplink = name == uplink_name
+        if uplink_names:
+            # What the router itself routes through wins over the ether1
+            # convention — including ports hidden behind a WAN bridge.
+            is_uplink = name in uplink_names
         else:
             is_uplink = kind == 'ether' and (ether_seen == 0 or name == 'ether1')
         if kind == 'ether':
@@ -1540,16 +1567,20 @@ def configure_services(device, opts):
             # hides the uplink, but it identifies it by convention (ether1) and
             # the WAN is not always there — so enforce it against the router's
             # own routing table, which cannot be wrong.
-            uplink = detect_uplink_interface(client)
-            if uplink and uplink in roles:
-                roles.pop(uplink)
+            uplinks = detect_uplink_interfaces(client)
+            blocked = [port for port in roles if port in uplinks]
+            if blocked:
+                for port in blocked:
+                    roles.pop(port)
                 opts = dict(opts, port_roles=roles)
                 log.append({
                     'step': 'uplink-guard',
                     'status': 'warn',
                     'detail': (
-                        f'{uplink} carries the internet feed (active default route) — '
-                        f'skipped. Bridging the uplink would take the network down.'
+                        f"{', '.join(sorted(blocked))} carries the internet feed "
+                        f"(active default route or DHCP client, including via a WAN "
+                        f"bridge) — skipped. Bridging the uplink merges the ISP's "
+                        f"network into the subscriber one and takes the router offline."
                     ),
                 })
 
