@@ -156,14 +156,25 @@ class Customer(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
 
+    # --- Relationships ---------------------------------------------------
+    # Every table with a FK to customers.id must be reachable from here, or
+    # deleting a customer fails. SQLAlchemy's *default* cascade de-associates
+    # children by setting their FK to NULL, which a NOT NULL column rejects
+    # ("null value in column customer_id ... violates not-null constraint"),
+    # and a child with no relationship at all is never touched, so Postgres
+    # rejects the delete on the FK itself. Two deliberate behaviours below:
+    #   delete-orphan -> the row only exists because the account does.
+    #   default (NULL) -> financial/accounting history that must outlive the
+    #                     account; the column is nullable for exactly that.
+
     # Relationships mapping the customer to multiple devices
     devices = db.relationship('CustomerDevice', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple invoices
-    invoices = db.relationship('Invoice', back_populates="customer")
+    invoices = db.relationship('Invoice', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple payments
-    payments = db.relationship('Payment', back_populates="customer")
+    payments = db.relationship('Payment', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple tickets
-    tickets = db.relationship('Ticket', back_populates="customer")
+    tickets = db.relationship('Ticket', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple notes
     notes = db.relationship('CustomerNote', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple documents
@@ -175,15 +186,34 @@ class Customer(db.Model):
     # Relationship mapping the customer to the related service plan
     service_plan = db.relationship('ServicePlan', back_populates="customers")
     # Relationships mapping the customer to multiple transactions
-    transactions = db.relationship('Transaction', back_populates="customer")
-    # Relationships mapping the customer to multiple revenue data
+    transactions = db.relationship('Transaction', back_populates="customer", cascade='all, delete-orphan')
+    # Revenue rows are kept (customer_id nulled) so revenue/expense reporting
+    # totals don't change when an account is deleted.
     revenue_data = db.relationship('RevenueData', back_populates="customer")
     # Relationships mapping the customer to multiple radius sessions
-    radius_sessions = db.relationship('RadiusSession', back_populates="customer")
+    radius_sessions = db.relationship('RadiusSession', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple radius checks
-    radius_checks = db.relationship('RadiusCheck', back_populates="customer")
+    radius_checks = db.relationship('RadiusCheck', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple radius replies
-    radius_replies = db.relationship('RadiusReply', back_populates="customer")
+    radius_replies = db.relationship('RadiusReply', back_populates="customer", cascade='all, delete-orphan')
+    # Live FreeRADIUS credentials: they must die with the account, otherwise a
+    # deleted subscriber's CPE keeps authenticating.
+    radcheck_rows = db.relationship('RadCheck', back_populates="customer", cascade='all, delete-orphan')
+    radreply_rows = db.relationship('RadReply', back_populates="customer", cascade='all, delete-orphan')
+    radusergroup_rows = db.relationship('RadUserGroup', back_populates="customer", cascade='all, delete-orphan')
+    # Accounting history and redeemed vouchers/codes survive the account with a
+    # NULL customer_id — they are usage/audit records, not account data.
+    radacct_rows = db.relationship('RadAcct', back_populates="customer")
+    vouchers_used = db.relationship(
+        'Voucher',
+        foreign_keys='Voucher.used_by_customer_id',
+        back_populates="used_by_customer",
+    )
+    hotspot_codes_used = db.relationship(
+        'HotspotAccessCode',
+        foreign_keys='HotspotAccessCode.used_by_customer_id',
+        back_populates="used_by_customer",
+    )
     # Relationships mapping the customer to multiple isps
     isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
     isp = db.relationship('ISP', back_populates='customers')
@@ -533,7 +563,11 @@ class Voucher(db.Model):
     # Foreign Key To store customer id (who used the voucher)
     used_by_customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
     # Relationship mapping the voucher to the related customer who used it
-    used_by_customer = db.relationship('Customer', foreign_keys=[used_by_customer_id])
+    used_by_customer = db.relationship(
+        'Customer',
+        foreign_keys=[used_by_customer_id],
+        back_populates="vouchers_used",
+    )
     
     def __repr__(self):
         return f"<Voucher {self.voucher_code} ({self.voucher_type})>"
@@ -1259,6 +1293,11 @@ class HotspotAccessCode(db.Model):
     isp = db.relationship('ISP', backref='hotspot_access_codes')
     plan = db.relationship('ServicePlan')
     device = db.relationship('MikrotikDevice')
+    used_by_customer = db.relationship(
+        'Customer',
+        foreign_keys=[used_by_customer_id],
+        back_populates="hotspot_codes_used",
+    )
 
     __table_args__ = (
         db.UniqueConstraint('isp_id', 'code', name='uq_hotspot_access_code'),
@@ -1726,7 +1765,7 @@ class RadCheck(db.Model):
     
     # Relationships
     isp = db.relationship('ISP')
-    customer = db.relationship('Customer')
+    customer = db.relationship('Customer', back_populates="radcheck_rows")
     
     def __repr__(self):
         return f"<RadCheck {self.username} ({self.attribute})>"
@@ -1748,7 +1787,7 @@ class RadReply(db.Model):
     
     # Relationships
     isp = db.relationship('ISP')
-    customer = db.relationship('Customer')
+    customer = db.relationship('Customer', back_populates="radreply_rows")
     
     def __repr__(self):
         return f"<RadReply {self.username} ({self.attribute})>"
@@ -1792,7 +1831,7 @@ class RadAcct(db.Model):
     
     # Relationships
     isp = db.relationship('ISP')
-    customer = db.relationship('Customer')
+    customer = db.relationship('Customer', back_populates="radacct_rows")
     mikrotik_device = db.relationship('MikrotikDevice')
     
     def __repr__(self):
@@ -1854,7 +1893,7 @@ class RadUserGroup(db.Model):
     
     # Relationships
     isp = db.relationship('ISP')
-    customer = db.relationship('Customer')
+    customer = db.relationship('Customer', back_populates="radusergroup_rows")
     
     def __repr__(self):
         return f"<RadUserGroup {self.username} -> {self.groupname}>"
