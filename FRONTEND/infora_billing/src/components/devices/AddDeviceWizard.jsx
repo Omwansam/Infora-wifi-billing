@@ -179,7 +179,14 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
   };
 
   useEffect(() => {
-    if (step === 3 && createdDevice && !discovery) loadDiscovery();
+    if (!createdDevice) return;
+    // Step 3 reads once; step 4 ALWAYS re-reads. Role assignment must reflect
+    // the router as it is now — a cached snapshot can still list a port the
+    // server has since reclassified as the uplink (e.g. once it resolved a WAN
+    // bridge to its member ports), and offering that port invites bridging the
+    // internet feed into the subscriber network.
+    if (step === 3) loadDiscovery();
+    else if (step === 4) loadDiscovery(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, createdDevice]);
 
@@ -926,12 +933,32 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                       {' '}<strong>Both</strong> allows either.
                     </p>
 
-                    {etherInterfaces.some((i) => i.is_uplink) && (
-                      <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-xs text-amber-800 mb-3">
-                        <Info className="h-3.5 w-3.5 inline mr-1 -mt-0.5" />
-                        The <strong>uplink / WAN</strong> port (internet feed) is hidden — it is never assigned to a service.
-                      </div>
-                    )}
+                    {(() => {
+                      // Name the protected port(s). "Some port is hidden" is not
+                      // actionable — an operator who expected ether1 in the list
+                      // cannot tell whether it was recognised as the uplink or
+                      // the list is simply stale.
+                      const uplinks = allInterfaces.filter((i) => i.is_uplink).map((i) => i.name);
+                      if (uplinks.length > 0) {
+                        return (
+                          <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-xs text-amber-800 mb-3">
+                            <Info className="h-3.5 w-3.5 inline mr-1 -mt-0.5" />
+                            <strong className="font-mono">{uplinks.join(', ')}</strong>{' '}
+                            {uplinks.length > 1 ? 'carry' : 'carries'} the internet feed
+                            (active default route) and {uplinks.length > 1 ? 'are' : 'is'} hidden —
+                            never assigned to a service. Ports inside a WAN bridge are protected too.
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800 mb-3">
+                          <Info className="h-3.5 w-3.5 inline mr-1 -mt-0.5" />
+                          <strong>No uplink detected.</strong> The router has no active default
+                          route, so we cannot tell which port carries the internet. Assign roles
+                          carefully — bridging the WAN port would take the router offline.
+                        </div>
+                      );
+                    })()}
 
                     {ifaceError ? (
                       <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-500">
