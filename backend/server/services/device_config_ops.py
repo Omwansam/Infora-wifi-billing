@@ -1000,13 +1000,20 @@ def build_services_commands(opts):
                 # a "forget network".
                 f'/ip dhcp-server add name={DHCP_NAME} interface={BRIDGE_NAME} '
                 f'address-pool={POOL_NAME} lease-time=1h disabled=no',
-                f':do {{/ip dhcp-server network remove [find address={params["subnet"]}]}} on-error={{}}',
+                # Quote the address: the value contains a '/', and unquoted the
+                # find matches nothing, so the remove no-ops and the add below
+                # fails with "such network already exists" on every re-run —
+                # which now (correctly) fails the whole apply. Also clear by
+                # comment so a network added under a previous subnet goes too.
+                f':do {{/ip dhcp-server network remove [find comment="infora-billing"]}} on-error={{}}',
+                f':do {{/ip dhcp-server network remove [find address="{params["subnet"]}"]}} on-error={{}}',
                 # DNS = the router itself. The captive portal only fires when the
                 # hotspot can answer (and rewrite) client DNS; handing out 8.8.8.8
                 # makes phones resolve straight through and never show the
                 # "Sign in to network" sheet.
                 f'/ip dhcp-server network add address={params["subnet"]} '
-                f'gateway={params["gateway"]} dns-server={params["gateway"]}',
+                f'gateway={params["gateway"]} dns-server={params["gateway"]} '
+                f'comment="infora-billing"',
             ],
         ))
         # …and the router needs a working resolver to answer them.
