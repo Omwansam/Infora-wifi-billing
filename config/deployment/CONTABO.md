@@ -826,3 +826,52 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml <command>
 7. [ ] `docker compose ... build && up -d` (Part 7)
 8. [ ] Verify health URLs (Part 9)
 9. [ ] Admin + ISP + MikroTik (Parts 10–11)
+
+## WebFig one-click proxy (per-device hostname)
+
+`Open WebFig` proxies a router's web UI through the platform, so an operator does
+not need the WireGuard client. It is served on a **per-device hostname** —
+`webfig-<id>.<domain>` — not a subpath, because RouterOS 7's WebFig is
+root-absolute:
+
+```html
+<link href="/assets/style-2d2fe181ac93.css" rel="stylesheet">
+<script>if (location.pathname.endsWith("/webfig")) location.href = "/webfig/";</script>
+```
+
+That inline redirect is hardcoded to the origin root, so under any prefix the
+browser is thrown out of the proxy. Serving the root of a dedicated origin makes
+those absolute paths land back on us.
+
+**Development** needs no setup: browsers resolve any `*.localhost` to loopback,
+so `http://webfig-37.localhost:5000` works as-is.
+
+**Production** needs three things:
+
+1. A wildcard DNS record pointing at the server, on a name the TLS certificate
+   covers. `ruirufactory.crt` covers `*.ruirufactorymabati.com`, so use
+   `webfig-<id>.ruirufactorymabati.com` — **not** `webfig-<id>.billing.…`, which
+   is a second-level wildcard the cert does not cover.
+2. `WEBFIG_PROXY_DOMAIN=ruirufactorymabati.com` in the prod `.env`, passed
+   through to `flask_app`. Without it the host is derived from the request and
+   you get the uncovered sub-sub-domain.
+3. A dan-proxy vhost forwarding the whole origin to Flask:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name ~^webfig-\d+\.ruirufactorymabati\.com$;
+    ssl_certificate     /etc/nginx/ssl/ruirufactory.crt;
+    ssl_certificate_key /etc/nginx/ssl/ruirufactory.key;
+    location / {
+        proxy_pass http://172.17.0.1:5080;
+        proxy_set_header Host $host;          # the Host IS the routing key
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+    }
+}
+```
+
+`Host` must be preserved — Flask picks the device out of it. Reload with
+`docker exec dan-proxy-1 nginx -t && docker exec dan-proxy-1 nginx -s reload`;
+never recreate that container (it fronts other live sites).

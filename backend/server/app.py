@@ -234,6 +234,19 @@ with app.app_context():
 
 
 @app.before_request
+def serve_webfig_when_host_matches():
+    """Proxy the whole origin to a router's WebFig on webfig-<id>.* hostnames.
+
+    Registered before the CORS hook so it owns those hosts entirely. Inert for
+    every normal request — it returns None unless the Host header is one of ours.
+    RouterOS 7's WebFig is full of root-absolute paths and cannot be served under
+    a prefix, which is why this is host-based; see routes/webfig_proxy.py.
+    """
+    from routes.webfig_proxy import webfig_host_dispatch
+    return webfig_host_dispatch()
+
+
+@app.before_request
 def handle_api_preflight():
     """Return 200 for CORS preflight on all API routes."""
     if request.method == 'OPTIONS' and request.path.startswith('/api/'):

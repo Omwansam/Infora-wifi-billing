@@ -4,22 +4,36 @@ Two ways for an operator to reach a provisioned router's web/winbox management,
 both riding the management WireGuard tunnel (10.250.0.0/24):
 
   * ``POST /api/devices/<id>/webfig/session`` mints a short-lived signed token and
-    returns a proxy URL. Opening it puts a scoped cookie in the browser; every
-    following request under ``/api/devices/<id>/webfig/...`` is proxied from the
-    Flask container (which routes into the tunnel and is masqueraded as the
-    billing server) to ``http://<router-vpn-ip>:80``. One click, no VPN on the
-    operator's machine. WebFig uses a mix of relative/absolute asset paths, so
-    the HTML is rewritten best-effort; if a skin renders oddly, use the client
-    config below.
+    returns a URL on a **per-device hostname** — ``webfig-<id>.<base>``. Opening
+    it proxies the whole origin, from ``/`` down, to ``http://<router-vpn-ip>:80``
+    through the Flask container (which routes into the tunnel). One click, no VPN
+    on the operator's machine.
   * ``GET /api/devices/webfig/vpn-client-config`` returns a WireGuard .conf that
     adds the operator's laptop to the tunnel, after which ``http://<router-vpn-ip>``
     (WebFig) and ``<router-vpn-ip>:8291`` (Winbox) work directly.
 
-Auth: the JSON endpoints require a JWT; the raw proxy stream authenticates via
-the signed cookie the session endpoint sets (a browser <img>/<script> request
-can't carry an Authorization header).
+**Why a hostname and not a subpath.** RouterOS 7's WebFig cannot be served under
+a prefix. Its own HTML is root-absolute::
+
+    <link href="/assets/style-2d2fe181ac93.css" rel="stylesheet">
+    <script>if (location.pathname.endsWith("/webfig")) location.href = "/webfig/";</script>
+
+That inline redirect is hardcoded to the origin root, so under ``/api/devices/37/
+webfig/`` the browser is thrown straight out of the proxy — and no amount of HTML
+rewriting reaches URLs the bundled JS builds at runtime. Proxying the *root of a
+dedicated origin* makes every one of those absolute paths land back on us.
+
+Dev needs no DNS: browsers resolve any ``*.localhost`` name to loopback, so
+``http://webfig-37.localhost:5000`` works out of the box. In production point a
+wildcard record at the server and set ``WEBFIG_PROXY_DOMAIN``; see
+``config/deployment/`` for the nginx vhost.
+
+Auth: the JSON endpoints require a JWT; the proxied stream authenticates via the
+signed cookie the first request sets (a browser <img>/<script> request can't
+carry an Authorization header). The cookie is host-scoped, so it is naturally
+confined to one device.
 """
-import re
+import os
 
 import requests
 from flask import Blueprint, request, jsonify, current_app, Response
@@ -51,6 +65,42 @@ def _cookie_name(device_id):
     return f'infora_webfig_{device_id}'
 
 
+_HOST_PREFIX = 'webfig-'
+
+
+def webfig_host_for(device_id, request_host):
+    """Hostname (with port) that proxies this device's WebFig at its root.
+
+    ``WEBFIG_PROXY_DOMAIN`` wins when set — production needs a name the wildcard
+    TLS certificate actually covers, which a sub-sub-domain of the app host
+    usually is not. Otherwise derive from whatever host the operator is already
+    on, which gives ``webfig-37.localhost:5000`` in development for free.
+    """
+    configured = (os.getenv('WEBFIG_PROXY_DOMAIN') or '').strip().strip('/')
+    if configured:
+        return f'{_HOST_PREFIX}{device_id}.{configured}'
+
+    host = (request_host or 'localhost').split('@')[-1]
+    name, _, port = host.partition(':')
+    # A label cannot be prefixed onto an IP literal — webfig-37.127.0.0.1 does
+    # not resolve. Browsers do resolve any *.localhost to loopback, so that is
+    # the right dev fallback when the operator is on a bare IP.
+    if not name or name.replace('.', '').isdigit() or ':' in name:
+        name = 'localhost'
+    suffix = f':{port}' if port else ''
+    return f'{_HOST_PREFIX}{device_id}.{name}{suffix}'
+
+
+def device_id_from_host(host):
+    """Device id when ``host`` is one of our WebFig hostnames, else None."""
+    name = (host or '').split(':')[0]
+    label = name.split('.')[0]
+    if not label.startswith(_HOST_PREFIX):
+        return None
+    raw = label[len(_HOST_PREFIX):]
+    return int(raw) if raw.isdigit() else None
+
+
 def _authz_device(device_id):
     """Return (device, error_response). Enforces JWT-user ISP scoping."""
     device = MikrotikDevice.query.get_or_404(device_id)
@@ -73,9 +123,9 @@ def webfig_session(device_id):
         return jsonify({'error': 'Device has no management WireGuard tunnel'}), 400
 
     token = _serializer().dumps({'d': device_id, 'u': get_jwt_identity()})
-    base = request.host_url.rstrip('/')
-    url = f'{base}/api/devices/{device_id}/webfig/?t={token}'
-    return jsonify({'url': url}), 200
+    scheme = 'https' if request.is_secure else 'http'
+    host = webfig_host_for(device_id, request.host)
+    return jsonify({'url': f'{scheme}://{host}/?t={token}', 'host': host}), 200
 
 
 def _valid_token(device_id):
@@ -90,37 +140,42 @@ def _valid_token(device_id):
     return data.get('d') == device_id
 
 
-def _rewrite_html(body, prefix):
-    """Best-effort: make WebFig's asset paths resolve under the proxy prefix."""
-    text = body.decode('utf-8', errors='replace')
-    # Inject a <base> so relative refs resolve under our prefix.
-    if '<head' in text.lower() and '<base' not in text.lower():
-        text = re.sub(r'(<head[^>]*>)', r'\1<base href="' + prefix + '/">', text, count=1, flags=re.IGNORECASE)
-    # Rewrite root-absolute src/href/action to the prefix (skip //, data:, http).
-    text = re.sub(r'((?:src|href|action)\s*=\s*["\'])/(?!/)', r'\1' + prefix + '/', text, flags=re.IGNORECASE)
-    return text.encode('utf-8')
+def serve_webfig_host(device_id):
+    """Proxy this request to the device's WebFig. Serves the whole origin root.
 
-
-@webfig_bp.route('/<int:device_id>/webfig/', defaults={'subpath': ''},
-                 methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'])
-@webfig_bp.route('/<int:device_id>/webfig/<path:subpath>',
-                 methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'])
-def webfig_proxy(device_id, subpath):
-    """Stream a request through to the router's WebFig over the tunnel."""
+    Called from an app-level ``before_request`` hook whenever the Host header is
+    one of our per-device WebFig names, so it sees every path — ``/``,
+    ``/assets/...``, ``/webfig/``, and whatever the bundled JS calls at runtime.
+    Nothing is rewritten: the origin root *is* the router, so its own absolute
+    paths already point back here.
+    """
     if not _valid_token(device_id):
-        return Response('WebFig session expired — reopen from the dashboard.', status=401)
+        return Response(
+            'WebFig session expired — reopen it from the device page.',
+            status=401, mimetype='text/plain',
+        )
 
-    device = MikrotikDevice.query.get_or_404(device_id)
+    device = MikrotikDevice.query.get(device_id)
+    if device is None:
+        return Response('Unknown device.', status=404, mimetype='text/plain')
     if not (device.management_wg_enabled and device.management_wg_ip):
-        return jsonify({'error': 'Device has no management WireGuard tunnel'}), 400
+        return Response('Device has no management WireGuard tunnel.',
+                        status=400, mimetype='text/plain')
 
     host = connection_host(device)
-    # Drop our own bootstrap token from the forwarded query string.
+    # Drop our own bootstrap token so it never reaches the router.
     args = {k: v for k, v in request.args.items() if k != 't'}
-    target = f'http://{host}/{subpath}'
+    target = f'http://{host}{request.path}'
 
-    fwd_headers = {k: v for k, v in request.headers if k.lower() not in _HOP_BY_HOP
-                   and k.lower() not in ('host', 'cookie')}
+    fwd_headers = {
+        k: v for k, v in request.headers
+        if k.lower() not in _HOP_BY_HOP and k.lower() not in ('host', 'cookie')
+    }
+    # Forward only the router's own cookies (its session), never ours.
+    router_cookies = {
+        k: v for k, v in request.cookies.items() if not k.startswith('infora_webfig')
+    }
+
     try:
         upstream = requests.request(
             method=request.method,
@@ -128,38 +183,25 @@ def webfig_proxy(device_id, subpath):
             params=args,
             data=request.get_data(),
             headers=fwd_headers,
-            cookies=None,
+            cookies=router_cookies,
             allow_redirects=False,
-            stream=True,
             timeout=(5, 30),
         )
     except requests.RequestException as exc:
         return Response(
-            f'Could not reach the router over the tunnel ({exc}). '
-            'Confirm the device is Online, then retry.',
-            status=502,
+            f'Could not reach the router over the tunnel ({exc}).\n'
+            'Confirm the device is Online, then reopen WebFig.',
+            status=502, mimetype='text/plain',
         )
 
-    prefix = f'/api/devices/{device_id}/webfig'
-    ctype = upstream.headers.get('Content-Type', '')
-
-    body = upstream.content
-    if 'text/html' in ctype.lower():
-        body = _rewrite_html(body, prefix)
-
-    resp = Response(body, status=upstream.status_code)
-    for k, v in upstream.headers.items():
-        if k.lower() in _HOP_BY_HOP:
+    resp = Response(upstream.content, status=upstream.status_code)
+    for key, value in upstream.headers.items():
+        if key.lower() in _HOP_BY_HOP:
             continue
-        if k.lower() == 'location':
-            # Keep redirects inside the proxy prefix.
-            if v.startswith('/'):
-                v = prefix + v
-            resp.headers[k] = v
-            continue
-        resp.headers[k] = v
+        resp.headers[key] = value
 
     if request.args.get('t'):
+        # Host-scoped, so it only ever unlocks this one device.
         resp.set_cookie(
             _cookie_name(device_id),
             request.args['t'],
@@ -167,9 +209,40 @@ def webfig_proxy(device_id, subpath):
             httponly=True,
             samesite='Lax',
             secure=request.is_secure,
-            path=prefix,
+            path='/',
         )
     return resp
+
+
+def webfig_host_dispatch():
+    """Flask ``before_request`` hook: serve WebFig when the Host is ours.
+
+    Returning None lets normal routing continue, so the hook is inert for every
+    ordinary request to the app.
+    """
+    device_id = device_id_from_host(request.host)
+    if device_id is None:
+        return None
+    return serve_webfig_host(device_id)
+
+
+@webfig_bp.route('/<int:device_id>/webfig/', defaults={'subpath': ''},
+                 methods=['GET'])
+@webfig_bp.route('/<int:device_id>/webfig/<path:subpath>', methods=['GET'])
+def webfig_legacy_redirect(device_id, subpath):
+    """Old subpath entry point — bounce to the per-device host.
+
+    Kept so existing links/bookmarks still land somewhere useful rather than
+    rendering a broken WebFig.
+    """
+    token = request.args.get('t', '')
+    scheme = 'https' if request.is_secure else 'http'
+    host = webfig_host_for(device_id, request.host)
+    suffix = f'/?t={token}' if token else '/'
+    return Response(
+        status=302,
+        headers={'Location': f'{scheme}://{host}{suffix}'},
+    )
 
 
 @webfig_bp.route('/webfig/vpn-client-config', methods=['GET'])

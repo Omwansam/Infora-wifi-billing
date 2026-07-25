@@ -349,15 +349,21 @@ export default function DeviceDetailPage() {
                   >
                     <Download className="h-4 w-4" /> Download VPN client config
                   </button>
-                  <a
-                    href={`http://${wgHost}`} target="_blank" rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => deviceService.openWebfig(getAccessToken(), device.id)
+                      .catch((e) => toast.error(e.message))}
                     className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
-                    <ExternalLink className="h-4 w-4" /> Open WebFig ({wgHost})
-                  </a>
+                    <ExternalLink className="h-4 w-4" /> Open WebFig
+                  </button>
                 </div>
                 <p className="mt-1 text-[11px] text-slate-400">
-                  RouterOS 7’s web UI must be reached over the VPN — it can’t be proxied under a subpath. Import the client config into WireGuard and <strong>connect</strong>, then “Open WebFig” (<code>http://{wgHost}</code>) and Winbox (<code>{wgHost}:8291</code>) work directly.
+                  <strong>Open WebFig</strong> proxies the router through the platform — no VPN needed on
+                  your machine. It opens a per-device address (<code>webfig-{device.id}.…</code>) because
+                  RouterOS 7 serves WebFig from root-absolute paths and cannot run under a subpath.
+                  Prefer a direct connection? <strong>Download VPN client config</strong>, connect in
+                  WireGuard, then reach <code>http://{wgHost}</code> and Winbox <code>{wgHost}:8291</code> yourself.
                 </p>
               </div>
             </div>
