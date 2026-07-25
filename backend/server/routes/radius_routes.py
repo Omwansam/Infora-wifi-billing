@@ -159,8 +159,13 @@ def get_active_sessions():
         if query is None:
             return jsonify({'error': 'User not associated with any ISP'}), 403
 
+        # Shared online definition: a session whose NAS stopped sending interim
+        # updates is dead, even though no Accounting-Stop ever arrived.
+        from services.session_tracking import link_unattributed_sessions, online_filter
+
+        link_unattributed_sessions()
         records = (
-            query.filter(RadAcct.acctstoptime.is_(None))
+            query.filter(online_filter())
             .order_by(RadAcct.acctstarttime.desc())
             .limit(500)
             .all()

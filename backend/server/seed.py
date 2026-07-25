@@ -1647,44 +1647,16 @@ def seed_fup_monitor_data():
         print("  ↳ RADIUS accounting rows already present — updated plan FUP settings only")
         return
 
-    nas_ip = device.device_ip if device else '192.168.1.1'
-    device_id = device.id if device else None
-    now = datetime.now()
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    GB = 1024 ** 3
-
-    demo_sessions = [
-        ('john.smith@email.com', 1, 42 * GB, True),
-        ('grace.wanjiku@email.com', 6, 52 * GB, False),
-        ('sarah.j@email.com', 2, 28 * GB, False),
-        ('peter.otieno@email.com', 7, 12 * GB, False),
-    ]
-
-    for idx, (email, customer_id, total_bytes, is_live) in enumerate(demo_sessions):
-        customer = Customer.query.get(customer_id)
-        if not customer:
-            continue
-        download = int(total_bytes * 0.75)
-        upload = int(total_bytes * 0.25)
-        session_id = f'fup-demo-{customer_id}-{idx}'
-        db.session.add(RadAcct(
-            acctsessionid=session_id,
-            acctuniqueid=f'uniq-{session_id}',
-            username=email.strip().lower(),
-            nasipaddress=nas_ip,
-            acctstarttime=month_start + timedelta(hours=idx + 1),
-            acctstoptime=None if is_live else month_start + timedelta(days=idx + 2),
-            acctsessiontime=3600 * (idx + 1),
-            acctinputoctets=upload,
-            acctoutputoctets=download,
-            framedipaddress=f'10.10.0.{10 + idx}',
-            isp_id=customer.isp_id,
-            customer_id=customer.id,
-            mikrotik_device_id=device_id,
-        ))
-
+    # Deliberately no demo radacct rows.
+    #
+    # This used to insert four sessions, one left open (acctstoptime=NULL), to
+    # make the FUP monitor look populated. An open row is indistinguishable from
+    # a live session, so "Online users" showed a subscriber who was never
+    # connected — permanently, since nothing ever closes a row nobody opened.
+    # Accounting is written by FreeRADIUS from real NAS traffic; anything else
+    # here is a lie the whole dashboard then repeats.
     db.session.commit()
-    print("  ↳ FUP plans configured and RADIUS usage records added")
+    print("  ↳ FUP plans configured (accounting comes from live RADIUS only)")
 
 
 def main():

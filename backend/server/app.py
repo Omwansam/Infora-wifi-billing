@@ -227,10 +227,31 @@ def purge_legacy_radius_accept_rows():
         app.logger.warning('RADIUS Auth-Type cleanup skipped: %s', exc)
 
 
+def purge_demo_accounting_rows():
+    """Delete the seeded ``fup-demo-*`` radacct rows.
+
+    One of them was left open, so it read as a permanently-connected subscriber
+    in Online users, the dashboard session counts and the FUP monitor. Real
+    accounting only ever comes from FreeRADIUS. Idempotent.
+    """
+    try:
+        from models import RadAcct
+        removed = RadAcct.query.filter(
+            RadAcct.acctsessionid.like('fup-demo-%')
+        ).delete(synchronize_session=False)
+        if removed:
+            db.session.commit()
+            app.logger.info('Removed %d demo RADIUS accounting rows', removed)
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.warning('Demo accounting cleanup skipped: %s', exc)
+
+
 with app.app_context():
     ensure_schema_upgrades()
     backfill_account_numbers()
     purge_legacy_radius_accept_rows()
+    purge_demo_accounting_rows()
 
 
 @app.before_request

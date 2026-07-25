@@ -161,17 +161,30 @@ def _safe_radius_period_stats(start, end=None, router_id=None, isp_id=None):
 
 
 def _session_counts(router_id=None, isp_id=None):
-    query = RadAcct.query.filter(RadAcct.acctstoptime.is_(None))
+    """Live sessions, split by service.
+
+    Uses the shared online definition rather than a bare
+    ``acctstoptime IS NULL``: a router that dies mid-session never sends an
+    Accounting-Stop, and those rows would otherwise be counted as connected
+    forever. See services/session_tracking.
+    """
+    from services.session_tracking import link_unattributed_sessions, online_filter
+
+    link_unattributed_sessions()
+    query = RadAcct.query.filter(online_filter())
     query = _apply_radacct_scope(query, router_id, isp_id)
     records = query.all()
     counts = _empty_session_counts()
     for record in records:
         counts['all'] += 1
         customer = record.customer
-        if customer and customer.connection_type == 'hotspot':
-            counts['hotspot'] += 1
+        # Fall back to the session's own protocol when the row is not linked to a
+        # customer — Framed-Protocol is PPP for a PPPoE dial, absent for hotspot.
+        if customer is not None:
+            is_hotspot = customer.connection_type == 'hotspot'
         else:
-            counts['pppoe'] += 1
+            is_hotspot = (record.framedprotocol or '').strip().upper() != 'PPP'
+        counts['hotspot' if is_hotspot else 'pppoe'] += 1
     return counts
 
 

@@ -6,6 +6,7 @@ from sqlalchemy import func
 from extensions import db
 from models import Customer, RadAcct, ServicePlan
 from services.plan_utils import extract_package_policy, get_plan_data_cap_gb
+from services.session_tracking import link_unattributed_sessions, online_customer_ids
 
 GB = 1024 ** 3
 
@@ -80,18 +81,18 @@ def _build_usage_maps(period_start, isp_id=None):
 
 
 def _lookup_usage(customer, by_id, by_username):
-    email = (customer.email or '').strip().lower()
-    return by_id.get(customer.id) or by_username.get(email, 0)
+    """Bytes for this customer, by id first then by their RADIUS login.
 
+    Matching on the email alone missed every subscriber whose operator-set
+    ``radius_login`` differs from it — imported clients keep their original PPPoE
+    username precisely so their CPE keeps dialling unchanged, so those are
+    exactly the accounts whose usage silently read as zero.
+    """
+    from services.radius_provisioning import radius_username
 
-def _online_customer_ids(isp_id=None):
-    q = RadAcct.query.filter(
-        RadAcct.acctstoptime.is_(None),
-        RadAcct.customer_id.isnot(None),
-    )
-    if isp_id:
-        q = q.filter(RadAcct.isp_id == isp_id)
-    return {row.customer_id for row in q.with_entities(RadAcct.customer_id).all()}
+    if by_id.get(customer.id):
+        return by_id[customer.id]
+    return by_username.get(radius_username(customer), 0)
 
 
 def _build_row(customer, plan, usage_cache, online_ids, now, isp_id=None):
@@ -136,7 +137,11 @@ def get_fup_monitor_rows(
 ):
     now = datetime.now()
     usage_cache = {}
-    online_ids = _online_customer_ids(isp_id)
+    # Attribute any accounting rows that arrived before their subscriber existed
+    # (or predate the accounting query resolving customer_id) so both the usage
+    # totals and the online flag see them.
+    link_unattributed_sessions()
+    online_ids = online_customer_ids(isp_id, now)
 
     query = (
         Customer.query.join(ServicePlan, Customer.service_plan_id == ServicePlan.id)
