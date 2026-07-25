@@ -63,7 +63,11 @@ def portal_captive_redirect():
     # NOTE: neither an f-string nor %-formatted — the page is full of CSS braces,
     # `100%` widths and MikroTik `$(...)` tokens, all of which those would mangle.
     # Plain token replacement keeps the markup readable and literal.
+    # Marker the router-side verification greps for. A file merely *named*
+    # login.html proves nothing — MikroTik ships its own — so the check reads the
+    # served bytes back and looks for this.
     html = '''<!DOCTYPE html>
+<!-- infora-captive-portal -->
 <html>
 <head>
 <meta charset="utf-8">

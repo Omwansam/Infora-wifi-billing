@@ -1108,17 +1108,32 @@ def build_services_commands(opts):
                 critical=False,
             ))
 
-        # External captive portal — fetch the login page that carries MikroTik's
-        # own login form *and* the link into our SPA.
+        # External captive portal — overwrite login.html *inside the directory
+        # the profile already serves from*, resolved on the router at run time.
+        #
+        # Do not hardcode the path and do not re-point html-directory. On a
+        # flash-backed board (hEX) RouterOS canonicalises the profile's
+        # `html-directory=hotspot` to `flash/hotspot`, while `/tool fetch
+        # dst-path=hotspot/login.html` writes to a *separate* top-level
+        # `hotspot/` directory. The fetch then "succeeds", the profile keeps
+        # serving MikroTik's stock 4.4 KB login.html, and subscribers get the
+        # RouterOS sign-in box with no way to buy a package.
+        #
+        # Writing into the profile's own directory also preserves the stock
+        # error.html / errors.txt / alogin.html beside it, which the hotspot
+        # needs for failed logins and the post-login page.
         redirect_api = (opts.get('captive_redirect_fetch_url') or '').replace('"', '')
         if redirect_api:
+            resolve_dir = (
+                ':local d [/ip hotspot profile get [find name=infora] html-directory];'
+                ' :if ([:len $d] = 0) do={ :set d "hotspot" };'
+            )
             steps.append(_step(
                 'captive-login',
                 [
-                    ':do {/file remove [find name="hotspot/login.html"]} on-error={}',
-                    f'/tool fetch url="{redirect_api}" check-certificate=no '
-                    f'dst-path=hotspot/login.html',
-                    ':do {/ip hotspot profile set [find name=infora] html-directory=hotspot} on-error={}',
+                    resolve_dir + ' :do {/file remove [find name="$d/login.html"]} on-error={}',
+                    resolve_dir + f' /tool fetch url="{redirect_api}" check-certificate=no'
+                                  f' dst-path="$d/login.html"',
                 ],
             ))
 
@@ -1425,20 +1440,23 @@ def _verify_services(client, params):
             else 'allow-remote-requests is off — phones resolve past the portal and '
                  'never show the sign-in sheet')
 
-        files = cli('/file print terse')
-        add('hotspot-login', 'Captive-portal login page present',
-            'login.html' in files,
-            'hotspot/login.html on flash' if 'login.html' in files
-            else "login.html not fetched — subscribers get MikroTik's default page "
-                 'with no link into the billing portal')
-
-        # The fetched page only gets served if the profile points at the folder
-        # it landed in; a mismatch renders MikroTik's stock page instead of ours.
+        # Read back the bytes the hotspot actually serves. A file *named*
+        # login.html proves nothing — MikroTik ships its own — and trusting the
+        # name is what let a router keep serving the stock RouterOS sign-in box
+        # while this reported the captive portal as configured.
+        served = cli(
+            ':local d [/ip hotspot profile get [find name=infora] html-directory];'
+            ' :if ([:len $d] = 0) do={ :set d "hotspot" };'
+            ' :put [:pick [/file get [find name="$d/login.html"] contents] 0 200]'
+        )
+        is_ours = 'infora-captive-portal' in served
         profile = _parse_kv(cli('/ip hotspot profile print where name=infora'))
-        html_dir = profile.get('html-directory', '')
-        add('hotspot-html-dir', 'Hotspot profile serves the fetched login page',
-            html_dir.strip('"') in ('hotspot', ''),
-            f'html-directory={html_dir or "hotspot (default)"}')
+        html_dir = (profile.get('html-directory') or 'hotspot').strip('"')
+        add('hotspot-login', 'Hotspot serves OUR captive-portal page',
+            is_ours,
+            f'infora page served from {html_dir}/login.html' if is_ours
+            else f"{html_dir}/login.html is not our page — subscribers get MikroTik's "
+                 'stock sign-in box with no way to buy a package')
 
         # FastTrack bypasses the hotspot's dynamic rules entirely: an
         # unauthenticated client gets full HTTPS and RADIUS sees no accounting.
