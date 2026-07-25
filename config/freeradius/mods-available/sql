@@ -11,7 +11,18 @@ sql {
 
     read_groups = yes
     group_attribute = "SQL-Group"
-    group_membership_query = "SELECT groupname FROM radusergroup WHERE username = '%{SQL-User-Name}' ORDER BY priority"
 
+    # REQUIRED. rlm_sql defaults this to "", and with an empty value it never
+    # creates the SQL-User-Name attribute at all — every query then runs as
+    # `WHERE lower(username) = lower('')`, matches nothing, and the subscriber is
+    # rejected with no obvious reason in the log. Prefer the realm-stripped name
+    # when `suffix` produced one, else the raw User-Name.
+    sql_user_name = "%{%{Stripped-User-Name}:-%{User-Name}}"
+
+    # Every lookup is case-insensitive: MikroTik sends the username exactly as
+    # the subscriber typed it on the CPE, while we store it lowercased. The
+    # queries (including group_membership_query, which decides whether the plan's
+    # rate limit is applied at all) live in queries.conf — do NOT re-declare one
+    # here, an override without lower() silently drops the plan group.
     $INCLUDE ${modconfdir}/sql/main/${dialect}/queries.conf
 }

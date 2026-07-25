@@ -112,7 +112,19 @@ def portal_entry_url(isp_id=None, router_id=None, tab=None, isp=None):
 
 
 def portal_hostnames(isp=None):
-    """Hostnames to allow in MikroTik walled garden."""
+    """Hostnames to allow in the MikroTik walled garden (reachable *before* login).
+
+    Only the portal, the API and the payment gateway belong here.
+
+    Deliberately excluded: the OS captive-portal probe hosts
+    (``connectivitycheck.gstatic.com``, ``captive.apple.com``,
+    ``www.msftconnecttest.com``, ``clients3.google.com``) and ``www.google.com``.
+    Those probes exist *to be intercepted* — a phone decides it is behind a
+    captive portal precisely because the probe does not return the expected
+    204/"Success". Allowing them through makes every device conclude it already
+    has internet, so the "Sign in to network" sheet never appears and browsing
+    to google.com works without paying. That was the open-hotspot symptom.
+    """
     hosts = set()
 
     for base in (portal_frontend_base_url(isp), public_base_url()):
@@ -126,12 +138,8 @@ def portal_hostnames(isp=None):
         if domain:
             hosts.add(domain.split('/')[0])
 
+    # Payment gateway only — subscribers must reach M-Pesa to buy a package.
     for h in (
-        'connectivitycheck.gstatic.com',
-        'www.google.com',
-        'clients3.google.com',
-        'captive.apple.com',
-        'www.msftconnecttest.com',
         'safaricom.co.ke',
         'api.safaricom.co.ke',
         'mpesa.safaricom.co.ke',

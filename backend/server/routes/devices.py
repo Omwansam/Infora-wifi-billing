@@ -1045,10 +1045,14 @@ def device_configure_services(device_id):
 
     result = configure_services(device, opts)
 
-    if result.get('success'):
-        # Persist a canonical shape the UI can read directly: hoist the real
-        # applied services/ports/roles from the summary to the top level (the
-        # old code stored hotspot/pppoe=False here, which made the overview show
+    # Persist whenever the router was reached and a plan was applied — including
+    # a partial apply. The stored roles are what the self-check and the device
+    # overview read; dropping them on a partial run made a half-configured router
+    # look unconfigured and hid the very failure the operator needs to fix.
+    if result.get('summary'):
+        # Canonical shape the UI can read directly: hoist the real applied
+        # services/ports/roles from the summary to the top level (the old code
+        # stored hotspot/pppoe=False here, which made the overview show
         # everything as "Not set" even after a successful apply).
         summary = result.get('summary') or {}
         services = summary.get('services') or []
@@ -1063,11 +1067,15 @@ def device_configure_services(device_id):
             'gateway': summary.get('gateway'),
             'anti_sharing': summary.get('anti_sharing', opts.get('anti_sharing')),
             'uplink_dhcp_client': summary.get('uplink_dhcp_client'),
+            'applied_ok': bool(result.get('success')),
             'summary': summary,
         })
         db.session.commit()
 
-    return jsonify(result), (200 if result.get('success') else 502)
+    # 200 even on a partial apply: the body carries the per-step log and the
+    # read-back verification, and the UI needs both to tell the operator what to
+    # fix. A 502 would be swallowed as a transport error and show nothing.
+    return jsonify(result), 200
 
 
 def _lb_authz(device_id):

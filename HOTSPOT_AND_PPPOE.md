@@ -140,12 +140,34 @@ view should list the online device.
 > the admin “Add customer” form (the API rejects creating an *active hotspot* customer
 > directly — see `routes/customers.py`). So the portal purchase **is** the creation step.
 
-### 2.5 Hotspot troubleshooting
+### 2.5 How a hotspot login actually completes
+
+Worth knowing, because the portal runs on the public internet while the thing that puts
+a session online lives on the router:
+
+1. The phone's OS probes a well-known URL. The hotspot intercepts it (this only works
+   because those probe hosts are **not** in the walled garden) → "Sign in to network".
+2. The router serves `hotspot/login.html`, which it fetched from
+   `GET /api/portal/captive-redirect`. That page is a real MikroTik login form posting to
+   `$(link-login-only)`, plus a **Buy a package** button.
+3. The button opens the portal SPA with the hotspot context attached
+   (`?link_login=…&link_orig=…&mac=…&ip=…`). The SPA host is walled-garden allowed.
+4. After M-Pesa/voucher succeeds, the SPA shows the credentials **and** a
+   **Get online now** button, which returns to the router's login page with
+   `?username=&password=`. The page auto-submits and the session goes active.
+
+Steps 2–4 are why a bare redirect page isn't enough: without the form there is nowhere to
+submit credentials, and the subscriber stays offline holding a username and password.
+
+### 2.6 Hotspot troubleshooting
 | Symptom | Fix |
 |---|---|
 | Phone gets `192.168.0.x`, no portal | Tenda DHCP still on, or uplink is in the Tenda **WAN** port. Disable Tenda DHCP; move uplink to a **LAN** port (or use AP mode). |
 | Phone gets `172.31.0.x` but no portal page | Open `http://neverssl.com` (HTTPS won't trigger a redirect). Check `/ip hotspot print` server is `enabled` on `infora-bridge`. |
+| **No "Sign in to network" prompt, and browsing works without paying** | Something reachable before login is answering the phone's captive-probe. Check `/ip hotspot walled-garden print` — it must contain **only** your portal/API host and the Safaricom hosts. `connectivitycheck.gstatic.com`, `captive.apple.com`, `www.msftconnecttest.com` and `www.google.com` must **not** be there: those probes exist to be intercepted, and allowing them tells every device it already has internet. Re-run *Configure services* to rewrite the list. |
+| Portal never opens even though DNS "works" | `/ip dns print` → `allow-remote-requests` must be `yes`. A hotspot answers client DNS from the router; without a resolver nothing redirects. Re-import the provisioning one-liner (it now sets this) or run `/ip dns set servers=8.8.8.8,1.1.1.1 allow-remote-requests=yes`. |
 | **Captive page opens but is blank** (e.g. `10.20.0.1` white screen) | The router couldn't fetch `hotspot/login.html` because the server URL is a **dev/localhost address it can't reach**. Set `PUBLIC_BASE_URL` + `PORTAL_BASE_URL` to your **public** server/portal URL and `FLASK_ENV=production`, then re-run *Configure services*. `GET /api/health/deployment` now flags this. |
+| Bought a package, have credentials, still offline | Use the **Get online now** button on the portal success screen — it returns you to the router's login page and submits for you. Typing them on the MikroTik login form works too. |
 | Portal loads but payment/login fails | RADIUS not reaching the server: `/radius monitor 0`; confirm the device is Online (tunnel up). |
 | Portal loads but pages/assets blocked | Walled-garden missing your portal host — re-run *Configure services*. |
 
@@ -230,7 +252,8 @@ sessions** lists the live PPPoE session with its Framed-IP.
 | Symptom | Fix |
 |---|---|
 | Tenda: “PPPoE server not found” / no session | Uplink is in the Tenda **LAN** port — move it to **WAN**. Confirm `ether5` is on `infora-bridge` and the PPPoE server is enabled. |
-| Tenda: “authentication failed” | Username must be the **exact lowercased email**; password must match the `radius_password`. Re-check by editing the customer and setting a known password. |
+| Tenda: “authentication failed” / “login failed” | First: the customer must be **active with a plan** — a `pending` client has no RADIUS rows on purpose (the create response says so in `radius_provision_reason`). Then check the username is the **exact login** (lowercased email or `radius_login`) and the password matches `radius_password`. If it still fails, watch `docker compose logs -f freeradius` during a dial: an Access-Reject names the reason, and no packet at all means the router isn't a known NAS (`clients.conf`). See §7 for the two config-level causes that produce this for *every* subscriber at once. |
+| Dials, authenticates, then drops and redials every few seconds | The bridge has no gateway address, so the session's `local-address` points nowhere. `/ip address print` must show `172.31.0.1/16` on `infora-bridge`; re-run *Configure services*. |
 | Session dials then drops | Plan expired, or `/radius monitor 0` shows timeouts (tunnel/RADIUS down). Confirm customer status is **active** and subscription not expired. |
 | Connects but no internet | Uplink NAT: the internet port (`ether1`) needs the `infora-masquerade` NAT rule (from provisioning). Check `/ip firewall nat print`. |
 | Wrong service picked (portal instead of PPPoE) | The Tenda is in AP/bridge mode — for PPPoE it must be **router mode with WAN=PPPoE**. |
@@ -240,8 +263,15 @@ sessions** lists the live PPPoE session with its Framed-IP.
 ## 4. Quick reference
 
 **Addressing (default subnet `172.31.0.0/16`, gateway `172.31.0.1`):**
-- Hotspot/DHCP pool: `172.31.0.2 – 172.31.127.255`
-- PPPoE pool: `172.31.128.0 – 172.31.255.254`
+
+- Hotspot/DHCP pool: `172.31.0.2–.254`, `172.31.1.1–.254` … 8 × /24 (≈2 000 addresses)
+- PPPoE pool: `172.31.128.1–.254`, `172.31.129.1–.254` … 8 × /24
+
+The pools are built one /24 at a time on purpose. A single contiguous range across a
+subnet wider than /24 hands out hosts like `172.31.3.255`, and plenty of cheap CPE
+firmware treats a last octet of 255 as a broadcast and `DHCPDECLINE`s the offer — the
+client re-requests immediately, which looks exactly like the link dropping and
+reconnecting every second.
 
 **Names created on the MikroTik:** `infora-bridge`, `infora-pool`, `infora-dhcp`,
 `infora` (hotspot + hotspot profile), `infora` (pppoe-server), `infora-pppoe`
@@ -250,6 +280,12 @@ sessions** lists the live PPPoE session with its Framed-IP.
 winbox/ssh/api), plus for the Management role: `infora-mgmt-bridge`, `infora-mgmt-pool`,
 `infora-mgmt-dhcp`, `infora-mgmt-port` (address/firewall comment); and `infora-wan-dhcp`
 (the optional uplink DHCP client).
+
+**Anti-sharing** (`infora-anti-sharing` mangle rule) sets TTL=1 **only on traffic leaving
+towards `infora-bridge`**, so a subscriber re-sharing through another router sees it die
+at that hop. It must never be left unscoped: an unscoped `postrouting change-ttl` applies
+to everything the router sends — including the WireGuard management tunnel — and takes the
+whole box off the network.
 
 **PPPoE login:** username = customer email (lowercased); password = `radius_password`
 issued at customer creation.
@@ -282,11 +318,14 @@ in place. For almost all deployments the shared bridge (§0) is simpler and corr
 ### 6.1 Management port (guaranteed local Winbox/WebFig)
 
 Assign an otherwise-unused ether (e.g. `ether3`) the **Management** role in *Configure
-services*. The platform then builds `infora-mgmt-bridge` with a static `192.168.88.1/24`,
-its own DHCP server (`infora-mgmt-dhcp`, pool `192.168.88.10–254`), enables `www`/`winbox`/
+services*. The platform then builds `infora-mgmt-bridge` with a static `192.168.99.1/24`,
+its own DHCP server (`infora-mgmt-dhcp`, pool `192.168.99.10–254`), enables `www`/`winbox`/
 `ssh`, and adds an input-accept firewall rule for that port. Plug a laptop into `ether3`
-→ it leases `192.168.88.x` and reaches **WebFig at `http://192.168.88.1`** and **Winbox at
-`192.168.88.1`** — always, independent of the WireGuard tunnel or the internet uplink.
+→ it leases `192.168.99.x` and reaches **WebFig at `http://192.168.99.1`** and **Winbox at
+`192.168.99.1`** — always, independent of the WireGuard tunnel or the internet uplink.
+
+> `192.168.99.x`, not `192.168.88.x`: the latter is RouterOS's factory `defconf` LAN, and
+> reusing it collides with the factory config on a fresh board.
 
 ### 6.2 Uplink DHCP client (plug-and-play WAN)
 
@@ -298,7 +337,8 @@ one-liner still pings `8.8.8.8` first and aborts if the WAN has no internet at a
 ### 6.3 DHCP on the MikroTik vs. on the user router
 
 - **On the MikroTik:** hotspot clients lease from `infora-dhcp` (service subnet, e.g.
-  `172.31.0.x`); management-port laptops lease from `infora-mgmt-dhcp` (`192.168.88.x`);
+  `172.31.0.x`, with the **router itself** as their DNS server so the captive redirect can
+  fire); management-port laptops lease from `infora-mgmt-dhcp` (`192.168.99.x`);
   PPPoE clients get their address from the PPPoE pool via RADIUS/`infora-pppoe-pool`.
 - **On the user router (Tenda):**
   - **Hotspot → AP/bridge mode, DHCP-client OFF.** The Tenda must *not* run its own DHCP or
@@ -327,3 +367,105 @@ platform reaches — not your browser directly. Two supported ways from the devi
 > them in your production `.env` (`config/deployment/production.env.example`), then re-run
 > *Configure services*. The device **self-check** now flags a missing hotspot/PPPoE server
 > or login page, so a “configured OK” result no longer hides these.
+
+---
+
+## 7. When *every* subscriber fails at once (FreeRADIUS config)
+
+A per-subscriber problem looks like one CPE failing. When **nobody** can dial — PPPoE and
+hotspot alike — suspect the server config, not the accounts. Three causes, all verified
+against FreeRADIUS 3.2.10 with `radclient`:
+
+### 7.1 The config directory moved (3.0 → 3.2)
+
+`config/freeradius/Dockerfile` used to build `FROM freeradius/freeradius-server:latest` and
+copy everything into `/etc/freeradius/3.0/`. FreeRADIUS **3.0** kept its config there;
+**3.2** uses `/etc/freeradius` directly. When `latest` rolled forward, every `COPY` began
+creating a directory the server never reads — no SQL module, no `clients.conf`, no site
+config — so *every* request was rejected (or dropped as an unknown client).
+
+The image is now pinned (`3.2.10`) and everything targets **`/etc/raddb`**, the symlink
+that points at the active config root on both versions. The Dockerfile also greps the
+result, so a future path change fails the build instead of shipping a dead config.
+
+The compose bind-mount moved with it:
+
+```yaml
+- ./config/freeradius/clients.conf:/etc/raddb/clients.conf:ro
+```
+
+### 7.2 `Auth-Type = mschap`, not `MS-CHAP`
+
+3.2's `rlm_mschap` sets `Auth-Type` to its **module instance name**. A site whose
+`authenticate` block only has `Auth-Type MS-CHAP { mschap }` logs:
+
+```text
+mschap: Found MS-CHAP attributes.  Setting 'Auth-Type = mschap'
+Found Auth-Type = mschap
+Auth-Type sub-section not found.  Ignoring.
+Failed to authenticate the user
+```
+
+MikroTik PPPoE negotiates MS-CHAPv2 by default, so this rejects **every PPPoE dial** while
+PAP-based hotspot logins for the same subscriber still work — which reads as a per-user
+problem. `sites-available/default` now carries the bare `mschap` / `digest` / `eap` entries
+alongside the `Auth-Type` blocks, matching the stock 3.2 site.
+
+### 7.3 `sql_user_name` must be set explicitly
+
+`rlm_sql` defaults it to `""`, and with an empty value it never creates `SQL-User-Name`.
+Every query then runs as `WHERE lower(username) = lower('')`, matches nothing, and the
+subscriber is rejected with no obvious reason. `mods-available/sql` now sets:
+
+```text
+sql_user_name = "%{%{Stripped-User-Name}:-%{User-Name}}"
+```
+
+### 7.4 Verifying a fix
+
+Watch a real dial, or reproduce it locally:
+
+```bash
+docker compose logs -f freeradius          # then dial from the CPE
+docker compose build freeradius && docker compose up -d freeradius   # after any change here
+```
+
+A healthy MS-CHAPv2 accept looks like this — note **`MS-CHAP2-Success`**, whose absence is
+what a CPE reports as "login failed" even though the server said Accept:
+
+```text
+mschap: Found Cleartext-Password, hashing to create NT-Password
+mschap: Client is using MS-CHAPv2
+mschap: Adding MS-CHAPv2 MPPE keys
+Sent Access-Accept ... length 212
+  Mikrotik-Rate-Limit = "10M/10M"
+  MS-CHAP2-Success = 0x01533d...
+  MS-MPPE-Recv-Key / MS-MPPE-Send-Key
+```
+
+An Accept of ~53 bytes with no `MS-CHAP2-Success` means an `Auth-Type := Accept` row is
+still in `radgroupcheck` — it bypasses password checking entirely *and* starves MS-CHAPv2
+of its authenticator response. `purge_auth_type_accept_rows()` clears those at boot.
+
+---
+
+## 8. Live hardware acceptance test
+
+Everything above is verified in CI/simulation except the RouterOS side. Run this on one
+provisioned MikroTik, in order — each step isolates a different failure.
+
+| # | Test | Expected | If it fails |
+|---|---|---|---|
+| 1 | **DNS.** Join the hotspot, check the client's DNS server | the **MikroTik's bridge IP** (`172.31.0.1`), not `8.8.8.8` | Client is on a stale lease. Leases are 1 h; "forget network" or wait it out. If a fresh lease still says 8.8.8.8, the `dhcp` step didn't apply |
+| 2 | **CPD.** Connect an iPhone *and* an Android | both show "Sign in to network" within ~10 s | Re-check `/ip hotspot walled-garden print` — the probe hosts must **not** be there (§2.5). Also `/ip dns print` → `allow-remote-requests=yes` |
+| 3 | **Redirect.** Tap the notification | lands on our login page, not MikroTik's stock one | `/ip hotspot profile print` → `html-directory=hotspot`, and `/file print` shows `hotspot/login.html`. Both are covered by the apply-time verification |
+| 4 | **Auth.** Buy a package, tap **Get online now** | POSTs to `$(link-login-only)`, device gets internet, session in `/ip hotspot active print` | Check the RADIUS side first (§7.4) — the portal round trip only carries credentials, it doesn't authenticate |
+| 5 | **Negative.** Browse `http://neverssl.com` unpaid on a laptop | redirects to the portal | A `fasttrack-connection` rule short-circuits the hotspot. `configure_services` strips it and verifies it's gone |
+| 6 | **HTTPS block.** Browse `https://example.com` unpaid | times out or resets — **not** loaded | Same as 5. A hotspot cannot intercept HTTPS (no cert), and that block *is* the captive signal — do not "fix" it by allowing 443 |
+
+Steps 5 and 6 are the ones that catch a silently-open hotspot. Test them from a laptop, not
+a phone: a phone that has already cached a captive-portal verdict will behave differently.
+
+> The apply-time verification covers 1, 3, 5 and the walled garden — a green **Router is
+> live** now means those were read back off the router, not merely commanded. Steps 2, 4
+> and 6 need real client hardware.

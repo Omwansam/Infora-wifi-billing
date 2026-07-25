@@ -168,23 +168,25 @@ def _delete_user_radius_rows(username, isp_id):
 
 
 def ensure_plan_group(plan, isp):
-    """Ensure RADIUS group + group reply attributes exist for a plan."""
+    """Ensure RADIUS group + group reply attributes exist for a plan.
+
+    The group carries only *reply* attributes (rate limit, quota, timeouts).
+    Authentication is decided by the per-user ``Cleartext-Password`` in radcheck.
+
+    Never write ``Auth-Type := Accept`` here. It looks harmless but it (a) makes
+    FreeRADIUS accept any password at all, and (b) short-circuits the mschap
+    module, so an Access-Accept goes back with no ``MS-CHAP2-Success``. MikroTik
+    PPPoE negotiates MS-CHAPv2 by default, and a CPE that gets an Accept without
+    the authenticator response reports "login failed" — the exact PPPoE symptom
+    this used to cause. :func:`purge_auth_type_accept_rows` clears the legacy rows.
+    """
     groupname = f'plan_{plan.id}'
 
-    existing = RadGroupCheck.query.filter_by(
+    RadGroupCheck.query.filter_by(
         groupname=groupname,
         isp_id=isp.id,
         attribute='Auth-Type',
-    ).first()
-    if not existing:
-        db.session.add(RadGroupCheck(
-            groupname=groupname,
-            attribute='Auth-Type',
-            op=':=',
-            value='Accept',
-            isp_id=isp.id,
-            is_active=True,
-        ))
+    ).delete(synchronize_session=False)
 
     for attr in generate_radius_attributes(plan):
         row = RadGroupReply.query.filter_by(
@@ -205,6 +207,24 @@ def ensure_plan_group(plan, isp):
                 isp_id=isp.id,
                 is_active=True,
             ))
+
+
+def purge_auth_type_accept_rows():
+    """Delete legacy ``Auth-Type := Accept`` rows from radgroupcheck/radcheck.
+
+    Earlier builds wrote one per plan group. Left in place they defeat password
+    checking outright and break MS-CHAPv2 PPPoE dial-in (see
+    :func:`ensure_plan_group`), so clear them once at boot. Returns the row count.
+    """
+    removed = RadGroupCheck.query.filter(
+        RadGroupCheck.attribute == 'Auth-Type',
+        RadGroupCheck.value == 'Accept',
+    ).delete(synchronize_session=False)
+    removed += RadCheck.query.filter(
+        RadCheck.attribute == 'Auth-Type',
+        RadCheck.value == 'Accept',
+    ).delete(synchronize_session=False)
+    return removed
 
 
 def _plan_throttle_rate_limit(plan):

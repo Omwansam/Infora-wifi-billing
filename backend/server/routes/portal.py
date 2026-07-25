@@ -38,17 +38,115 @@ def portal_config():
 
 @portal_bp.route('/captive-redirect', methods=['GET'])
 def portal_captive_redirect():
-    """Minimal HTML page MikroTik fetches as hotspot/login.html to redirect to our SPA."""
+    """The page MikroTik fetches as ``hotspot/login.html``.
+
+    This must be a real MikroTik hotspot login page, not a bare redirect. The
+    router substitutes its ``$(...)`` tokens when it serves the file, which gives
+    us two things a redirect cannot:
+
+      * a form posting to ``$(link-login-only)`` — the only way to actually
+        authenticate a hotspot session. A redirect-only page left subscribers
+        holding credentials with nowhere to type them.
+      * ``?username=&password=`` auto-submit, so the portal SPA can bounce the
+        subscriber straight back here after payment and log them in.
+
+    The "Buy a package" button carries the hotspot context (login link, MAC, IP
+    and the originally-requested URL) into the SPA, which is walled-garden
+    allowed. ``$(error)`` renders MikroTik's own failure text (wrong password,
+    expired account) instead of a blank page.
+    """
     isp_id = request.args.get('isp_id', type=int)
     router_id = request.args.get('router_id', type=int)
     target = portal_entry_url(isp_id, router_id) or '/portal'
-    html = f'''<!DOCTYPE html>
-<html><head>
+    joiner = '&' if '?' in target else '?'
+
+    # NOTE: neither an f-string nor %-formatted — the page is full of CSS braces,
+    # `100%` widths and MikroTik `$(...)` tokens, all of which those would mangle.
+    # Plain token replacement keeps the markup readable and literal.
+    html = '''<!DOCTYPE html>
+<html>
+<head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="0;url={target}">
-<title>Redirecting…</title>
-<script>window.location.replace("{target}");</script>
-</head><body><p><a href="{target}">Continue to WiFi portal</a></p></body></html>'''
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect to WiFi</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:#0f172a; color:#e2e8f0; padding:20px; }
+  .card { width:100%; max-width:380px; background:#1e293b; border-radius:16px; padding:28px;
+          box-shadow:0 20px 50px rgba(0,0,0,.4); }
+  h1 { margin:0 0 4px; font-size:20px; }
+  p.sub { margin:0 0 20px; font-size:13px; color:#94a3b8; }
+  label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+          color:#94a3b8; margin-bottom:6px; }
+  input { width:100%; padding:11px 13px; margin-bottom:14px; border-radius:9px;
+          border:1px solid #334155; background:#0f172a; color:#f1f5f9; font-size:15px; }
+  button, .btn { width:100%; padding:12px; border:0; border-radius:9px; font-size:15px;
+                 font-weight:600; cursor:pointer; display:block; text-align:center;
+                 text-decoration:none; }
+  button { background:#f97316; color:#fff; }
+  .btn { background:transparent; color:#fb923c; border:1px solid #fb923c; margin-top:10px; }
+  .err { background:#7f1d1d; color:#fecaca; border-radius:9px; padding:10px 12px;
+         font-size:13px; margin-bottom:16px; }
+  .sep { text-align:center; font-size:12px; color:#64748b; margin:16px 0 6px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Connect to WiFi</h1>
+  <p class="sub">Sign in with your account, or buy a package to get online.</p>
+
+  $(if error)<div class="err">$(error)</div>$(endif)
+
+  <form name="login" action="$(link-login-only)" method="post">
+    <input type="hidden" name="dst" value="$(link-orig)">
+    <input type="hidden" name="popup" value="true">
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username"
+           autocapitalize="none" autocorrect="off" value="$(username)">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password">
+    <button type="submit">Sign in</button>
+  </form>
+
+  <div class="sep">Don&#39;t have an account?</div>
+  <a class="btn" id="buy" href="__PORTAL__">Buy a package</a>
+</div>
+
+<script>
+(function () {
+  // Hand the SPA the hotspot context so it can log the subscriber straight back
+  // in after payment (it returns here with ?username=&password=).
+  var ctx = {
+    link_login: "$(link-login-only)",
+    link_orig: "$(link-orig)",
+    mac: "$(mac)",
+    ip: "$(ip)"
+  };
+  var buy = document.getElementById("buy");
+  var q = [];
+  for (var k in ctx) { if (ctx[k]) q.push(k + "=" + encodeURIComponent(ctx[k])); }
+  if (q.length) { buy.href = "__PORTAL____JOINER__" + q.join("&"); }
+
+  // Auto-submit when the portal sends the subscriber back with credentials.
+  // This is a POST to $(link-login-only) carrying username/password/dst — the
+  // GET that landed us here is only navigation back to this page.
+  var params = new URLSearchParams(window.location.search);
+  var u = params.get("username"), p = params.get("password"), d = params.get("dst");
+  // On the return trip the router recomputes $(link-orig) for *this* request, so
+  // the hidden field no longer holds where the subscriber was actually going.
+  // The SPA carried it through as ?dst= — prefer that, else keep $(link-orig).
+  if (d) { document.login.dst.value = d; }
+  if (u && p) {
+    document.login.username.value = u;
+    document.login.password.value = p;
+    document.login.submit();
+  }
+})();
+</script>
+</body>
+</html>'''.replace('__PORTAL__', target).replace('__JOINER__', joiner)
     return Response(html, mimetype='text/html')
 
 

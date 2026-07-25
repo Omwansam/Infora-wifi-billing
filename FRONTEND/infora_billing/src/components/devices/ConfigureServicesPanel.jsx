@@ -126,7 +126,7 @@ export default function ConfigureServicesPanel({ deviceId, initial, onApplied })
       )}
 
       <p className="mb-2 text-xs text-slate-500">
-        <strong>Hotspot</strong> joins the captive-portal bridge · <strong>PPPoE</strong> runs a dial-up server on that port (no DHCP) · <strong>Both</strong> allows either · <strong>Management</strong> gives a laptop a <code>192.168.88.x</code> lease + Winbox/WebFig on that port.
+        <strong>Hotspot</strong> joins the captive-portal bridge · <strong>PPPoE</strong> runs the dial-up server · <strong>Both</strong> allows either · <strong>Management</strong> gives a laptop a <code>192.168.99.x</code> lease + Winbox/WebFig on that port.
       </p>
       {interfaces.some((i) => i.is_uplink) && (
         <p className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800">
@@ -207,11 +207,35 @@ export default function ConfigureServicesPanel({ deviceId, initial, onApplied })
       </div>
 
       {result && (
-        <pre className={`mt-4 max-h-56 overflow-auto rounded-lg border p-3 text-[11px] leading-relaxed ${result.success ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-          {result.summary
-            ? JSON.stringify(result.summary, null, 2)
-            : (result.error || (result.success ? 'Applied successfully.' : 'No output returned.'))}
-        </pre>
+        <div className="mt-4 space-y-3">
+          {result.error && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+              {result.error}
+            </p>
+          )}
+          {/* Read-back from the router: what is actually running, not just which
+              commands were sent. */}
+          {result.verification?.length > 0 && (
+            <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+              {result.verification.map((check) => (
+                <li key={check.id} className="flex items-start gap-2 px-3 py-2 text-xs">
+                  <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${check.ok ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                  <span>
+                    <span className={check.ok ? 'text-slate-700' : 'font-medium text-rose-700'}>{check.label}</span>
+                    <span className="text-slate-400"> — {check.detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {result.log?.length > 0 && (
+            <pre className="max-h-56 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-300">
+              {result.log
+                .map((e) => `${e.status === 'ok' ? '✓' : e.status === 'warn' ? '!' : '✗'} [${e.step}] ${e.detail}`)
+                .join('\n')}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   );

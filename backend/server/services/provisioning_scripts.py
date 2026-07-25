@@ -195,6 +195,12 @@ def build_radius_script(device, snmp_community='infora'):
         '/ip firewall nat remove [find comment="infora-masquerade"]',
         '/ip firewall nat add chain=srcnat action=masquerade comment="infora-masquerade"',
         '',
+        '# --- 4b. DNS resolver (the hotspot cannot redirect without one) ---',
+        # A hotspot intercepts client DNS and answers it from the router itself.
+        # With allow-remote-requests off, unauthenticated clients get no answer,
+        # no redirect fires, and the captive-portal sign-in sheet never appears.
+        '/ip dns set servers=8.8.8.8,1.1.1.1 allow-remote-requests=yes',
+        '',
         '# --- 5. SNMP monitoring ---',
         f':do {{ /snmp community remove [find name="{snmp_community}"] }} on-error={{}}',
         f'/snmp community add name="{snmp_community}"',

@@ -346,6 +346,12 @@ def run_self_check(device):
                 DHCP_NAME in cli('/ip dhcp-server print terse'))
             add('hotspot_login', 'Captive-portal login page present (else portal is blank)',
                 'login.html' in cli('/file print terse'))
+            # Without a resolver the hotspot cannot answer (and rewrite) client
+            # DNS, so no device ever sees the "Sign in to network" prompt.
+            dns = _parse_kv(cli('/ip dns print'))
+            add('hotspot_dns', 'Router answers client DNS (captive redirect works)',
+                dns.get('allow-remote-requests') == 'yes',
+                'allow-remote-requests is off — re-run provisioning')
         if want_pppoe:
             add('pppoe_server', 'PPPoE server exists',
                 'infora' in cli('/interface pppoe-server server print terse'))
@@ -503,6 +509,38 @@ def _classify_interface(name, itype):
     return t or 'other'
 
 
+def detect_uplink_interface(client):
+    """Name of the port actually carrying the internet feed, or ''.
+
+    Resolved from the active default route first (``immediate-gw`` is
+    ``IP%iface``), then from any DHCP client. Convention — ether1 — is only a
+    last resort: on a board where the WAN is wired to, say, ether5, trusting the
+    convention lets the wizard bridge the uplink into the LAN, which merges the
+    ISP's broadcast domain with the hotspot's. That shows up as link LEDs
+    blinking and every service dropping a second after a device is plugged in.
+    """
+    try:
+        out, _err = client.run_cli(
+            ':local r [/ip route find where dst-address="0.0.0.0/0" active=yes];'
+            ' :if ([:len $r] > 0) do={ :put [/ip route get ([:pick $r 0]) immediate-gw] }'
+        )
+        value = (out or '').strip()
+        if '%' in value:
+            iface = value.split('%')[-1].strip().split(',')[0].split()[0]
+            if iface:
+                return iface
+    except Exception:  # noqa: BLE001 — detection is best-effort
+        pass
+    try:
+        out, _err = client.run_cli('/ip dhcp-client print terse')
+        for row in _parse_terse_rows(out):
+            if row.get('interface'):
+                return row['interface']
+    except Exception:  # noqa: BLE001
+        pass
+    return ''
+
+
 def list_interfaces(device):
     """Full interface discovery for the wizard's Ports step.
 
@@ -515,6 +553,7 @@ def list_interfaces(device):
         all_out, _ = client.run_cli('/interface print terse')
         eth_out, _ = client.run_cli('/interface ethernet print terse')
         res_out, _ = client.run_cli('/system resource print')
+        uplink_name = detect_uplink_interface(client)
 
     eth_rows = {r.get('name'): r for r in _parse_terse_rows(eth_out) if r.get('name')}
 
@@ -526,7 +565,11 @@ def list_interfaces(device):
             continue
         kind = _classify_interface(name, row.get('type'))
         eth = eth_rows.get(name, {})
-        is_uplink = kind == 'ether' and (ether_seen == 0 or name == 'ether1')
+        if uplink_name:
+            # The port with the default route wins over the ether1 convention.
+            is_uplink = name == uplink_name
+        else:
+            is_uplink = kind == 'ether' and (ether_seen == 0 or name == 'ether1')
         if kind == 'ether':
             ether_seen += 1
         interfaces.append({
@@ -630,6 +673,35 @@ def set_interface_disabled(device, name, disabled):
     return target
 
 
+# How many /24 blocks each service pool draws from. 8 blocks ≈ 2000 addresses —
+# far more than one bridge ever serves, and it keeps the generated `/ip pool add`
+# command short enough to read in the log.
+_POOL_BLOCKS = 8
+
+
+def _pool_ranges(first, last, max_blocks=_POOL_BLOCKS):
+    """MikroTik pool ranges over [first, last], skipping every ``.0`` and ``.255``.
+
+    A contiguous range inside a subnet wider than /24 contains hosts like
+    172.31.3.255 and 172.31.4.0. Those are perfectly legal addresses, but plenty
+    of cheap CPE and IoT firmware treats a last octet of 255 as a broadcast and
+    DHCPDECLINEs the offer — the client then re-requests immediately, which reads
+    as the link dropping and reconnecting every second.
+
+    Returns a comma-separated range list capped at ``max_blocks`` /24s.
+    """
+    ranges = []
+    cursor = first
+    while cursor <= last and len(ranges) < max_blocks:
+        block_start = ipaddress.ip_address(int(cursor) & ~0xFF)
+        low = max(cursor, block_start + 1)          # skip x.x.x.0
+        high = min(last, block_start + 254)         # skip x.x.x.255
+        if low <= high:
+            ranges.append(f'{low}-{high}' if low != high else str(low))
+        cursor = block_start + 256
+    return ','.join(ranges)
+
+
 def _subnet_params(subnet):
     """Deterministic address plan inside the bridge subnet.
 
@@ -641,22 +713,101 @@ def _subnet_params(subnet):
     net = ipaddress.ip_network(subnet, strict=False)
     if net.prefixlen > 29:
         raise ValueError(f'Subnet {net} is too small — use /29 or larger')
-    gateway = str(net.network_address + 1)
+    gateway = net.network_address + 1
     lower, upper = net.subnets(prefixlen_diff=1)
-    dhcp_start = str(lower.network_address + 2)  # skip network addr + gateway
-    dhcp_end = str(lower.broadcast_address)
-    pppoe_start = str(upper.network_address)
-    pppoe_end = str(upper.broadcast_address - 1)
     return {
         'subnet': str(net),
-        'gateway': gateway,
+        'gateway': str(gateway),
         'gateway_cidr': f'{gateway}/{net.prefixlen}',
-        'pool_range': f'{dhcp_start}-{dhcp_end}',
-        'pppoe_pool_range': f'{pppoe_start}-{pppoe_end}',
+        # skip the network address and the gateway itself
+        'pool_range': _pool_ranges(lower.network_address + 2, lower.broadcast_address),
+        'pppoe_pool_range': _pool_ranges(upper.network_address, upper.broadcast_address - 1),
     }
 
 
 VALID_PORT_ROLES = ('hotspot', 'pppoe', 'both', 'management')
+
+# RouterOS prints most command failures on STDOUT — paramiko's stderr channel is
+# usually empty — so checking stderr alone logs a failed `add` as "ok" and the
+# wizard reports a configured router that was never touched. Match the phrases
+# RouterOS actually emits.
+_ROUTER_ERROR_MARKERS = (
+    'expected end of command',
+    'syntax error',
+    'bad command name',
+    'no such command',
+    'no such item',
+    'no such argument',
+    'unknown parameter',
+    'input does not match any value',
+    'invalid value',
+    'ambiguous value',
+    'is not valid',
+    'argument is required',
+    'failure:',
+    'action failed',
+    'already have',
+    'cannot add',
+    'could not add',
+    'interface not found',
+    'not enough permissions',
+)
+
+
+def cli_error_text(out, err):
+    """RouterOS error text for one command's output, or '' when it succeeded.
+
+    Checks stderr *and* stdout: RouterOS reports `expected end of command`,
+    `input does not match any value` and friends on stdout, and those are exactly
+    the failures that used to pass silently.
+    """
+    for stream in (err, out):
+        text = (stream or '').strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if any(marker in lowered for marker in _ROUTER_ERROR_MARKERS):
+            return ' '.join(text.split())
+    return ''
+
+
+def _step(label, commands, critical=True):
+    """One named configuration step: a list of *independently executed* commands.
+
+    Commands are run one at a time rather than as a single ``a; b; c`` chain
+    because RouterOS aborts the whole chain at the first error — which is how a
+    rejected hotspot-profile parameter used to leave the router with no hotspot
+    at all while the log showed a single unrelated failure.
+    """
+    if isinstance(commands, str):
+        commands = [commands]
+    return {'label': label, 'commands': [c for c in commands if c], 'critical': critical}
+
+
+def _fw_filter_add(rule):
+    """Add a firewall filter rule at the top of the chain, else append it.
+
+    ``place-before=0`` errors outright on some RouterOS builds (empty filter
+    list, or a dynamic rule sitting at index 0). Falling back to a plain append
+    keeps the rule — and the rest of the step — alive.
+    """
+    return (
+        f':do {{/ip firewall filter add {rule} place-before=0}} '
+        f'on-error={{/ip firewall filter add {rule}}}'
+    )
+
+
+def _guarded_set(menu, finder, assignments):
+    """`set` the given assignments one at a time, ignoring unsupported ones.
+
+    Objects are created with only the parameters every RouterOS version accepts,
+    then tuned with these guarded sets — so a parameter a given firmware doesn't
+    know costs that one option instead of the whole object.
+    """
+    return [
+        f':do {{{menu} set {finder} {assignment}}} on-error={{}}'
+        for assignment in assignments
+    ]
 
 
 def derive_port_roles(opts):
@@ -684,11 +835,15 @@ def derive_port_roles(opts):
 
 
 def build_services_commands(opts):
-    """Build the ordered (label, RouterOS-CLI) steps for service configuration.
+    """Build the ordered configuration steps.
 
-    opts keys: ``port_roles`` ({iface: hotspot|pppoe|both}; skip = omitted),
-    ``anti_sharing``, ``subnet``. Legacy ``pppoe``/``hotspot``/``bridge_ports``
-    are still accepted (see :func:`derive_port_roles`).
+    Returns ``(steps, params)`` where each step is
+    ``{'label', 'commands': [...], 'critical': bool}``. Commands inside a step
+    run *independently* — see :func:`_step`.
+
+    opts keys: ``port_roles`` ({iface: hotspot|pppoe|both|management}; skip =
+    omitted), ``anti_sharing``, ``subnet``. Legacy ``pppoe``/``hotspot``/
+    ``bridge_ports`` are still accepted (see :func:`derive_port_roles`).
 
     Shared-bridge topology (robust on switch-chip boards like the hEX, where a
     raw per-port PPPoE server conflicts with a bridge one):
@@ -728,6 +883,7 @@ def build_services_commands(opts):
     params['run_hotspot'] = run_hotspot
     params['run_pppoe'] = run_pppoe
     params['run_management'] = run_management
+    params['walled_garden_hosts'] = list(opts.get('walled_garden_hosts') or [])
 
     steps = []
 
@@ -737,16 +893,17 @@ def build_services_commands(opts):
     uplink = str(opts.get('uplink_interface') or 'ether1').strip()
     if opts.get('uplink_dhcp_client') and INTERFACE_NAME_RE.match(uplink):
         params['uplink_dhcp_client'] = uplink
-        steps.append((
+        steps.append(_step(
             'wan-dhcp',
             f':if ([:len [/ip dhcp-client find interface={uplink}]]=0) do={{'
             f'/ip dhcp-client add interface={uplink} use-peer-dns=yes use-peer-ntp=yes '
             f'add-default-route=yes disabled=no comment="{WAN_DHCP_COMMENT}"}}',
+            critical=False,
         ))
 
     # 1. Bridge — one shared bridge for every hotspot/pppoe/both port.
     if run_bridge:
-        steps.append((
+        steps.append(_step(
             'bridge',
             f':if ([:len [/interface bridge find name={BRIDGE_NAME}]]=0) do={{'
             f'/interface bridge add name={BRIDGE_NAME} comment="infora-billing"}}',
@@ -754,175 +911,304 @@ def build_services_commands(opts):
 
     # 2. Reset our managed bridge memberships, then add every service port.
     #    Removing by comment first makes role changes (e.g. dropping a port) stick.
-    steps.append((
+    steps.append(_step(
         'bridge-reset',
         ':do {/interface bridge port remove [find comment="infora"]} on-error={}',
     ))
     for port in service_ports:
-        steps.append((
+        steps.append(_step(
             f'bridge-port:{port}',
-            f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}; '
-            f'/interface bridge port add bridge={BRIDGE_NAME} interface={port} comment="infora"',
+            [
+                # A port can only be in one bridge, and on RouterOS 6 switch-chip
+                # boards it may also be enslaved to a master-port. Clear both, or
+                # the port stays switched in hardware *and* bridged in software —
+                # a loop that shows up as link LEDs blinking and services dropping.
+                f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}',
+                f':do {{/interface ethernet set [find name={port}] master-port=none}} on-error={{}}',
+                f'/interface bridge port add bridge={BRIDGE_NAME} interface={port} comment="infora"',
+            ],
         ))
 
-    # 3-5. Bridge IP + DHCP only when the hotspot bridge is in use.
-    if run_hotspot:
-        steps.append((
+    # 3. Bridge gateway address — needed whenever the bridge exists, not only for
+    #    hotspot. The PPPoE profile's local-address points here, and masquerade
+    #    needs a real source: a PPPoE-only bridge with no address dials a session
+    #    that immediately drops and redials (the "reconnects every second" bug).
+    if run_bridge:
+        steps.append(_step(
             'address',
-            f':do {{/ip address remove [find comment="infora-billing"]}} on-error={{}}; '
-            f'/ip address add address={params["gateway_cidr"]} interface={BRIDGE_NAME} comment="infora-billing"',
+            [
+                ':do {/ip address remove [find comment="infora-billing"]} on-error={}',
+                f'/ip address add address={params["gateway_cidr"]} interface={BRIDGE_NAME} '
+                f'comment="infora-billing"',
+            ],
         ))
-        steps.append((
-            'pool',
-            f':do {{/ip pool remove [find name={POOL_NAME}]}} on-error={{}}; '
-            f'/ip pool add name={POOL_NAME} ranges={params["pool_range"]}',
-        ))
-        steps.append((
-            'dhcp',
-            f':do {{/ip dhcp-server remove [find name={DHCP_NAME}]}} on-error={{}}; '
-            f'/ip dhcp-server add name={DHCP_NAME} interface={BRIDGE_NAME} address-pool={POOL_NAME} disabled=no; '
-            f':do {{/ip dhcp-server network remove [find address={params["subnet"]}]}} on-error={{}}; '
-            f'/ip dhcp-server network add address={params["subnet"]} gateway={params["gateway"]} dns-server=8.8.8.8,1.1.1.1',
+        # Any *other* DHCP server on our bridge fights ours for the same segment:
+        # clients bounce between two offers and renew-loop every few seconds.
+        # Disable (never delete) the strays, including the factory `defconf` one.
+        steps.append(_step(
+            'dhcp-conflicts',
+            f':foreach s in=[/ip dhcp-server find where interface="{BRIDGE_NAME}"] do={{'
+            f':if ([/ip dhcp-server get $s name] != "{DHCP_NAME}") do={{'
+            f'/ip dhcp-server set $s disabled=yes}}}}',
+            critical=False,
         ))
 
-    # 6. PPPoE — dedicated pool + profile, then one server per raw pppoe-only
-    #    port (no DHCP there) plus a bridge-bound server when 'both' ports exist.
+    # 4-5. Pool + DHCP server for hotspot clients.
+    if run_hotspot:
+        steps.append(_step(
+            'pool',
+            [
+                f':do {{/ip pool remove [find name={POOL_NAME}]}} on-error={{}}',
+                f'/ip pool add name={POOL_NAME} ranges={params["pool_range"]}',
+            ],
+        ))
+        steps.append(_step(
+            'dhcp',
+            [
+                f':do {{/ip dhcp-server remove [find name={DHCP_NAME}]}} on-error={{}}',
+                # Explicit short lease: hotspot clients churn, and after a config
+                # change (e.g. moving the DNS server from 8.8.8.8 to the router)
+                # devices keep the stale lease until it expires. An hour bounds
+                # how long a subscriber can be stuck with the old settings without
+                # a "forget network".
+                f'/ip dhcp-server add name={DHCP_NAME} interface={BRIDGE_NAME} '
+                f'address-pool={POOL_NAME} lease-time=1h disabled=no',
+                f':do {{/ip dhcp-server network remove [find address={params["subnet"]}]}} on-error={{}}',
+                # DNS = the router itself. The captive portal only fires when the
+                # hotspot can answer (and rewrite) client DNS; handing out 8.8.8.8
+                # makes phones resolve straight through and never show the
+                # "Sign in to network" sheet.
+                f'/ip dhcp-server network add address={params["subnet"]} '
+                f'gateway={params["gateway"]} dns-server={params["gateway"]}',
+            ],
+        ))
+        # …and the router needs a working resolver to answer them.
+        steps.append(_step(
+            'dns',
+            [
+                '/ip dns set servers=8.8.8.8,1.1.1.1 allow-remote-requests=yes',
+                ':do {/ip dns cache flush} on-error={}',
+            ],
+        ))
+
+    # 6. PPPoE — dedicated pool + profile, then ONE server bound to the shared
+    #    bridge (a raw per-port server conflicts with the bridge on switch-chip
+    #    boards and comes up INVALID).
     if run_pppoe:
-        steps.append((
+        steps.append(_step(
             'pppoe-pool',
-            f':do {{/ip pool remove [find name={PPPOE_POOL_NAME}]}} on-error={{}}; '
-            f'/ip pool add name={PPPOE_POOL_NAME} ranges={params["pppoe_pool_range"]}',
+            [
+                f':do {{/ip pool remove [find name={PPPOE_POOL_NAME}]}} on-error={{}}',
+                f'/ip pool add name={PPPOE_POOL_NAME} ranges={params["pppoe_pool_range"]}',
+            ],
         ))
-        steps.append((
+        steps.append(_step(
             'pppoe-profile',
-            f':do {{/ppp profile remove [find name={PPPOE_PROFILE_NAME}]}} on-error={{}}; '
-            f'/ppp profile add name={PPPOE_PROFILE_NAME} local-address={params["gateway"]} '
-            f'remote-address={PPPOE_POOL_NAME} dns-server=8.8.8.8,1.1.1.1 use-encryption=no',
+            [
+                f':do {{/ppp profile remove [find name={PPPOE_PROFILE_NAME}]}} on-error={{}}',
+                # Create with only the universally-accepted parameters, then tune.
+                f'/ppp profile add name={PPPOE_PROFILE_NAME} local-address={params["gateway"]} '
+                f'remote-address={PPPOE_POOL_NAME}',
+            ] + _guarded_set('/ppp profile', f'[find name={PPPOE_PROFILE_NAME}]', [
+                'dns-server=8.8.8.8,1.1.1.1',
+                'use-encryption=no',
+                'only-one=yes',
+            ]),
         ))
-        # Clear every prior infora pppoe-server, then bind ONE server to the
-        # shared bridge. A single bridge-bound server serves PPPoE on any member
-        # port and avoids the raw-port/bridge conflict that marks servers INVALID
-        # on switch-chip boards.
-        steps.append((
+        steps.append(_step(
             'pppoe-reset',
-            ':do {/interface pppoe-server server remove [find service-name=infora]} on-error={}; '
-            '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
+            [
+                ':do {/interface pppoe-server server remove [find service-name=infora]} on-error={}',
+                '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
+            ],
         ))
-        steps.append((
+        steps.append(_step(
             'pppoe:bridge',
-            f'/interface pppoe-server server add service-name=infora interface={BRIDGE_NAME} '
-            f'default-profile={PPPOE_PROFILE_NAME} one-session-per-host=yes disabled=no',
+            [
+                f'/interface pppoe-server server add service-name=infora interface={BRIDGE_NAME} '
+                f'default-profile={PPPOE_PROFILE_NAME} disabled=no',
+            ] + _guarded_set('/interface pppoe-server server', '[find service-name=infora]', [
+                'one-session-per-host=yes',
+                # Offer every method the CPE might pick. FreeRADIUS answers all of
+                # them from the stored Cleartext-Password.
+                'authentication=pap,chap,mschap1,mschap2',
+                'max-mtu=1480 max-mru=1480',
+            ]),
         ))
 
     # 7. Hotspot (profile + server using RADIUS) on the bridge.
     #    Note: shared-users is NOT a /ip hotspot profile parameter (it lives on
-    #    the user profile / RADIUS reply) — putting it here makes the whole
-    #    profile add fail, which silently leaves the router with no hotspot.
+    #    the hotspot *user* profile) — putting it here makes the whole profile add
+    #    fail, which silently leaves the router with no hotspot.
     if run_hotspot:
-        steps.append((
+        shared_users = '1' if opts.get('anti_sharing') else '3'
+        steps.append(_step(
             'hotspot',
-            ':do {/ip hotspot remove [find name=infora]} on-error={}; '
-            ':do {/ip hotspot profile remove [find name=infora]} on-error={}; '
-            '/ip hotspot profile add name=infora hotspot-address='
-            f'{params["gateway"]} use-radius=yes radius-accounting=yes '
-            f'radius-interim-update=5m login-by=cookie,http-chap,http-pap; '
-            f'/ip hotspot add name=infora interface={BRIDGE_NAME} address-pool={POOL_NAME} '
-            'profile=infora disabled=no',
+            [
+                ':do {/ip hotspot remove [find name=infora]} on-error={}',
+                ':do {/ip hotspot profile remove [find name=infora]} on-error={}',
+                # Minimal add first — every optional attribute is applied below as
+                # a guarded set so one unsupported keyword can't cost us the whole
+                # hotspot (which is what left the ports open and unauthenticated).
+                f'/ip hotspot profile add name=infora hotspot-address={params["gateway"]} '
+                f'use-radius=yes',
+            ] + _guarded_set('/ip hotspot profile', '[find name=infora]', [
+                'radius-accounting=yes',
+                'radius-interim-update=5m',
+                'login-by=http-chap,http-pap,cookie',
+            ]) + [
+                f'/ip hotspot add name=infora interface={BRIDGE_NAME} '
+                f'address-pool={POOL_NAME} profile=infora disabled=no',
+            ] + _guarded_set('/ip hotspot user profile', '[find name=default]', [
+                f'shared-users={shared_users}',
+            ]),
         ))
 
-        # Walled garden — allow portal, API, payments, captive probes before auth.
-        # Hostnames use `/ip hotspot walled-garden` (action=allow); the `ip`
-        # sub-menu is for literal addresses (dst-address, action=accept).
+        # Walled garden — the portal, the API and the payment gateway must be
+        # reachable *before* login. Deliberately NOT the OS captive-probe hosts:
+        # allowing those makes the phone conclude it already has internet and skip
+        # the sign-in sheet entirely (see services.portal_urls.portal_hostnames).
         for host in opts.get('walled_garden_hosts') or []:
             safe_host = host.replace('"', '').strip()
             if not safe_host:
                 continue
-            steps.append((
+            steps.append(_step(
                 f'walled-garden:{safe_host}',
-                f':do {{/ip hotspot walled-garden remove [find dst-host="{safe_host}"]}} on-error={{}}; '
-                f'/ip hotspot walled-garden add dst-host="{safe_host}" action=allow comment="infora"',
+                [
+                    f':do {{/ip hotspot walled-garden remove [find dst-host="{safe_host}"]}} on-error={{}}',
+                    f'/ip hotspot walled-garden add dst-host="{safe_host}" action=allow comment="infora"',
+                ],
+                critical=False,
             ))
 
-        # External captive portal — fetch redirect page that sends users to our SPA
+        # External captive portal — fetch the login page that carries MikroTik's
+        # own login form *and* the link into our SPA.
         redirect_api = (opts.get('captive_redirect_fetch_url') or '').replace('"', '')
         if redirect_api:
-            steps.append((
+            steps.append(_step(
                 'captive-login',
-                ':do {/file remove hotspot/login.html} on-error={}; '
-                f':do {{/tool fetch url="{redirect_api}" check-certificate=no dst-path=hotspot/login.html mode=https}} on-error={{}}; '
-                '/ip hotspot profile set [find name=infora] html-directory=hotspot '
-                'login-by=http-chap,cookie,http-pap',
+                [
+                    ':do {/file remove [find name="hotspot/login.html"]} on-error={}',
+                    f'/tool fetch url="{redirect_api}" check-certificate=no '
+                    f'dst-path=hotspot/login.html',
+                    ':do {/ip hotspot profile set [find name=infora] html-directory=hotspot} on-error={}',
+                ],
             ))
+
+        # FastTrack short-circuits the firewall/NAT path, so a fast-tracked
+        # connection never reaches the hotspot's dynamic rules — an
+        # unauthenticated client browses HTTPS freely and RADIUS accounting sees
+        # none of the traffic. Provisioning removes it, but a firmware upgrade or
+        # a hand-edit re-adds the defconf rule, so strip it here too.
+        steps.append(_step(
+            'fasttrack-off',
+            ':do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}',
+        ))
 
         # Self-protection: hotspot clients must not reach the router's own
         # management services. Drop input from the hotspot bridge to winbox/ssh/
         # api — but NOT 80/443, which the captive-portal login page runs on.
-        steps.append((
+        steps.append(_step(
             'hotspot-isolate',
-            f':do {{/ip firewall filter remove [find comment="{HOTSPOT_ISOLATE_COMMENT}"]}} on-error={{}}; '
-            f'/ip firewall filter add chain=input action=drop in-interface={BRIDGE_NAME} '
-            f'protocol=tcp dst-port=22,23,8291,8728,8729 comment="{HOTSPOT_ISOLATE_COMMENT}" place-before=0',
+            [
+                f':do {{/ip firewall filter remove [find comment="{HOTSPOT_ISOLATE_COMMENT}"]}} on-error={{}}',
+                _fw_filter_add(
+                    f'chain=input action=drop in-interface={BRIDGE_NAME} '
+                    f'protocol=tcp dst-port=22,23,8291,8728,8729 '
+                    f'comment="{HOTSPOT_ISOLATE_COMMENT}"'
+                ),
+            ],
+            critical=False,
         ))
 
     # 7b. Management ports — own bridge with a static IP + local DHCP so a
     #     plugged-in laptop always reaches Winbox/WebFig, independent of the
     #     tunnel. Not bridged into a service; www/winbox/ssh forced on.
     if run_management:
-        steps.append((
+        steps.append(_step(
             'mgmt-bridge',
             f':if ([:len [/interface bridge find name={MGMT_BRIDGE_NAME}]]=0) do={{'
             f'/interface bridge add name={MGMT_BRIDGE_NAME} comment="infora-billing"}}',
         ))
-        steps.append((
+        steps.append(_step(
             'mgmt-bridge-reset',
             f':do {{/interface bridge port remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}',
         ))
         for port in management_ports:
-            steps.append((
+            steps.append(_step(
                 f'mgmt-port:{port}',
-                # Free the port from any prior bridge/pppoe use, then add to the mgmt bridge.
-                f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}; '
-                f':do {{/interface pppoe-server server remove [find interface={port}]}} on-error={{}}; '
-                f'/interface bridge port add bridge={MGMT_BRIDGE_NAME} interface={port} comment="{MGMT_PORT_COMMENT}"',
+                [
+                    # Free the port from any prior bridge/switch-group/pppoe use.
+                    f':do {{/interface bridge port remove [find interface={port}]}} on-error={{}}',
+                    f':do {{/interface ethernet set [find name={port}] master-port=none}} on-error={{}}',
+                    f':do {{/interface pppoe-server server remove [find interface={port}]}} on-error={{}}',
+                    f'/interface bridge port add bridge={MGMT_BRIDGE_NAME} interface={port} '
+                    f'comment="{MGMT_PORT_COMMENT}"',
+                ],
             ))
-        steps.append((
+        steps.append(_step(
             'mgmt-address',
-            f':do {{/ip address remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}; '
-            f'/ip address add address={MGMT_PORT_GATEWAY}/24 interface={MGMT_BRIDGE_NAME} comment="{MGMT_PORT_COMMENT}"',
+            [
+                f':do {{/ip address remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}',
+                f'/ip address add address={MGMT_PORT_GATEWAY}/24 interface={MGMT_BRIDGE_NAME} '
+                f'comment="{MGMT_PORT_COMMENT}"',
+            ],
         ))
-        steps.append((
+        steps.append(_step(
             'mgmt-pool',
-            f':do {{/ip pool remove [find name={MGMT_PORT_POOL_NAME}]}} on-error={{}}; '
-            f'/ip pool add name={MGMT_PORT_POOL_NAME} ranges={MGMT_PORT_POOL_RANGE}',
+            [
+                f':do {{/ip pool remove [find name={MGMT_PORT_POOL_NAME}]}} on-error={{}}',
+                f'/ip pool add name={MGMT_PORT_POOL_NAME} ranges={MGMT_PORT_POOL_RANGE}',
+            ],
         ))
-        steps.append((
+        steps.append(_step(
             'mgmt-dhcp',
-            f':do {{/ip dhcp-server remove [find name={MGMT_PORT_DHCP_NAME}]}} on-error={{}}; '
-            f'/ip dhcp-server add name={MGMT_PORT_DHCP_NAME} interface={MGMT_BRIDGE_NAME} '
-            f'address-pool={MGMT_PORT_POOL_NAME} disabled=no; '
-            f':do {{/ip dhcp-server network remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}; '
-            f'/ip dhcp-server network add address={MGMT_PORT_SUBNET} gateway={MGMT_PORT_GATEWAY} '
-            f'dns-server=8.8.8.8,1.1.1.1 comment="{MGMT_PORT_COMMENT}"',
+            [
+                f':do {{/ip dhcp-server remove [find name={MGMT_PORT_DHCP_NAME}]}} on-error={{}}',
+                f'/ip dhcp-server add name={MGMT_PORT_DHCP_NAME} interface={MGMT_BRIDGE_NAME} '
+                f'address-pool={MGMT_PORT_POOL_NAME} disabled=no',
+                f':do {{/ip dhcp-server network remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}',
+                f'/ip dhcp-server network add address={MGMT_PORT_SUBNET} gateway={MGMT_PORT_GATEWAY} '
+                f'dns-server=8.8.8.8,1.1.1.1 comment="{MGMT_PORT_COMMENT}"',
+                f':foreach s in=[/ip dhcp-server find where interface="{MGMT_BRIDGE_NAME}"] do={{'
+                f':if ([/ip dhcp-server get $s name] != "{MGMT_PORT_DHCP_NAME}") do={{'
+                f'/ip dhcp-server set $s disabled=yes}}}}',
+            ],
         ))
-        steps.append((
+        steps.append(_step(
             'mgmt-services',
-            '/ip service set www disabled=no; /ip service set winbox disabled=no; '
-            '/ip service set ssh disabled=no',
+            [
+                '/ip service set www disabled=no',
+                '/ip service set winbox disabled=no',
+                '/ip service set ssh disabled=no',
+            ],
         ))
-        steps.append((
+        steps.append(_step(
             'mgmt-firewall',
-            f':do {{/ip firewall filter remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}; '
-            f'/ip firewall filter add chain=input action=accept in-interface={MGMT_BRIDGE_NAME} '
-            f'comment="{MGMT_PORT_COMMENT}" place-before=0',
+            [
+                f':do {{/ip firewall filter remove [find comment="{MGMT_PORT_COMMENT}"]}} on-error={{}}',
+                _fw_filter_add(
+                    f'chain=input action=accept in-interface={MGMT_BRIDGE_NAME} '
+                    f'comment="{MGMT_PORT_COMMENT}"'
+                ),
+            ],
         ))
 
-    # 8. Hotspot anti-sharing (fix TTL so devices behind a shared NAT are detectable)
+    # 8. Hotspot anti-sharing: TTL=1 on traffic handed to hotspot clients, so a
+    #    subscriber who re-shares through another router sees it die at that hop.
+    #    MUST be scoped to the hotspot bridge — an unscoped postrouting rule sets
+    #    TTL=1 on *everything* the router sends, including the WireGuard
+    #    management tunnel and all WAN traffic, which kills the whole box.
     if run_hotspot and opts.get('anti_sharing'):
-        steps.append((
+        steps.append(_step(
             'anti-sharing',
-            ':do {/ip firewall mangle remove [find comment="infora-anti-sharing"]} on-error={}; '
-            '/ip firewall mangle add chain=postrouting action=change-ttl '
-            'new-ttl=set:1 passthrough=yes comment="infora-anti-sharing"',
+            [
+                ':do {/ip firewall mangle remove [find comment="infora-anti-sharing"]} on-error={}',
+                '/ip firewall mangle add chain=postrouting action=change-ttl '
+                f'new-ttl=set:1 out-interface={BRIDGE_NAME} passthrough=yes '
+                'comment="infora-anti-sharing"',
+            ],
+            critical=False,
         ))
 
     return steps, params
@@ -1057,6 +1343,118 @@ def reboot_device(device):
     return {'success': True, 'detail': 'Reboot issued'}
 
 
+def _verify_services(client, params):
+    """Read the applied service config back off the router.
+
+    Returns ``[{id, label, ok, detail}]``. Only what this device was asked to
+    run is checked, so a PPPoE-only router isn't marked broken for having no
+    hotspot. Reuses the open SSH session — one round of prints, no reconnect.
+    """
+    def cli(command):
+        try:
+            out, _err = client.run_cli(command)
+            return out or ''
+        except Exception:  # noqa: BLE001 — a read failure means "can't confirm"
+            return ''
+
+    checks = []
+
+    def add(check_id, label, ok, detail):
+        checks.append({'id': check_id, 'label': label, 'ok': bool(ok), 'detail': detail})
+
+    if params.get('service_ports'):
+        bridge_rows = _parse_terse_rows(cli('/interface bridge port print terse'))
+        on_bridge = {
+            r.get('interface') for r in bridge_rows if r.get('bridge') == BRIDGE_NAME
+        }
+        missing = [p for p in params['service_ports'] if p not in on_bridge]
+        add('bridge-ports', 'Service ports are on the bridge', not missing,
+            'all ports bridged' if not missing else f"not on {BRIDGE_NAME}: {', '.join(missing)}")
+
+        addresses = cli('/ip address print terse')
+        add('bridge-address', 'Bridge gateway address exists',
+            params['gateway'] in addresses,
+            f'{params["gateway_cidr"]} on {BRIDGE_NAME}' if params['gateway'] in addresses
+            else f'{params["gateway_cidr"]} missing — PPPoE/NAT return path will not work')
+
+    if params.get('run_hotspot'):
+        hotspot_rows = _parse_terse_rows(cli('/ip hotspot print terse'))
+        hotspot = next((r for r in hotspot_rows if r.get('name') == 'infora'), None)
+        add('hotspot-server', 'Hotspot server running on the bridge',
+            bool(hotspot) and not _row_disabled(hotspot),
+            f"on {hotspot.get('interface')}" if hotspot
+            else 'no hotspot server — the port stays open and nobody is asked to sign in')
+
+        dhcp_rows = _parse_terse_rows(cli('/ip dhcp-server print terse'))
+        dhcp = next((r for r in dhcp_rows if r.get('name') == DHCP_NAME), None)
+        add('hotspot-dhcp', 'Hotspot DHCP server enabled',
+            bool(dhcp) and not _row_disabled(dhcp),
+            'leases from ' + params['pool_range'] if dhcp else f'{DHCP_NAME} missing')
+
+        dns = _parse_kv(cli('/ip dns print'))
+        add('hotspot-dns', 'Router answers client DNS (captive redirect)',
+            dns.get('allow-remote-requests') == 'yes',
+            'allow-remote-requests=yes' if dns.get('allow-remote-requests') == 'yes'
+            else 'allow-remote-requests is off — phones resolve past the portal and '
+                 'never show the sign-in sheet')
+
+        files = cli('/file print terse')
+        add('hotspot-login', 'Captive-portal login page present',
+            'login.html' in files,
+            'hotspot/login.html on flash' if 'login.html' in files
+            else "login.html not fetched — subscribers get MikroTik's default page "
+                 'with no link into the billing portal')
+
+        # The fetched page only gets served if the profile points at the folder
+        # it landed in; a mismatch renders MikroTik's stock page instead of ours.
+        profile = _parse_kv(cli('/ip hotspot profile print where name=infora'))
+        html_dir = profile.get('html-directory', '')
+        add('hotspot-html-dir', 'Hotspot profile serves the fetched login page',
+            html_dir.strip('"') in ('hotspot', ''),
+            f'html-directory={html_dir or "hotspot (default)"}')
+
+        # FastTrack bypasses the hotspot's dynamic rules entirely: an
+        # unauthenticated client gets full HTTPS and RADIUS sees no accounting.
+        no_fasttrack = 'fasttrack-connection' not in cli('/ip firewall filter print terse')
+        add('fasttrack-absent', 'FastTrack removed (else clients browse unpaid)',
+            no_fasttrack,
+            'no fasttrack rule' if no_fasttrack
+            else 'a fasttrack-connection rule is still present — it short-circuits the '
+                 'hotspot, so clients reach HTTPS without logging in and accounting is lost')
+
+        # The portal/payment hosts must be reachable *before* login, or the
+        # subscriber can see the sign-in page but never reach the page that sells
+        # them a package.
+        wanted = [h for h in (params.get('walled_garden_hosts') or []) if h]
+        if wanted:
+            garden = cli('/ip hotspot walled-garden print terse')
+            missing = [h for h in wanted if h not in garden]
+            add('walled-garden', 'Portal and payment hosts allowed pre-login',
+                not missing,
+                f'{len(wanted)} hosts allowed' if not missing
+                else f"not allowed: {', '.join(missing)} — subscribers cannot reach "
+                     'the payment page before logging in')
+
+    if params.get('run_pppoe'):
+        pppoe_rows = _parse_terse_rows(cli('/interface pppoe-server server print terse'))
+        pppoe = next((r for r in pppoe_rows if r.get('service-name') == 'infora'), None)
+        add('pppoe-server', 'PPPoE server running on the bridge',
+            bool(pppoe) and not _row_disabled(pppoe),
+            f"on {pppoe.get('interface')}" if pppoe else 'no PPPoE server — CPEs see "no service"')
+
+        aaa = _parse_kv(cli('/ppp aaa print'))
+        add('pppoe-radius', 'PPPoE authenticates via RADIUS',
+            aaa.get('use-radius') == 'yes',
+            'use-radius=yes' if aaa.get('use-radius') == 'yes' else 'use-radius is off')
+
+    if params.get('run_management'):
+        add('mgmt-address', 'Management port address exists',
+            MGMT_PORT_COMMENT in cli('/ip address print terse'),
+            f'{MGMT_PORT_GATEWAY}/24 on {MGMT_BRIDGE_NAME}')
+
+    return checks
+
+
 def configure_services(device, opts):
     """Connect to the router and push the service configuration.
 
@@ -1064,15 +1462,47 @@ def configure_services(device, opts):
     on router-side failures — the log captures what happened for the UI.
     """
     from models import ISP
-    from services.portal_urls import portal_hostnames, public_base_url, is_router_reachable_base
+    from services.portal_urls import (
+        is_router_reachable_base,
+        portal_frontend_base_url,
+        portal_hostnames,
+        public_base_url,
+    )
 
     isp = ISP.query.get(device.isp_id) if device.isp_id else None
     roles = derive_port_roles(opts)
     wants_hotspot = any(r in ('hotspot', 'both') for r in roles.values())
+
+    # Validate the address plan before touching the router — a bad subnet should
+    # read as "fix this field", not as a connection failure.
+    try:
+        _subnet_params(opts.get('subnet') or DEFAULT_SUBNET)
+    except ValueError as exc:
+        return {
+            'success': False,
+            'error': str(exc),
+            'log': [{'step': 'subnet', 'status': 'error', 'detail': str(exc)}],
+            'summary': None,
+        }
+
     portal_warning = None
     if wants_hotspot:
         if not opts.get('walled_garden_hosts'):
             opts['walled_garden_hosts'] = portal_hostnames(isp)
+
+        # The walled garden is built from the configured portal/API origins. If
+        # PORTAL_BASE_URL is unset the portal host silently drops out of the list
+        # and the subscriber sees the sign-in page but cannot reach the page that
+        # sells them a package — a dead end that looks like a payment bug.
+        portal_base = portal_frontend_base_url(isp)
+        if not is_router_reachable_base(portal_base):
+            portal_warning = (
+                'The captive portal origin is not set to an address subscribers can '
+                f'reach (resolved: "{portal_base or "<empty>"}"). Set PORTAL_BASE_URL to '
+                'your public portal URL and re-run Configure services — without it the '
+                'portal host is missing from the walled garden and nobody can pay.'
+            )
+
         base = public_base_url()
         if base and isp and not opts.get('captive_redirect_fetch_url'):
             if is_router_reachable_base(base):
@@ -1093,33 +1523,93 @@ def configure_services(device, opts):
     log = [{'step': 'queued', 'status': 'ok', 'detail': 'Starting device configuration...'}]
     if portal_warning:
         log.append({'step': 'captive-portal', 'status': 'error', 'detail': portal_warning})
-    steps, params = build_services_commands(opts)
 
+    critical_failures = []
+    verification = []
+    steps, params = [], {}
     try:
         # Action: wait for the router even if a poll currently holds it, and let
         # mikrotik_ssh retry the flaky MikroTik SSH banner before giving up.
         with mikrotik_ssh(device, timeout=12, lock_wait=30) as client:
             log.append({'step': 'connect', 'status': 'ok', 'detail': f'Connected to {connection_host(device)} via SSH'})
 
-            for label, command in steps:
-                try:
-                    _out, err = client.run_cli(command)
-                    if err and err.strip():
-                        log.append({'step': label, 'status': 'error', 'detail': err.strip()[:300]})
-                    else:
-                        log.append({'step': label, 'status': 'ok', 'detail': f'{label} configured'})
-                except Exception as exc:
-                    log.append({'step': label, 'status': 'error', 'detail': str(exc)[:300]})
+            # Never bridge the internet feed into a service bridge, whatever the
+            # caller asked for. Doing so merges the ISP's broadcast domain with
+            # the subscriber one: two DHCP servers answer, traffic loops, and
+            # every port drops a second after anything is plugged in. The UI
+            # hides the uplink, but it identifies it by convention (ether1) and
+            # the WAN is not always there — so enforce it against the router's
+            # own routing table, which cannot be wrong.
+            uplink = detect_uplink_interface(client)
+            if uplink and uplink in roles:
+                roles.pop(uplink)
+                opts = dict(opts, port_roles=roles)
+                log.append({
+                    'step': 'uplink-guard',
+                    'status': 'warn',
+                    'detail': (
+                        f'{uplink} carries the internet feed (active default route) — '
+                        f'skipped. Bridging the uplink would take the network down.'
+                    ),
+                })
+
+            steps, params = build_services_commands(opts)
+
+            for step in steps:
+                label = step['label']
+                errors = []
+                for command in step['commands']:
+                    try:
+                        out, err = client.run_cli(command)
+                        problem = cli_error_text(out, err)
+                        if problem:
+                            errors.append(problem)
+                    except Exception as exc:  # noqa: BLE001 — one command, keep going
+                        errors.append(str(exc))
+                if errors:
+                    # A failed command no longer aborts the rest of the step: each
+                    # command runs on its own, so the router still gets everything
+                    # that *can* be applied and the log names what didn't.
+                    log.append({
+                        'step': label,
+                        'status': 'error' if step['critical'] else 'warn',
+                        'detail': '; '.join(errors)[:300],
+                    })
+                    if step['critical']:
+                        critical_failures.append(label)
+                else:
+                    log.append({'step': label, 'status': 'ok', 'detail': f'{label} configured'})
+
+            # Read the end state back rather than trusting the command output —
+            # this is what turns "applied with no visible error but no hotspot"
+            # into an actionable failure.
+            verification = _verify_services(client, params)
     except Exception as exc:
         log.append({'step': 'connect', 'status': 'error', 'detail': str(exc)[:300]})
         return {'success': False, 'log': log, 'summary': None}
 
-    failed = [entry for entry in log if entry['status'] == 'error']
-    success = not failed
+    for check in verification:
+        log.append({
+            'step': f'verify:{check["id"]}',
+            'status': 'ok' if check['ok'] else 'error',
+            'detail': check['detail'],
+        })
+
+    verify_failed = [c['id'] for c in verification if not c['ok']]
+    success = not critical_failures and not verify_failed and not portal_warning
+    if success:
+        done_detail = 'Configuration complete and verified on the router.'
+    else:
+        parts = []
+        if critical_failures:
+            parts.append(f"failed steps: {', '.join(critical_failures)}")
+        if verify_failed:
+            parts.append(f"missing on router: {', '.join(verify_failed)}")
+        done_detail = 'Configuration incomplete — ' + '; '.join(parts or ['see log'])
     log.append({
         'step': 'done',
         'status': 'ok' if success else 'error',
-        'detail': 'Configuration complete.' if success else 'Configuration completed with errors.',
+        'detail': done_detail,
     })
 
     services = []
@@ -1142,5 +1632,9 @@ def configure_services(device, opts):
         'subnet': params['subnet'],
         'gateway': params['gateway'],
         'anti_sharing': bool(params.get('run_hotspot') and opts.get('anti_sharing')),
+        'verification': verification,
     }
-    return {'success': success, 'log': log, 'summary': summary}
+    result = {'success': success, 'log': log, 'summary': summary, 'verification': verification}
+    if not success:
+        result['error'] = done_detail
+    return result

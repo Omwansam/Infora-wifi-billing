@@ -15,7 +15,10 @@
 #
 # NOTE: no `set -e` — this is a long-running supervisor; each loop guards itself.
 
-CLIENTS_CONF=/etc/freeradius/3.0/clients.conf
+# /etc/raddb is the version-independent symlink to the active config root
+# (-> /etc/freeradius/3.0 on 3.0.x, -> /etc/freeradius on 3.2.x). Hard-coding the
+# 3.0 path made this watch a file the server no longer reads.
+CLIENTS_CONF=${CLIENTS_CONF:-/etc/raddb/clients.conf}
 RADIUSD_BIN=$1
 
 # --- 1. tunnel return route maintenance ---

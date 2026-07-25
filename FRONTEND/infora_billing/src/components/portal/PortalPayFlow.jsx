@@ -11,6 +11,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
+import { completeHotspotLogin, readHotspotContext } from '../../lib/hotspotHandoff';
 import portalService from '../../services/portalService';
 import { portalClasses, usePortalTheme } from './PortalThemeContext';
 import {
@@ -156,6 +157,22 @@ export default function PortalPayFlow({
                     <Clock className="h-3.5 w-3.5" />
                     Access valid until {new Date(result.expires_at).toLocaleString()}
                   </p>
+                )}
+                {/* Opened from a router's captive portal: send the subscriber
+                    back to the hotspot login so the session actually goes
+                    online, instead of leaving them holding credentials. */}
+                {readHotspotContext() && (
+                  <PortalButton
+                    className="w-full"
+                    onClick={() =>
+                      completeHotspotLogin(
+                        result.wifi_credentials.username,
+                        result.wifi_credentials.password,
+                      )
+                    }
+                  >
+                    Get online now
+                  </PortalButton>
                 )}
               </div>
             )}

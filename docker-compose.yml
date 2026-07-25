@@ -74,7 +74,10 @@ services:
       - "1812:1812/udp"
       - "1813:1813/udp"
     volumes:
-      - ./config/freeradius/clients.conf:/etc/freeradius/3.0/clients.conf:ro
+      # /etc/raddb is the version-independent config root symlink. The old
+      # /etc/freeradius/3.0 path is not read by FreeRADIUS 3.2, so mounting there
+      # left every router an "unknown client".
+      - ./config/freeradius/clients.conf:/etc/raddb/clients.conf:ro
     depends_on:
       postgres:
         condition: service_healthy

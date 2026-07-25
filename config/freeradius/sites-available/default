@@ -49,6 +49,22 @@ server default {
         Auth-Type MS-CHAP {
             mschap
         }
+
+        # The bare entries are NOT redundant — keep them.
+        #
+        # FreeRADIUS 3.2's rlm_mschap sets `Auth-Type` to its *module instance
+        # name* (`mschap`), not to `MS-CHAP`. With only the `Auth-Type MS-CHAP`
+        # block above, the server logs
+        #     Found Auth-Type = mschap
+        #     Auth-Type sub-section not found.  Ignoring.
+        #     Failed to authenticate the user
+        # and rejects. MikroTik PPPoE negotiates MS-CHAPv2 by default, so that
+        # reject is what a CPE shows as "login failed" — while PAP-based hotspot
+        # logins for the same subscriber still worked, which made it look like a
+        # per-user problem rather than a config one.
+        mschap
+        digest
+        eap
     }
 
     preacct {

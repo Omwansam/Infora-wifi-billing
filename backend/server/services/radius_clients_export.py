@@ -26,10 +26,16 @@ def radius_clients_conf_path():
 
 
 def _nas_host_for_device(device):
-    """NAS IP FreeRADIUS should expect for RADIUS packets from this router."""
+    """NAS IP FreeRADIUS should expect for RADIUS packets from this router.
+
+    Strips any CIDR suffix: ``management_wg_ip`` is stored as an interface
+    address (10.250.0.3/24), and writing that into clients.conf would define the
+    whole tunnel subnet as one client, so every router would share the first
+    device's secret and the rest would be rejected as unknown.
+    """
     if getattr(device, 'management_wg_enabled', False) and getattr(device, 'management_wg_ip', None):
-        return device.management_wg_ip.strip()
-    return device.device_ip.strip()
+        return device.management_wg_ip.strip().split('/')[0]
+    return device.device_ip.strip().split('/')[0]
 
 
 def generate_clients_conf(default_secret=None):

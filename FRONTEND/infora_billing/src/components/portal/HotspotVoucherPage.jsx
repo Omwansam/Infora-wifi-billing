@@ -4,6 +4,7 @@ import PortalShell from './PortalShell';
 import { CopyCredential, PortalFadeIn, PortalGlassCard, PortalButton, PortalInput, PortalLabel } from './PortalUI';
 import { portalClasses, usePortalTheme } from './PortalThemeContext';
 import portalService from '../../services/portalService';
+import { completeHotspotLogin, readHotspotContext } from '../../lib/hotspotHandoff';
 
 export default function HotspotVoucherPage() {
   return (
@@ -51,6 +52,20 @@ function VoucherRedeem({ config, ispId, routerId }) {
             <p className="mt-4 text-xs" style={{ color: accent }}>
               Valid until {new Date(result.expires_at).toLocaleString()}
             </p>
+          )}
+          {/* Captive-portal round trip: log the session in on the router. */}
+          {readHotspotContext() && (
+            <PortalButton
+              className="mt-5 w-full"
+              onClick={() =>
+                completeHotspotLogin(
+                  result.wifi_credentials.username,
+                  result.wifi_credentials.password,
+                )
+              }
+            >
+              Get online now
+            </PortalButton>
           )}
         </PortalGlassCard>
       </PortalFadeIn>

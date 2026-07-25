@@ -1058,8 +1058,9 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                       </p>
                       <p className="text-sm text-gray-500">
                         {configResult?.success
-                          ? 'Services are configured. Subscribers can authenticate through this NAS.'
-                          : 'Configured, but some steps reported errors. Review the log below.'}
+                          ? 'Services are configured and verified on the router. Subscribers can authenticate through this NAS.'
+                          : (configResult?.error
+                            || 'Configured, but some steps reported errors. Review the log below.')}
                       </p>
                     </div>
                   </div>
@@ -1085,16 +1086,47 @@ export default function AddDeviceWizard({ isps = [], onClose, onSuccess }) {
                     </dl>
                   </div>
 
+                  {/* What the router actually reports back after the apply —
+                      the difference between "commands ran" and "it works". */}
+                  {configResult?.verification?.length > 0 && (
+                    <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                      <p className="px-4 py-2 bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                        Verified on the router
+                      </p>
+                      {configResult.verification.map((check) => (
+                        <div key={check.id} className="flex items-start gap-2 px-4 py-2.5 text-sm">
+                          {check.ok ? (
+                            <Check className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
+                          ) : (
+                            <X className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                          )}
+                          <div className="min-w-0">
+                            <p className={check.ok ? 'text-gray-700' : 'text-rose-700 font-medium'}>
+                              {check.label}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-0.5">{check.detail}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {configResult?.log?.length > 0 && (
                     <div className="rounded-xl bg-slate-900 p-4 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
                       {configResult.log.map((entry, idx) => (
                         <div key={idx} className="flex items-start gap-2">
                           {entry.status === 'ok' ? (
                             <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : entry.status === 'warn' ? (
+                            <Info className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
                           ) : (
                             <X className="h-3.5 w-3.5 text-rose-400 shrink-0 mt-0.5" />
                           )}
-                          <span className={entry.status === 'ok' ? 'text-slate-300' : 'text-rose-300'}>
+                          <span className={
+                            entry.status === 'ok' ? 'text-slate-300'
+                              : entry.status === 'warn' ? 'text-amber-300'
+                                : 'text-rose-300'
+                          }>
                             <span className="text-slate-500">[{entry.step}]</span> {entry.detail}
                           </span>
                         </div>

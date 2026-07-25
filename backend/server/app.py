@@ -209,9 +209,28 @@ def backfill_account_numbers():
         app.logger.warning('Account-number backfill skipped: %s', exc)
 
 
+def purge_legacy_radius_accept_rows():
+    """Clear ``Auth-Type := Accept`` rows written by earlier builds.
+
+    They accept any password and break MS-CHAPv2 PPPoE dial-in — see
+    services.radius_provisioning.ensure_plan_group. Idempotent: a no-op once the
+    rows are gone.
+    """
+    try:
+        from services.radius_provisioning import purge_auth_type_accept_rows
+        removed = purge_auth_type_accept_rows()
+        if removed:
+            db.session.commit()
+            app.logger.info('Removed %d legacy RADIUS Auth-Type:=Accept rows', removed)
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.warning('RADIUS Auth-Type cleanup skipped: %s', exc)
+
+
 with app.app_context():
     ensure_schema_upgrades()
     backfill_account_numbers()
+    purge_legacy_radius_accept_rows()
 
 
 @app.before_request
