@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from auth_utils import get_current_user
 from extensions import db
-from models import ServicePlan, User, Customer, Invoice, ISP
+from models import ServicePlan, HotspotAccessCode, User, Customer, Invoice, ISP
 from routes.customers import serialize_customer
 from services.radius_provisioning import ensure_plan_group, reprovision_plan_customers
 from services.mikrotik_wireguard import reprovision_plan_wireguard_peers
@@ -13,6 +14,48 @@ from services.plan_utils import (
 )
 
 plans_bp = Blueprint('plans', __name__, url_prefix='/api/plans')
+
+
+def _resolve_isp_for_user():
+    """ISP a new package should belong to, or None if we cannot tell.
+
+    Mirrors routes.customers._resolve_isp_for_user: an operator is pinned to
+    their own ISP, an admin without one falls back to the first active ISP.
+    ``service_plans.isp_id`` is NOT NULL, so a package created without this
+    fails at commit — that was the "saving does nothing" bug.
+    """
+    user = get_current_user()
+    if not user:
+        return None
+    if user.isp_id:
+        return ISP.query.get(user.isp_id)
+    return ISP.query.filter_by(is_active=True).order_by(ISP.id.asc()).first()
+
+
+def _scope_to_isp(query):
+    """Restrict a ServicePlan query to what the current user may see.
+
+    Admins keep the cross-tenant view they have elsewhere; an operator only
+    ever sees their own ISP's packages.
+    """
+    user = get_current_user()
+    if user and user.role != 'admin' and user.isp_id:
+        return query.filter(ServicePlan.isp_id == user.isp_id)
+    return query
+
+
+def _get_plan_or_403(plan_id):
+    """Fetch a plan the current user is allowed to mutate.
+
+    Returns (plan, error_response, status); on success the last two are None.
+    """
+    plan = ServicePlan.query.get(plan_id)
+    if not plan:
+        return None, jsonify({'error': 'Package not found'}), 404
+    user = get_current_user()
+    if user and user.role != 'admin' and user.isp_id and plan.isp_id != user.isp_id:
+        return None, jsonify({'error': 'Access denied'}), 403
+    return plan, None, None
 
 def serialize_plan(plan):
     """Serialize plan object to dictionary"""
@@ -138,8 +181,8 @@ def get_plans():
         search = request.args.get('search')
         plan_type = request.args.get('plan_type')
         
-        query = ServicePlan.query
-        
+        query = _scope_to_isp(ServicePlan.query)
+
         if plan_type:
             query = query.filter_by(plan_type=plan_type)
         
@@ -179,9 +222,11 @@ def get_plans():
 def get_plan(plan_id):
     """Get specific service plan by ID"""
     try:
-        plan = ServicePlan.query.get_or_404(plan_id)
+        plan, error, status = _get_plan_or_403(plan_id)
+        if error:
+            return error, status
         return jsonify(serialize_plan(plan)), 200
-        
+
     except Exception as e:
         return jsonify({'error': f'Failed to get plan: {str(e)}'}), 500
 
@@ -190,34 +235,42 @@ def get_plan(plan_id):
 def create_plan():
     """Create a new service plan"""
     try:
-        data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ['name', 'speed', 'price']
-        for field in required_fields:
-            if not data.get(field):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({'error': 'A JSON body is required'}), 400
+
+        # Validate required fields. Checked for emptiness rather than
+        # truthiness: a free trial legitimately posts price 0, and `not 0`
+        # would reject it as missing.
+        for field in ('name', 'speed', 'price'):
+            value = data.get(field)
+            if value is None or (isinstance(value, str) and not value.strip()):
                 return jsonify({'error': f'{field} is required'}), 400
-        
+
         # Validate price
         try:
             price = float(data['price'])
-            if price < 0:
-                return jsonify({'error': 'Price must be positive'}), 400
-        except ValueError:
+        except (TypeError, ValueError):
             return jsonify({'error': 'Invalid price format'}), 400
-        
+        if price < 0:
+            return jsonify({'error': 'Price must be positive'}), 400
+
         # Validate plan type
         plan_type = (data.get('plan_type') or 'pppoe').strip().lower()
         allowed_types = ('pppoe', 'hotspot', 'trial', 'bundle', 'wireguard')
         if plan_type not in allowed_types:
             return jsonify({'error': f'Invalid plan_type. Use one of: {", ".join(allowed_types)}'}), 400
 
+        isp = _resolve_isp_for_user()
+        if not isp:
+            return jsonify({'error': 'No ISP associated with this account'}), 400
+
         # Create plan
         plan = ServicePlan(
             name=data['name'],
             speed=data['speed'],
             price=price,
-            features=data.get('features', []),
+            features=data.get('features') or {},
             popular=data.get('popular', False),
             is_active=data.get('is_active', True),
             plan_type=plan_type,
@@ -228,16 +281,33 @@ def create_plan():
             idle_timeout=data.get('idle_timeout'),
             duration_hours=data.get('duration_hours'),
             billing_cycle_days=data.get('billing_cycle_days', 30),
+            isp_id=isp.id,
         )
-        
+
         db.session.add(plan)
         db.session.commit()
-        
-        return jsonify({
+
+        # Give the package its RADIUS group up front so the first customer
+        # assigned to it authenticates with the right rate limit. Best effort:
+        # the package is already saved, so a RADIUS hiccup must not 500 the
+        # create and lose the operator's work.
+        warning = None
+        if plan_type != 'wireguard':
+            try:
+                ensure_plan_group(plan, isp)
+                db.session.commit()
+            except Exception as provision_error:
+                db.session.rollback()
+                warning = f'Package saved, but RADIUS setup failed: {provision_error}'
+
+        payload = {
             'message': 'Service plan created successfully',
             'plan': serialize_plan(plan)
-        }), 201
-        
+        }
+        if warning:
+            payload['warning'] = warning
+        return jsonify(payload), 201
+
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to create plan: {str(e)}'}), 500
@@ -247,9 +317,13 @@ def create_plan():
 def update_plan(plan_id):
     """Update service plan"""
     try:
-        plan = ServicePlan.query.get_or_404(plan_id)
-        data = request.get_json()
-        
+        plan, error, status = _get_plan_or_403(plan_id)
+        if error:
+            return error, status
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({'error': 'A JSON body is required'}), 400
+
         radius_fields = (
             'bandwidth_limit', 'data_limit', 'static_ip',
             'session_timeout', 'idle_timeout', 'speed', 'features', 'plan_type',
@@ -260,20 +334,32 @@ def update_plan(plan_id):
 
         # Update fields
         if 'name' in data:
-            plan.name = data['name']
+            name = (data['name'] or '').strip()
+            if not name:
+                return jsonify({'error': 'name is required'}), 400
+            plan.name = name
         if 'speed' in data:
-            plan.speed = data['speed']
+            speed = (data['speed'] or '').strip()
+            if not speed:
+                return jsonify({'error': 'speed is required'}), 400
+            plan.speed = speed
             radius_changed = True
         if 'price' in data:
             try:
                 price = float(data['price'])
-                if price < 0:
-                    return jsonify({'error': 'Price must be positive'}), 400
-                plan.price = price
-            except ValueError:
+            except (TypeError, ValueError):
                 return jsonify({'error': 'Invalid price format'}), 400
+            if price < 0:
+                return jsonify({'error': 'Price must be positive'}), 400
+            plan.price = price
+        if 'plan_type' in data:
+            plan_type = (data.get('plan_type') or '').strip().lower()
+            allowed_types = ('pppoe', 'hotspot', 'trial', 'bundle', 'wireguard')
+            if plan_type not in allowed_types:
+                return jsonify({'error': f'Invalid plan_type. Use one of: {", ".join(allowed_types)}'}), 400
+            data = {**data, 'plan_type': plan_type}
         if 'features' in data:
-            plan.features = data['features']
+            plan.features = data['features'] or {}
             radius_changed = True
         if 'popular' in data:
             plan.popular = data['popular']
@@ -284,22 +370,33 @@ def update_plan(plan_id):
                 setattr(plan, field, data[field])
                 radius_changed = True
 
+        # Persist first: reprovisioning talks to RADIUS/WireGuard and must not
+        # be able to roll back an otherwise valid edit.
+        db.session.commit()
+
+        warning = None
         if radius_changed:
             isp = ISP.query.get(plan.isp_id)
             if isp:
-                if plan.plan_type == 'wireguard':
-                    reprovision_plan_wireguard_peers(plan)
-                else:
-                    ensure_plan_group(plan, isp)
-                    reprovision_plan_customers(plan)
+                try:
+                    if plan.plan_type == 'wireguard':
+                        reprovision_plan_wireguard_peers(plan)
+                    else:
+                        ensure_plan_group(plan, isp)
+                        reprovision_plan_customers(plan)
+                    db.session.commit()
+                except Exception as provision_error:
+                    db.session.rollback()
+                    warning = f'Package saved, but re-provisioning failed: {provision_error}'
 
-        db.session.commit()
-        
-        return jsonify({
+        payload = {
             'message': 'Service plan updated successfully',
             'plan': serialize_plan(plan)
-        }), 200
-        
+        }
+        if warning:
+            payload['warning'] = warning
+        return jsonify(payload), 200
+
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to update plan: {str(e)}'}), 500
@@ -309,15 +406,30 @@ def update_plan(plan_id):
 def delete_plan(plan_id):
     """Delete service plan"""
     try:
-        
-        plan = ServicePlan.query.get_or_404(plan_id)
-        
+        plan, error, status = _get_plan_or_403(plan_id)
+        if error:
+            return error, status
+
         # Check if plan has related customers
         customer_count = len(plan.customers) if hasattr(plan, 'customers') else 0
-        
+
         if customer_count > 0:
-            return jsonify({'error': 'Cannot delete plan with existing customers'}), 400
-        
+            return jsonify({
+                'error': f'Cannot delete a package still assigned to {customer_count} '
+                         f'client{"s" if customer_count != 1 else ""}. '
+                         'Move them to another package first.'
+            }), 400
+
+        # hotspot_access_codes.plan_id is NOT NULL, so issued codes block the
+        # delete at the FK. Say so plainly instead of surfacing a driver error.
+        code_count = HotspotAccessCode.query.filter_by(plan_id=plan.id).count()
+        if code_count > 0:
+            return jsonify({
+                'error': f'Cannot delete a package with {code_count} issued hotspot '
+                         f'access code{"s" if code_count != 1 else ""}. '
+                         'Deactivate the package instead.'
+            }), 400
+
         try:
             db.session.delete(plan)
             db.session.commit()
@@ -341,9 +453,11 @@ def delete_plan(plan_id):
 def toggle_plan_active(plan_id):
     """Toggle plan active status"""
     try:
-        plan = ServicePlan.query.get_or_404(plan_id)
+        plan, error, status = _get_plan_or_403(plan_id)
+        if error:
+            return error, status
         plan.is_active = not plan.is_active
-        
+
         db.session.commit()
         
         return jsonify({
@@ -360,9 +474,11 @@ def toggle_plan_active(plan_id):
 def toggle_plan_popular(plan_id):
     """Toggle plan popular status"""
     try:
-        plan = ServicePlan.query.get_or_404(plan_id)
+        plan, error, status = _get_plan_or_403(plan_id)
+        if error:
+            return error, status
         plan.popular = not plan.popular
-        
+
         db.session.commit()
         
         return jsonify({
@@ -379,7 +495,7 @@ def toggle_plan_popular(plan_id):
 def get_active_plans():
     """Get all active service plans"""
     try:
-        query = ServicePlan.query.filter_by(is_active=True)
+        query = _scope_to_isp(ServicePlan.query).filter_by(is_active=True)
         plan_type = request.args.get('plan_type')
         if plan_type:
             query = query.filter_by(plan_type=plan_type)
@@ -397,7 +513,9 @@ def get_active_plans():
 def get_popular_plans():
     """Get all popular service plans"""
     try:
-        plans = ServicePlan.query.filter_by(popular=True, is_active=True).order_by(ServicePlan.price.asc()).all()
+        plans = _scope_to_isp(ServicePlan.query).filter_by(
+            popular=True, is_active=True
+        ).order_by(ServicePlan.price.asc()).all()
         
         return jsonify({
             'plans': [serialize_plan(plan) for plan in plans]
@@ -411,24 +529,24 @@ def get_popular_plans():
 def get_plan_stats():
     """Get service plan statistics"""
     try:
-        total_plans = ServicePlan.query.count()
-        active_plans = ServicePlan.query.filter_by(is_active=True).count()
-        popular_plans = ServicePlan.query.filter_by(popular=True).count()
-        
-        # Average price
-        avg_price = db.session.query(db.func.avg(ServicePlan.price)).scalar() or 0
-        
-        # Price range
-        min_price = db.session.query(db.func.min(ServicePlan.price)).scalar() or 0
-        max_price = db.session.query(db.func.max(ServicePlan.price)).scalar() or 0
-        
+        # Every figure below is scoped the same way the package list is, so the
+        # cards on the page always add up to the rows underneath them.
+        total_plans = _scope_to_isp(ServicePlan.query).count()
+        active_plans = _scope_to_isp(ServicePlan.query).filter_by(is_active=True).count()
+        popular_plans = _scope_to_isp(ServicePlan.query).filter_by(popular=True).count()
+
+        prices = _scope_to_isp(db.session.query(ServicePlan.price)).subquery()
+        avg_price = db.session.query(db.func.avg(prices.c.price)).scalar() or 0
+        min_price = db.session.query(db.func.min(prices.c.price)).scalar() or 0
+        max_price = db.session.query(db.func.max(prices.c.price)).scalar() or 0
+
         # Plans by price range
         plans_by_range = {
-            'budget': ServicePlan.query.filter(ServicePlan.price < 50).count(),
-            'standard': ServicePlan.query.filter(ServicePlan.price >= 50, ServicePlan.price < 100).count(),
-            'premium': ServicePlan.query.filter(ServicePlan.price >= 100).count()
+            'budget': _scope_to_isp(ServicePlan.query).filter(ServicePlan.price < 50).count(),
+            'standard': _scope_to_isp(ServicePlan.query).filter(ServicePlan.price >= 50, ServicePlan.price < 100).count(),
+            'premium': _scope_to_isp(ServicePlan.query).filter(ServicePlan.price >= 100).count()
         }
-        
+
         return jsonify({
             'total_plans': total_plans,
             'active_plans': active_plans,
@@ -449,7 +567,9 @@ def get_plan_stats():
 def get_plan_customers(plan_id):
     """Get all customers using a specific plan"""
     try:
-        plan = ServicePlan.query.get_or_404(plan_id)
+        plan, error, status = _get_plan_or_403(plan_id)
+        if error:
+            return error, status
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
         
@@ -480,10 +600,12 @@ def get_plan_customers(plan_id):
 def bulk_update_plans():
     """Bulk update multiple plans"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({'error': 'A JSON body is required'}), 400
         plan_ids = data.get('plan_ids', [])
         updates = data.get('updates', {})
-        
+
         if not plan_ids:
             return jsonify({'error': 'No plan IDs provided'}), 400
         
@@ -496,15 +618,24 @@ def bulk_update_plans():
             if field not in allowed_fields:
                 return jsonify({'error': f'Field {field} is not allowed for bulk update'}), 400
         
-        # Update plans
+        if 'price' in updates:
+            try:
+                price = float(updates['price'])
+            except (TypeError, ValueError):
+                return jsonify({'error': 'Invalid price format'}), 400
+            if price < 0:
+                return jsonify({'error': 'Price must be positive'}), 400
+            updates = {**updates, 'price': price}
+
+        # Update plans — silently skipping anything outside the caller's ISP.
         updated_count = 0
         for plan_id in plan_ids:
-            plan = ServicePlan.query.get(plan_id)
+            plan, _error, _status = _get_plan_or_403(plan_id)
             if plan:
                 for field, value in updates.items():
                     setattr(plan, field, value)
                 updated_count += 1
-        
+
         db.session.commit()
         
         return jsonify({

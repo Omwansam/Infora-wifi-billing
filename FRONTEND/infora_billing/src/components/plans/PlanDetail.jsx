@@ -43,10 +43,14 @@ export default function PlanDetail() {
         getPlan(planId),
         getPlanCustomers(planId, { per_page: 20 }),
       ]);
-      if (planResponse.success) setPlan(planResponse.data);
+      if (!planResponse.success) {
+        toast.error(planResponse.error || 'Failed to load plan details');
+        return;
+      }
+      setPlan(planResponse.data);
       if (customersResponse.success) setCustomers(customersResponse.data.customers || []);
-    } catch {
-      toast.error('Failed to load plan details');
+    } catch (error) {
+      toast.error(error?.message || 'Failed to load plan details');
     } finally {
       setLoading(false);
     }
@@ -66,12 +70,16 @@ export default function PlanDetail() {
     try {
       setActionLoading(true);
       const response = await togglePlanActive(planId);
-      if (response.success) {
-        setPlan(response.data);
-        toast.success(`Plan ${response.data.is_active ? 'activated' : 'deactivated'}`);
+      if (!response.success) {
+        toast.error(response.error || 'Failed to update plan status');
+        return;
       }
-    } catch {
-      toast.error('Failed to update plan status');
+      // The toggle endpoints answer { message, plan } — the plan is nested.
+      const updated = response.data.plan;
+      setPlan(updated);
+      toast.success(`Plan ${updated.is_active ? 'activated' : 'deactivated'}`);
+    } catch (error) {
+      toast.error(error?.message || 'Failed to update plan status');
     } finally {
       setActionLoading(false);
     }
@@ -81,12 +89,15 @@ export default function PlanDetail() {
     try {
       setActionLoading(true);
       const response = await togglePlanPopular(planId);
-      if (response.success) {
-        setPlan(response.data);
-        toast.success(response.data.popular ? 'Marked as popular' : 'Removed from popular');
+      if (!response.success) {
+        toast.error(response.error || 'Failed to update popular status');
+        return;
       }
-    } catch {
-      toast.error('Failed to update popular status');
+      const updated = response.data.plan;
+      setPlan(updated);
+      toast.success(updated.popular ? 'Marked as popular' : 'Removed from popular');
+    } catch (error) {
+      toast.error(error?.message || 'Failed to update popular status');
     } finally {
       setActionLoading(false);
     }
@@ -97,12 +108,14 @@ export default function PlanDetail() {
     try {
       setActionLoading(true);
       const response = await deletePlan(planId);
-      if (response.success) {
-        toast.success('Plan deleted');
-        navigate('/plans');
+      if (!response.success) {
+        toast.error(response.error || 'Failed to delete plan');
+        return;
       }
+      toast.success('Plan deleted');
+      navigate('/plans');
     } catch (error) {
-      toast.error(error.message || 'Failed to delete plan');
+      toast.error(error?.message || 'Failed to delete plan');
     } finally {
       setActionLoading(false);
     }

@@ -367,7 +367,10 @@ export default function PlanForm() {
     try {
       setLoading(true);
       const response = await getPlan(planId);
-      if (!response.success) return;
+      if (!response.success) {
+        toast.error(response.error || 'Failed to load package');
+        return;
+      }
       const plan = response.data;
       const upload = plan.upload_mbps ?? parseMbpsInput(plan.speed);
       const download = plan.download_mbps ?? plan.bandwidth_limit ?? parseMbpsInput(plan.speed);
@@ -584,12 +587,19 @@ export default function PlanForm() {
       };
 
       const response = isEdit ? await updatePlan(planId, payload) : await createPlan(payload);
-      if (response.success) {
-        toast.success(isEdit ? 'Package updated' : 'Package created');
-        navigate('/plans');
+      // apiCall resolves with { success: false, error } instead of throwing, so
+      // a failed save has to be handled here — the catch below never sees it.
+      if (!response.success) {
+        toast.error(response.error || 'Failed to save package');
+        return;
       }
+      if (response.data?.warning) {
+        toast(response.data.warning, { icon: '⚠️' });
+      }
+      toast.success(isEdit ? 'Package updated' : 'Package created');
+      navigate('/plans');
     } catch (error) {
-      toast.error(error.message || 'Failed to save package');
+      toast.error(error?.message || 'Failed to save package');
     } finally {
       setSaving(false);
     }

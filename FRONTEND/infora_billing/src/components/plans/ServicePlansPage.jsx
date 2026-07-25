@@ -62,11 +62,15 @@ export default function ServicePlansPage() {
         popular: statusFilter === 'popular' ? true : undefined,
       };
       const response = await getPlans(params);
-      if (response.success) {
-        setPlans(response.data.plans || []);
+      // apiCall resolves with { success: false, error } rather than throwing.
+      if (!response.success) {
+        toast.error(response.error || 'Failed to load packages');
+        setPlans([]);
+        return;
       }
-    } catch {
-      toast.error('Failed to load packages');
+      setPlans(response.data.plans || []);
+    } catch (error) {
+      toast.error(error?.message || 'Failed to load packages');
       setPlans([]);
     } finally {
       setLoading(false);
@@ -101,13 +105,15 @@ export default function ServicePlansPage() {
     try {
       setActionLoading(true);
       const response = await deletePlan(plan.id);
-      if (response.success) {
-        toast.success('Package deleted');
-        loadPlans();
-        loadStats();
+      if (!response.success) {
+        toast.error(response.error || 'Failed to delete package');
+        return;
       }
+      toast.success('Package deleted');
+      loadPlans();
+      loadStats();
     } catch (error) {
-      toast.error(error.message || 'Failed to delete');
+      toast.error(error?.message || 'Failed to delete package');
     } finally {
       setActionLoading(false);
     }
