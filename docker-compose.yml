@@ -70,6 +70,13 @@ services:
       - NET_ADMIN
     environment:
       RADIUS_SECRET: radius_secret_key
+      # Same source as the postgres service — the SQL module reads these via
+      # $ENV{...}. Keep them in step or radiusd loads but cannot query.
+      RADIUS_DB_HOST: postgres
+      RADIUS_DB_PORT: "5432"
+      RADIUS_DB_NAME: infora_billing
+      RADIUS_DB_USER: infora_user
+      RADIUS_DB_PASSWORD: ${POSTGRES_PASSWORD:-infora_password}
     ports:
       - "1812:1812/udp"
       - "1813:1813/udp"

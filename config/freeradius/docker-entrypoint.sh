@@ -21,6 +21,16 @@
 CLIENTS_CONF=${CLIENTS_CONF:-/etc/raddb/clients.conf}
 RADIUSD_BIN=$1
 
+# mods-available/sql reads these via $ENV{...}; FreeRADIUS aborts if one is
+# undefined, so give every var a default here. Compose overrides them from the
+# same POSTGRES_* values the database itself uses.
+: "${RADIUS_DB_HOST:=postgres}"
+: "${RADIUS_DB_PORT:=5432}"
+: "${RADIUS_DB_NAME:=infora_billing}"
+: "${RADIUS_DB_USER:=infora_user}"
+: "${RADIUS_DB_PASSWORD:=infora_password}"
+export RADIUS_DB_HOST RADIUS_DB_PORT RADIUS_DB_NAME RADIUS_DB_USER RADIUS_DB_PASSWORD
+
 # --- 1. tunnel return route maintenance ---
 (
   while true; do

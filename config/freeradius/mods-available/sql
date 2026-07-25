@@ -3,11 +3,19 @@ sql {
     driver = "rlm_sql_postgresql"
     dialect = "postgresql"
 
-    server = "postgres"
-    port = 5432
-    login = "infora_user"
-    password = "infora_password"
-    radius_db = "infora_billing"
+    # Credentials come from the environment — the compose file feeds these from
+    # the same POSTGRES_* vars as the database itself. Hardcoding the dev
+    # password here meant the module loaded but could never connect on any
+    # deployment with a real password:
+    #   rlm_sql_postgresql: Connection failed: FATAL: password authentication
+    #     failed for user "infora_user"
+    #   /etc/raddb/mods-enabled/sql[2]: Instantiation failed for module "sql"
+    # docker-entrypoint.sh exports defaults so these are always defined.
+    server = "$ENV{RADIUS_DB_HOST}"
+    port = $ENV{RADIUS_DB_PORT}
+    login = "$ENV{RADIUS_DB_USER}"
+    password = "$ENV{RADIUS_DB_PASSWORD}"
+    radius_db = "$ENV{RADIUS_DB_NAME}"
 
     read_groups = yes
     group_attribute = "SQL-Group"

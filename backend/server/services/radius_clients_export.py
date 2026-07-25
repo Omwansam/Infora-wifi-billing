@@ -169,9 +169,17 @@ def generate_clients_conf(default_secret=None):
     # (that router's requests get ignored as an unknown client), so make it
     # visible right where an operator is already looking.
     if skipped:
+        # Deduplicated: the sample-data seed re-inserts the same NAS row on every
+        # boot, so the raw list runs to dozens of identical lines.
+        counted = {}
+        for entry in skipped:
+            counted[entry] = counted.get(entry, 0) + 1
         lines.append('# Skipped — address is not an IP/CIDR and does not resolve,')
         lines.append('# which would abort FreeRADIUS startup for every subscriber:')
-        lines.extend(f'#   - {entry}' for entry in skipped)
+        lines.extend(
+            f'#   - {entry}' + (f' (x{n})' if n > 1 else '')
+            for entry, n in sorted(counted.items())
+        )
         lines.append('')
 
     return '\n'.join(lines)
