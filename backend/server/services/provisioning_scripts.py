@@ -10,6 +10,7 @@ import socket
 from flask import current_app
 
 from models import ISP
+from services.device_config_ops import radius_interim_interval
 from services.encryption import decrypt_value
 from services.wireguard_management import (
     ensure_management_server,
@@ -186,7 +187,8 @@ def build_radius_script(device, snmp_community='infora'):
         '/radius incoming set accept=yes',
         '',
         '# --- 2. PPPoE AAA via RADIUS ---',
-        '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
+        f'/ppp aaa set use-radius=yes accounting=yes '
+        f'interim-update={radius_interim_interval()}',
         '',
         '# --- 3. Remove FastTrack (CRITICAL: it bypasses queues + RADIUS accounting) ---',
         ':do { /ip firewall filter remove [find action=fasttrack-connection] } on-error={}',

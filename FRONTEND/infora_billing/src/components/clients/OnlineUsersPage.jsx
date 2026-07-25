@@ -447,8 +447,13 @@ export default function OnlineUsersPage() {
                           <p className="text-sm font-medium text-slate-800 tabular-nums">
                             {formatBytes(totalBytes)}
                           </p>
+                          {/* Subscriber's own direction. RADIUS names its
+                              counters from the NAS side, so bytes_in is the
+                              client's UPLOAD — reading them literally showed
+                              every download as an upload. */}
                           <p className="text-[10px] text-slate-500 mt-0.5 tabular-nums">
-                            ↓{formatBytes(session.bytes_in)} ↑{formatBytes(session.bytes_out)}
+                            ↓{formatBytes(session.download_bytes ?? session.bytes_out)}
+                            {' '}↑{formatBytes(session.upload_bytes ?? session.bytes_in)}
                           </p>
                         </td>
                         <td className="px-4 py-3.5">

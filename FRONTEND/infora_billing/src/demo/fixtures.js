@@ -628,8 +628,11 @@ export const DASHBOARD_STATS = {
       username: s.username,
       customer_name: s.customer_name,
       plan_name: s.plan_name,
-      download_bytes: s.bytes_in,
-      upload_bytes: s.bytes_out,
+      // RADIUS counters are NAS-side: bytes_in is what the NAS received from
+      // the client, i.e. the client's upload. Keep the demo consistent with
+      // the real serializer so it doesn't teach the mapping backwards.
+      download_bytes: s.bytes_out,
+      upload_bytes: s.bytes_in,
       total_bytes: s.bytes_in + s.bytes_out,
     }))
     .sort((a, b) => b.total_bytes - a.total_bytes),

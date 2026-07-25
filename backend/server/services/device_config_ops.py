@@ -54,6 +54,19 @@ WAN_DHCP_COMMENT = 'infora-wan-dhcp'
 HOTSPOT_ISOLATE_COMMENT = 'infora-hotspot-isolate'
 
 
+def radius_interim_interval():
+    """How often a NAS reports live usage for an open session.
+
+    This is the resolution of every traffic figure in the UI: a session shows
+    0 B until its first interim lands, and usage then moves in steps of this
+    interval. 5m is the sane default for a busy NAS; drop it to 1m while
+    commissioning a router so traffic appears while you are still watching.
+    Also bounds how quickly FUP notices a subscriber crossing their cap.
+    """
+    value = (os.getenv('RADIUS_INTERIM_UPDATE') or '5m').strip()
+    return value if re.fullmatch(r'\d+[smh]', value) else '5m'
+
+
 def connection_host(device):
     """Host to connect to: management tunnel IP for NAT routers, else device_ip."""
     if device.management_wg_enabled and device.management_wg_ip:
@@ -1053,7 +1066,8 @@ def build_services_commands(opts):
             'pppoe-reset',
             [
                 ':do {/interface pppoe-server server remove [find service-name=infora]} on-error={}',
-                '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
+                f'/ppp aaa set use-radius=yes accounting=yes '
+                f'interim-update={radius_interim_interval()}',
             ],
         ))
         steps.append(_step(
@@ -1088,7 +1102,7 @@ def build_services_commands(opts):
                 f'use-radius=yes',
             ] + _guarded_set('/ip hotspot profile', '[find name=infora]', [
                 'radius-accounting=yes',
-                'radius-interim-update=5m',
+                f'radius-interim-update={radius_interim_interval()}',
                 'login-by=http-chap,http-pap,cookie',
             ]) + [
                 f'/ip hotspot add name=infora interface={BRIDGE_NAME} '

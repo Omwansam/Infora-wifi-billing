@@ -41,9 +41,27 @@ def _duration_seconds(record):
 
 
 def serialize_radius_session(record):
-    """Serialize a radacct row to the session shape the UI renders."""
+    """Serialize a radacct row to the session shape the UI renders.
+
+    RADIUS octet counters are named from the **NAS's** point of view (RFC 2866),
+    which is the opposite of the subscriber's:
+
+        Acct-Input-Octets   octets the NAS received FROM the user  → their UPLOAD
+        Acct-Output-Octets  octets the NAS sent     TO   the user  → their DOWNLOAD
+
+    ``bytes_in``/``bytes_out`` keep the raw RADIUS meaning for anything already
+    consuming them. Render from ``download_bytes``/``upload_bytes`` instead —
+    they are named from the subscriber's side, so there is nothing to get
+    backwards (which is exactly what happened: a client's download showed as
+    upload and vice versa).
+    """
     is_active = record.acctstoptime is None
+    nas_in = int(record.acctinputoctets or 0)
+    nas_out = int(record.acctoutputoctets or 0)
     return {
+        'download_bytes': nas_out,
+        'upload_bytes': nas_in,
+        'total_bytes': nas_in + nas_out,
         'id': record.radacctid,
         'session_id': record.acctsessionid,
         'username': record.username,
@@ -52,8 +70,8 @@ def serialize_radius_session(record):
         'nas_ip': record.nasipaddress,
         'session_start': record.acctstarttime.isoformat() if record.acctstarttime else None,
         'session_end': record.acctstoptime.isoformat() if record.acctstoptime else None,
-        'bytes_in': int(record.acctinputoctets or 0),
-        'bytes_out': int(record.acctoutputoctets or 0),
+        'bytes_in': nas_in,
+        'bytes_out': nas_out,
         'is_active': is_active,
         'duration': _duration_seconds(record),
         'terminate_cause': record.acctterminatecause,
