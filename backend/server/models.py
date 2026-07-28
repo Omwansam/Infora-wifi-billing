@@ -2031,3 +2031,109 @@ class WebsiteInquiry(db.Model):
 
     def __repr__(self):
         return f'<WebsiteInquiry {self.email} ({self.source.value})>'
+
+
+# =========================
+#   Router-scan import
+# =========================
+
+class ImportRun(db.Model):
+    """One scan/import attempt against a router or a file.
+
+    Persisting the run is what makes a 400-subscriber import survivable: it is
+    reviewable before it writes, resumable if it dies halfway, diffable against a
+    later re-scan, and revertible when it turns out to be wrong. See
+    ROUTER_SCAN_IMPORT_AND_TAKEOVER.md §12.
+    """
+    __tablename__ = 'import_runs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    # 'router-ssh' | 'router-agent' | 'router-export' | 'csv'
+    source = db.Column(db.String(20), nullable=False, default='router-ssh')
+    # 'scanning' | 'scanned' | 'importing' | 'completed' | 'failed' | 'reverted'
+    status = db.Column(db.String(20), nullable=False, default='scanning')
+    mode = db.Column(db.String(10), nullable=False, default='dry_run')
+    # The §6 router-profile card, as JSON.
+    fingerprint = db.Column(db.Text, nullable=True)
+    # Operator decisions: pricing map, billing anchor, plan_map, comment options.
+    options = db.Column(db.Text, nullable=True)
+    # Rolling progress/result counters, polled by the UI during a commit.
+    counts = db.Column(db.Text, nullable=True)
+    # Captured router output, so the run can be re-parsed without re-scanning.
+    # Holds the incumbent's RADIUS secret — encrypted at rest, purged on retention.
+    raw_blob = db.Column(db.Text, nullable=True)
+    error = db.Column(db.Text, nullable=True)
+    # Opaque token for the agent transport; single-run, short-lived.
+    ingest_token = db.Column(db.String(64), unique=True, nullable=True, index=True)
+    ingest_token_expires_at = db.Column(db.DateTime, nullable=True)
+
+    started_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    finished_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False)
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    isp = db.relationship('ISP', foreign_keys=[isp_id])
+    device = db.relationship('MikrotikDevice', foreign_keys=[device_id])
+    created_by = db.relationship('User', foreign_keys=[created_by_id])
+    candidates = db.relationship(
+        'ImportCandidate', back_populates='run', cascade='all, delete-orphan'
+    )
+
+    def __repr__(self):
+        return f'<ImportRun {self.id} {self.source} {self.status}>'
+
+
+class ImportCandidate(db.Model):
+    """One discovered subscriber, staged for operator review before it is real.
+
+    Provenance for a committed row lives here (``customer_id``) rather than as a
+    new column on ``customers``: the candidate row has to exist anyway, and it
+    gives "revert this run" everything it needs without widening the hottest
+    table in the schema.
+    """
+    __tablename__ = 'import_candidates'
+
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey('import_runs.id'), nullable=False, index=True)
+
+    kind = db.Column(db.String(10), nullable=False, default='pppoe')  # pppoe|hotspot|static
+    login = db.Column(db.String(120), nullable=True, index=True)
+    name = db.Column(db.String(120), nullable=True)
+    phone = db.Column(db.String(30), nullable=True)
+    email = db.Column(db.String(120), nullable=True)
+    # Fernet-encrypted on ingest — the plaintext is never persisted, never
+    # logged, and never returned by a list endpoint.
+    password_encrypted = db.Column(db.Text, nullable=True)
+
+    profile_name = db.Column(db.String(120), nullable=True)
+    rate_limit_raw = db.Column(db.String(120), nullable=True)
+    static_ip = db.Column(db.String(45), nullable=True)
+    mac = db.Column(db.String(40), nullable=True)
+    disabled = db.Column(db.Boolean, default=False, nullable=False)
+    online = db.Column(db.Boolean, default=False, nullable=False)
+    comment = db.Column(db.Text, nullable=True)
+    raw = db.Column(db.Text, nullable=True)
+
+    resolved_plan_id = db.Column(db.Integer, db.ForeignKey('service_plans.id'), nullable=True)
+    subscription_end = db.Column(db.DateTime, nullable=True)
+    # 'import' | 'skip' | 'update' — operator-editable in the review table.
+    decision = db.Column(db.String(10), nullable=False, default='import')
+    # 'new' | 'duplicate' | 'error' | 'created' | 'skipped'
+    status = db.Column(db.String(12), nullable=False, default='new')
+    messages = db.Column(db.Text, nullable=True)
+
+    match_customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    run = db.relationship('ImportRun', back_populates='candidates')
+    resolved_plan = db.relationship('ServicePlan', foreign_keys=[resolved_plan_id])
+    match_customer = db.relationship('Customer', foreign_keys=[match_customer_id])
+    customer = db.relationship('Customer', foreign_keys=[customer_id])
+
+    def __repr__(self):
+        return f'<ImportCandidate {self.login or self.mac} {self.status}>'

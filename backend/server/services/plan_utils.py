@@ -207,12 +207,18 @@ def generate_radius_attributes(plan, rate_limit_override=None):
             'value': override,
         })
     elif limits['bandwidth_limit']:
-        mbps = int(limits['bandwidth_limit'])
-        # MikroTik-Rate-Limit format: rx/tx (e.g. 10M/10M)
+        # MikroTik-Rate-Limit is rx/tx *from the client's point of view*:
+        # rx = upload, tx = download. Symmetric plans render identically either
+        # way, but an imported package with asymmetric speeds (a router profile
+        # of `5M/20M` is a 20 Mbps download service) is emitted backwards if the
+        # download figure is used for both — so resolve them separately.
+        speeds = get_plan_speed_mbps(plan)
+        download = int(speeds['download_mbps'] or limits['bandwidth_limit'])
+        upload = int(speeds['upload_mbps'] or download)
         attributes.append({
             'attribute': 'Mikrotik-Rate-Limit',
             'op': '=',
-            'value': f'{mbps}M/{mbps}M',
+            'value': f'{upload}M/{download}M',
         })
 
     if limits['data_limit'] and not override:

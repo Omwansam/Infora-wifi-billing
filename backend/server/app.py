@@ -33,6 +33,7 @@ from routes.provision import provision_bp
 from routes.settings import settings_bp
 from routes.support import support_bp
 from routes.reports import reports_bp
+from routes.imports import imports_bp
 from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
@@ -102,6 +103,7 @@ app.register_blueprint(provision_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(support_bp)
 app.register_blueprint(reports_bp)
+app.register_blueprint(imports_bp)
 
 
 def ensure_schema_upgrades():
@@ -175,6 +177,13 @@ def ensure_schema_upgrades():
                 'CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_isp_account_number '
                 'ON customers (isp_id, account_number) WHERE account_number IS NOT NULL'
             ))
+
+        # New tables ship without migrations too: create_all() only runs from the
+        # `initdb` CLI command, so an existing deployment never grows a table on
+        # boot. checkfirst=True makes this a no-op once they exist.
+        from models import ImportCandidate, ImportRun
+        for model in (ImportRun, ImportCandidate):
+            model.__table__.create(bind=db.engine, checkfirst=True)
     except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
         app.logger.warning('Schema upgrade check skipped: %s', exc)
 

@@ -39,6 +39,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Wifi,
+  ArrowDownToLine,
+  ArrowLeftRight,
+  FileSpreadsheet,
+  Router,
 } from 'lucide-react';
 
 const sidebarTransition = { duration: 0.28, ease: [0.4, 0, 0.2, 1] };
@@ -218,6 +222,7 @@ const AppSidebar = () => {
   };
   const [expandedSections, setExpandedSections] = useState({
     billing: true,
+    import: false,
     finance: false,
     devices: false,
     network: false,
@@ -246,6 +251,11 @@ const AppSidebar = () => {
     }
     if (url === '/clients/online') {
       return location.pathname.startsWith('/clients/online');
+    }
+    // Import Overview is the section root, so match it exactly — otherwise it
+    // stays lit alongside whichever sub-page is actually open.
+    if (url === '/import') {
+      return location.pathname === '/import';
     }
     // Devices is a single link but should stay active across all /devices/* tabs.
     if (url === '/devices/mikrotik') {
@@ -281,6 +291,21 @@ const AppSidebar = () => {
       },
       ...(user?.is_admin
         ? [
+            {
+              // Admin-only: a router scan reads every subscriber's cleartext
+              // password, which matches the AdminRoute guard on these pages.
+              type: 'section',
+              title: 'Import',
+              icon: ArrowDownToLine,
+              section: 'import',
+              items: [
+                { title: 'Overview', url: '/import', icon: ArrowDownToLine },
+                { title: 'From a router', url: '/import/router', icon: Router },
+                { title: 'From a file', url: '/import/file', icon: FileSpreadsheet },
+                { title: 'Migration & cutover', url: '/import/cutover', icon: ArrowLeftRight },
+                { title: 'Import history', url: '/import/runs', icon: History },
+              ],
+            },
             {
               type: 'section',
               title: 'Finance',

@@ -169,11 +169,11 @@ export default function ImportClients() {
       <div className="mx-auto w-full min-w-0 max-w-7xl">
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <Link
-            to="/clients"
+            to="/import"
             className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 mb-4"
           >
             <ArrowLeft className="h-4 w-4" />
-            Back to clients
+            Back to import
           </Link>
           <p className="text-sm font-semibold text-blue-600 uppercase tracking-wider">Migration</p>
           <h1 className="text-3xl font-bold text-slate-900 mt-1">Import clients</h1>

@@ -14,6 +14,11 @@ import DashboardRedirect from './components/auth/DashboardRedirect';
 import ClientsPage from './components/clients/ClientsPage';
 import ClientForm from './components/clients/ClientForm';
 import ImportClients from './components/clients/ImportClients';
+import ImportHub from './components/imports/ImportHub';
+import RouterImport from './components/imports/RouterImport';
+import ImportRuns from './components/imports/ImportRuns';
+import ImportRunDetail from './components/imports/ImportRunDetail';
+import ImportCutover from './components/imports/ImportCutover';
 import ClientDetail from './components/clients/ClientDetail';
 import OnlineUsersPage from './components/clients/OnlineUsersPage';
 import ClientEdit from './components/clients/ClientEdit';
@@ -127,7 +132,14 @@ function AppRoutes() {
       {/* Client management */}
       <Route path="/clients" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/new" element={<ProtectedRoute><MainLayout><ClientForm /></MainLayout></ProtectedRoute>} />
-      <Route path="/clients/import" element={<ProtectedRoute><MainLayout><ImportClients /></MainLayout></ProtectedRoute>} />
+      {/* Import lives in its own section; the old Clients-scoped path redirects. */}
+      <Route path="/clients/import" element={<Navigate to="/import/file" replace />} />
+      <Route path="/import" element={<AdminRoute><MainLayout><ImportHub /></MainLayout></AdminRoute>} />
+      <Route path="/import/router" element={<AdminRoute><MainLayout><RouterImport /></MainLayout></AdminRoute>} />
+      <Route path="/import/file" element={<AdminRoute><MainLayout><ImportClients /></MainLayout></AdminRoute>} />
+      <Route path="/import/cutover" element={<AdminRoute><MainLayout><ImportCutover /></MainLayout></AdminRoute>} />
+      <Route path="/import/runs" element={<AdminRoute><MainLayout><ImportRuns /></MainLayout></AdminRoute>} />
+      <Route path="/import/runs/:runId" element={<AdminRoute><MainLayout><ImportRunDetail /></MainLayout></AdminRoute>} />
       <Route path="/clients/pppoe/new" element={<ProtectedRoute><MainLayout><ClientForm /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/pppoe" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/hotspot" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
