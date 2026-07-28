@@ -13,6 +13,7 @@ will not give us router access still gets exactly the same import.
 """
 import json
 import secrets
+import threading
 from datetime import datetime, timedelta
 
 from extensions import db
@@ -162,11 +163,16 @@ def _store_password(candidate_row, cleartext):
     candidate_row.password_encrypted = encrypt_value(cleartext)
 
 
-def persist_inventory(run, sections, inventory):
-    """Write the fingerprint and one ImportCandidate per discovered subscriber."""
+def persist_inventory(run, sections, inventory, scan_username=None):
+    """Write the fingerprint and one ImportCandidate per discovered subscriber.
+
+    ``scan_username`` is the RouterOS account the scan connected as; the
+    fingerprint uses it to check whether that user's group actually grants the
+    ``sensitive`` policy instead of guessing when passwords come back empty.
+    """
     from services.radius_provisioning import find_customer_by_login
 
-    run.fingerprint = _json_dump(fingerprint(sections))
+    run.fingerprint = _json_dump(fingerprint(sections, scan_username=scan_username))
 
     seen_logins = set()
     duplicates = 0
@@ -249,25 +255,75 @@ def run_counts(run):
 # --- Entry points --------------------------------------------------------
 
 def scan_device(isp, user, device, mine_comments=True):
-    """Live SSH scan → persisted, reviewable run."""
+    """Live SSH scan → persisted, reviewable run. Blocking.
+
+    Kept for CLI use and tests. HTTP callers should use
+    :func:`start_device_scan`: a real scan of an empty router already takes ~15 s
+    over the management tunnel, and one with several hundred secrets will take
+    considerably longer than a gunicorn worker is willing to wait.
+    """
     run = create_run(isp, user, 'router-ssh', device=device)
     try:
         sections_raw, errors = collect_via_ssh(device)
     except Exception as exc:
-        run.status = 'failed'
-        run.error = str(exc)[:1000]
-        run.finished_at = datetime.utcnow()
-        db.session.commit()
+        db.session.rollback()
+        run = ImportRun.query.get(run.id)
+        if run:
+            run.status = 'failed'
+            run.error = str(exc)[:1000]
+            run.finished_at = datetime.utcnow()
+            db.session.commit()
         raise
 
     sections = parse_raw_sections(sections_raw)
     inventory = build_inventory(sections, mine_comments=mine_comments)
     run.raw_blob = _json_dump({'sections': sections_raw, 'errors': errors})
-    persist_inventory(run, sections, inventory)
+    persist_inventory(run, sections, inventory, scan_username=device.username)
     run.status = 'scanned'
     run.finished_at = datetime.utcnow()
     db.session.commit()
     return run, inventory
+
+
+def start_device_scan(app, isp, user, device, mine_comments=True):
+    """Create the run, then do the SSH scan on a background thread.
+
+    Returns the persisted run immediately so the caller can hand back a run id
+    and let the UI poll ``GET /api/import/runs/<id>``. Mirrors the existing
+    ``sync_device_async`` pattern in services.mikrotik_sync — same app-context
+    handling, same "a failure must land on the row, not vanish" rule.
+    """
+    run = create_run(isp, user, 'router-ssh', device=device)
+    db.session.commit()
+    run_id, device_id, username = run.id, device.id, device.username
+
+    def _work():
+        with app.app_context():
+            from models import MikrotikDevice
+            target = MikrotikDevice.query.get(device_id)
+            record = ImportRun.query.get(run_id)
+            if not target or not record:
+                return
+            try:
+                sections_raw, errors = collect_via_ssh(target)
+                sections = parse_raw_sections(sections_raw)
+                inv = build_inventory(sections, mine_comments=mine_comments)
+                record.raw_blob = _json_dump({'sections': sections_raw, 'errors': errors})
+                persist_inventory(record, sections, inv, scan_username=username)
+                record.status = 'scanned'
+                record.finished_at = datetime.utcnow()
+                db.session.commit()
+            except Exception as exc:  # noqa: BLE001 — must surface on the run row
+                db.session.rollback()
+                record = ImportRun.query.get(run_id)
+                if record:
+                    record.status = 'failed'
+                    record.error = str(exc)[:1000]
+                    record.finished_at = datetime.utcnow()
+                    db.session.commit()
+
+    threading.Thread(target=_work, daemon=True).start()
+    return run
 
 
 def scan_from_export(isp, user, text, device=None, mine_comments=True):
@@ -292,7 +348,8 @@ def finalise_agent_run(run, mine_comments=True):
     sections_raw = assemble_agent_chunks(run)
     sections = parse_raw_sections(sections_raw)
     inventory = build_inventory(sections, mine_comments=mine_comments)
-    persist_inventory(run, sections, inventory)
+    persist_inventory(run, sections, inventory,
+                      scan_username=run.device.username if run.device else None)
     run.status = 'scanned'
     run.finished_at = datetime.utcnow()
     run.ingest_token = None

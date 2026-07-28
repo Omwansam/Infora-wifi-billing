@@ -59,6 +59,11 @@ READ_MENUS = (
     '/queue simple',
     '/queue tree',
     '/tool user-manager user',
+    # Read-only, and needed to tell the operator the truth about why passwords
+    # came back empty: the RouterOS `sensitive` policy lives on the user's group.
+    # Guessing at this produced a scary, wrong, blocking message in production.
+    '/user',
+    '/user group',
 )
 
 _MENU_RE = re.compile(r'^/[a-z0-9]+(?: [a-z0-9-]+)*$')
@@ -202,23 +207,30 @@ ROUTERBOARD_FIELDS = ['model', 'serial-number', 'current-firmware']
 AAA_FIELDS = ['use-radius', 'accounting', 'interim-update']
 RADIUS_INCOMING_FIELDS = ['accept', 'port']
 
+# `default` and `dynamic` are what separate a real subscriber from a RouterOS
+# built-in. Without them the stock `default-trial` hotspot entry — a counters
+# placeholder with no password property at all — is imported as a client, and
+# then makes the password check conclude the whole roster is unreadable. Both
+# are ordinary readable properties, so this costs one extra field per record.
 SECRET_FIELDS = [
     'name', 'password', 'profile', 'service', 'remote-address', 'local-address',
     'caller-id', 'routes', 'disabled', 'comment', 'last-logged-out',
-    'limit-bytes-in', 'limit-bytes-out',
+    'limit-bytes-in', 'limit-bytes-out', 'default', 'dynamic',
 ]
 PROFILE_FIELDS = [
     'name', 'rate-limit', 'local-address', 'remote-address', 'dns-server',
     'only-one', 'session-timeout', 'idle-timeout', 'parent-queue', 'comment',
+    'default', 'dynamic',
 ]
 ACTIVE_FIELDS = ['name', 'service', 'address', 'caller-id', 'uptime', 'encoding']
 HOTSPOT_USER_FIELDS = [
     'name', 'password', 'profile', 'mac-address', 'address', 'server',
     'limit-uptime', 'limit-bytes-total', 'disabled', 'comment',
+    'default', 'dynamic',
 ]
 HOTSPOT_PROFILE_FIELDS = [
     'name', 'rate-limit', 'shared-users', 'session-timeout', 'idle-timeout',
-    'keepalive-timeout',
+    'keepalive-timeout', 'default', 'dynamic',
 ]
 LEASE_FIELDS = [
     'address', 'mac-address', 'client-id', 'host-name', 'server', 'status',
@@ -267,6 +279,10 @@ SCAN_PLAN = (
     ('scripts',            '/system script',                'list',   ['name', 'comment'],    False),
     ('schedulers',         '/system scheduler',             'list',   ['name', 'start-time', 'interval', 'on-event', 'comment'], False),
     ('user_manager',       '/tool user-manager user',       'list',   ['name', 'password', 'shared-users', 'comment'], False),
+    # Who we connected as, and what that group is allowed to read. Lets the
+    # password diagnosis state a fact instead of an inference.
+    ('router_users',       '/user',                         'list',   ['name', 'group', 'disabled'], False),
+    ('router_groups',      '/user group',                   'list',   ['name', 'policy'],     False),
 )
 
 

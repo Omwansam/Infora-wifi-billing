@@ -98,36 +98,93 @@ def detect_expiry_automation(sections):
     return hits
 
 
-def password_readability(sections):
+def scan_user_can_read_secrets(sections, username=None):
+    """Whether the connecting user's group carries the ``sensitive`` policy.
+
+    Returns (verdict, detail) where verdict is True / False / None (unknown —
+    the menus weren't readable, which is itself normal on some groups).
+
+    This exists because guessing was wrong in production: the diagnosis blamed a
+    missing ``sensitive`` policy on a router whose scan user was in ``full``,
+    which already grants it. Reading ``/user`` and ``/user group`` turns a scary
+    inference into a checkable fact.
+    """
+    users = sections.get('router_users') or []
+    groups = {(g.get('name') or '').strip(): (g.get('policy') or '')
+              for g in sections.get('router_groups') or []}
+    if not users or not groups:
+        return None, 'Could not read the router user list to confirm.'
+
+    target = (username or '').strip().lower()
+    row = None
+    if target:
+        row = next((u for u in users if (u.get('name') or '').strip().lower() == target), None)
+    if row is None:
+        return None, 'Could not identify which router user the scan connected as.'
+
+    group_name = (row.get('group') or '').strip()
+    policy = groups.get(group_name, '')
+    if not policy:
+        return None, f'Could not read the policy list for group {group_name!r}.'
+    has = 'sensitive' in [p.strip() for p in policy.split(',')]
+    if has:
+        return True, f'Scan user {row.get("name")!r} is in group {group_name!r}, which grants "sensitive".'
+    return False, (
+        f'Scan user {row.get("name")!r} is in group {group_name!r}, which does NOT grant the '
+        '"sensitive" policy — RouterOS therefore returns every password as empty. '
+        f'Fix on the router: /user group set {group_name} policy=({policy},sensitive)'
+    )
+
+
+def password_readability(sections, scan_username=None):
     """Can we actually read subscriber passwords, and if not, why not?
 
     The failure this exists to catch: a scan user without the RouterOS
     ``sensitive`` policy gets names back but every password empty. Imported
-    blind, that generates 400 new passwords and breaks every CPE on the network.
-    So an all-blank roster is reported as a **blocking** condition, not a
-    footnote.
+    blind, that generates new passwords for everyone and breaks every CPE on the
+    network. So an all-blank roster is reported as a **blocking** condition.
+
+    Built-ins are excluded from the roster first. RouterOS's ``default-trial``
+    hotspot entry has no ``password`` property at all, so counting it made a
+    router with *zero* subscribers report its whole roster as unreadable — a
+    blocking, wrong, alarming message. An empty roster is "no subscribers", never
+    "passwords are hidden".
     """
-    secrets = sections.get('ppp_secrets') or []
-    hotspot = sections.get('hotspot_users') or []
+    from .inventory import is_builtin
+
+    secrets = [r for r in (sections.get('ppp_secrets') or []) if not is_builtin(r)]
+    hotspot = [r for r in (sections.get('hotspot_users') or []) if not is_builtin(r)]
     roster = secrets + hotspot
     if not roster:
         return {'state': 'no-roster', 'with_password': 0, 'total': 0, 'blocking': False,
-                'detail': 'No local subscriber database on this router.'}
+                'detail': 'No subscribers are configured on this router.'}
 
     with_password = sum(1 for r in roster if (r.get('password') or '').strip())
     total = len(roster)
     if with_password == 0:
+        can_read, why = scan_user_can_read_secrets(sections, scan_username)
+        if can_read is False:
+            cause = why
+        elif can_read is True:
+            # The policy is present, so the blank passwords have another cause —
+            # most often a v7 /export taken without show-sensitive.
+            cause = (
+                f'{why} So the blanks are not a permissions problem — if this came from an '
+                'uploaded export, re-run it as "/export show-sensitive".'
+            )
+        else:
+            cause = (
+                'The likely cause is a scan user without the RouterOS "sensitive" policy, '
+                'or a RouterOS v7 /export taken without show-sensitive.'
+            )
         return {
             'state': 'hidden',
             'with_password': 0,
             'total': total,
             'blocking': True,
             'detail': (
-                f'{total} subscribers found but every password came back empty. '
-                'The scan user is almost certainly missing the RouterOS "sensitive" '
-                'policy — or this is a RouterOS v7 /export taken without '
-                'show-sensitive. Importing now would generate new passwords and '
-                'break every CPE.'
+                f'{total} subscribers found but every password came back empty. {cause} '
+                'Importing now would generate new passwords and break every CPE.'
             ),
         }
     if with_password < total:
@@ -150,21 +207,31 @@ def password_readability(sections):
     }
 
 
-def fingerprint(sections):
+def _real_count(sections, key):
+    """Count entries in a section, excluding RouterOS built-ins/placeholders."""
+    from .inventory import is_builtin
+    return sum(1 for r in (sections.get(key) or []) if not is_builtin(r))
+
+
+def fingerprint(sections, scan_username=None):
     """Build the Router profile card from a scanned inventory.
 
     Returns the counts, the detected auth mode, the recommended import path and
     a list of plain-sentence findings the UI renders verbatim.
+
+    Every subscriber count here excludes built-ins. Counting RouterOS's stock
+    ``default-trial`` entry once made a router with no subscribers at all
+    classify as ``local`` and report a phantom client.
     """
     resource = _first(sections.get('system_resource') or [])
     identity = _first(sections.get('system_identity') or [])
     aaa = _first(sections.get('ppp_aaa') or [])
 
-    secret_count = _count(sections, 'ppp_secrets')
-    hotspot_user_count = _count(sections, 'hotspot_users')
-    queue_count = _count(sections, 'queues')
-    active_count = _count(sections, 'ppp_active')
-    um_count = _count(sections, 'user_manager')
+    secret_count = _real_count(sections, 'ppp_secrets')
+    hotspot_user_count = _real_count(sections, 'hotspot_users')
+    queue_count = _real_count(sections, 'queues')
+    active_count = _count(sections, 'ppp_active')   # live sessions are never built-in
+    um_count = _real_count(sections, 'user_manager')
 
     foreign_radius = _active_radius_servers(sections)
     use_radius = _is_true(aaa.get('use-radius'))
@@ -181,7 +248,7 @@ def fingerprint(sections):
     else:
         auth_mode = 'unknown'
 
-    passwords = password_readability(sections)
+    passwords = password_readability(sections, scan_username)
     vendor = detect_vendor(sections)
     automation = detect_expiry_automation(sections)
 
@@ -190,11 +257,24 @@ def fingerprint(sections):
         for row in sections.get('firewall_filter') or []
     )
 
+    # Describe what is actually there, per kind. The old wording hardcoded
+    # "PPPoE" off the secret count while the roster also held hotspot users, so
+    # a hotspot-only router read "authenticates 0 PPPoE subscribers" directly
+    # above "1 subscribers found".
+    parts = []
+    if secret_count:
+        parts.append(f'{secret_count} PPPoE subscriber{"s" if secret_count != 1 else ""}')
+    if hotspot_user_count:
+        parts.append(f'{hotspot_user_count} hotspot user{"s" if hotspot_user_count != 1 else ""}')
+    if um_count:
+        parts.append(f'{um_count} User-Manager account{"s" if um_count != 1 else ""}')
+    roster_phrase = ', '.join(parts) if parts else 'no subscribers'
+
     findings = []
     if auth_mode == 'local':
         findings.append(
-            f'This router authenticates {secret_count} PPPoE subscribers from its own '
-            'database. Nothing here talks to an external billing system.'
+            f'This router authenticates {roster_phrase} from its own database. '
+            'Nothing here talks to an external billing system.'
         )
     elif auth_mode == 'delegated':
         where = ', '.join(s['address'] for s in foreign_radius if s.get('address')) or 'an external server'
@@ -216,7 +296,10 @@ def fingerprint(sections):
             'Infora enforces via RADIUS and will not be able to disconnect them.'
         )
     else:
-        findings.append('No subscriber database, RADIUS server or queues found on this router.')
+        findings.append(
+            'No subscribers, external RADIUS server or billing queues found on this router — '
+            'there is nothing here to import.'
+        )
 
     if passwords['blocking']:
         findings.append(passwords['detail'])

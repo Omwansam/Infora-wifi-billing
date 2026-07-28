@@ -14,9 +14,31 @@ from .profiles import parse_queue_target, parse_rate_limit, profile_to_draft
 
 _TRUE = ('true', 'yes', '1')
 
+# RouterOS ships placeholder entries in the same menus real subscribers live in.
+# The clearest case is `default-trial` in /ip hotspot user: flagged `default=true`,
+# it holds trial counters and has no `password` property at all. Imported blind it
+# became a phantom client — and then made the password check report the entire
+# roster as unreadable, which produced a blocking "add the sensitive policy"
+# warning on a router whose scan user already had it. Filter on the properties
+# rather than on names: `default`/`dynamic` are authoritative and version-stable.
+BUILTIN_NAMES = {'default', 'default-encryption', 'default-trial'}
+
 
 def _is_true(value):
     return str(value or '').strip().lower() in _TRUE
+
+
+def is_builtin(record):
+    """True for a RouterOS-supplied placeholder rather than a real entry.
+
+    `dynamic=true` covers runtime-generated rows (a dynamic hotspot user, a queue
+    RouterOS made for a PPP session) which are equally not subscribers. The name
+    set is a fallback for `/export` input, where built-ins are omitted entirely
+    and these properties therefore never appear.
+    """
+    if _is_true(record.get('default')) or _is_true(record.get('dynamic')):
+        return True
+    return (record.get('name') or '').strip().lower() in BUILTIN_NAMES
 
 
 def _norm_login(value):
@@ -55,7 +77,7 @@ def build_pppoe_candidates(sections, mine_comments=True):
     candidates = []
     for row in sections.get('ppp_secrets') or []:
         login = _norm_login(row.get('name'))
-        if not login:
+        if not login or is_builtin(row):
             continue
         remote = (row.get('remote-address') or '').strip()
         static_ip = remote if _looks_like_ip(remote) else None
@@ -96,7 +118,7 @@ def build_hotspot_candidates(sections, mine_comments=True):
     for row in sections.get('hotspot_users') or []:
         login = _norm_login(row.get('name'))
         mac = (row.get('mac-address') or '').strip().upper() or None
-        if not login and not mac:
+        if (not login and not mac) or is_builtin(row):
             continue
         mined = mine_comment(row.get('comment')) if mine_comments else {}
         candidates.append({
@@ -141,7 +163,7 @@ def build_static_candidates(sections, mine_comments=True):
     candidates = []
     for row in sections.get('queues') or []:
         ip, label = parse_queue_target(row)
-        if not ip:
+        if not ip or is_builtin(row):
             continue
         lease = leases.get(ip, {})
         comment = row.get('comment') or lease.get('comment')

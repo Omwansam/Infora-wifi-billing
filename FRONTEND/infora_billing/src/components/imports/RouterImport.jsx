@@ -54,6 +54,7 @@ export default function RouterImport() {
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [progress, setProgress] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,10 +84,34 @@ export default function RouterImport() {
     setError(null);
   };
 
+  /**
+   * Poll a run until it stops scanning.
+   *
+   * The SSH scan is asynchronous: an empty router takes ~15 s over the
+   * management tunnel and a few hundred secrets take considerably longer than
+   * any request should be held open for. The POST returns 202 with a run id and
+   * the real result arrives here.
+   */
+  const awaitScan = async (runId, { tries = 120, intervalMs = 2000 } = {}) => {
+    for (let attempt = 0; attempt < tries; attempt += 1) {
+      const response = await importService.getRun(runId);
+      if (!response.success) return { error: response.error || 'Lost contact with the scan' };
+      const run = response.data.run;
+      if (run.status === 'failed') return { error: run.error || 'Scan failed on the router' };
+      if (run.status !== 'scanning') {
+        return { data: { run, packages: response.data.packages || [], counts: run.counts || {} } };
+      }
+      setProgress(`Reading the router… ${Math.round((attempt * intervalMs) / 1000)}s`);
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return { error: 'The scan is taking unusually long — check Import history for run status.' };
+  };
+
   const runScan = async () => {
     setBusy(true);
     setError(null);
     setResult(null);
+    setProgress(null);
 
     let response;
     if (transport === 'ssh') {
@@ -96,12 +121,21 @@ export default function RouterImport() {
         return;
       }
       response = await importService.scanRouter(Number(deviceId));
+      if (response.success && response.data?.run?.id) {
+        const settled = await awaitScan(response.data.run.id);
+        setProgress(null);
+        if (settled.error) setError(settled.error);
+        else setResult(settled.data);
+        setBusy(false);
+        return;
+      }
     } else {
       if (!exportText.trim()) {
         setError('Paste or upload a RouterOS export first.');
         setBusy(false);
         return;
       }
+      // Parsing an uploaded export is fast and stays synchronous.
       response = await importService.uploadExport(exportText, deviceId ? Number(deviceId) : null);
     }
 
@@ -342,7 +376,7 @@ export default function RouterImport() {
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Scan router
+                {progress || 'Scan router'}
               </button>
             </div>
           )}

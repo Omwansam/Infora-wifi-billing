@@ -11,10 +11,11 @@ Growing a second creation path here would mean two places to keep correct
 forever; there is exactly one, and it is the one that already works.
 """
 import json
+import threading
 from datetime import datetime, timedelta
 
 from extensions import db
-from models import Customer, ImportCandidate, ServicePlan
+from models import Customer, ImportCandidate, ImportRun, ServicePlan
 
 from .profiles import draft_to_plan_kwargs
 
@@ -252,6 +253,67 @@ def commit_run(run, isp, anchor=ANCHOR_UNIFORM, grace_days=DEFAULT_GRACE_DAYS,
         'skipped_static': sum(1 for c in candidates if c.kind == 'static'),
         'expiry_preview': preview,
     }
+
+
+def start_commit(app, run, isp, **kwargs):
+    """Run :func:`commit_run` on a background thread.
+
+    Creating 400 customers means 400 inserts plus ~1,600 RADIUS rows and a
+    password encrypt each — not an HTTP-request-shaped job. The batched progress
+    already written to ``ImportRun.counts`` is what the UI polls.
+
+    The pre-flight guard is evaluated *synchronously* before the thread starts,
+    so a blocked commit still answers the request with its explanation instead of
+    disappearing into a background failure.
+    """
+    candidates = ImportCandidate.query.filter_by(run_id=run.id).all()
+    importable = [
+        c for c in candidates
+        if c.decision == 'import' and c.status in ('new', 'error') and c.kind != 'static'
+    ]
+    preview = expiry_preview(
+        importable,
+        kwargs.get('anchor', ANCHOR_UNIFORM),
+        kwargs.get('grace_days', DEFAULT_GRACE_DAYS),
+    )
+    if preview['blocking'] and not kwargs.get('force'):
+        return {
+            'started': False,
+            'committed': False,
+            'blocked_by': 'past_dated_expiry',
+            'expiry_preview': preview,
+            'detail': (
+                f"{preview['past_dated']} of {preview['total']} clients would be imported "
+                'already expired and suspended on arrival. Re-check the billing anchor, '
+                'or confirm explicitly to proceed.'
+            ),
+        }
+
+    run_id, isp_id = run.id, isp.id
+    run.status = 'importing'
+    db.session.commit()
+
+    def _work():
+        with app.app_context():
+            from models import ISP
+            record = ImportRun.query.get(run_id)
+            target_isp = ISP.query.get(isp_id)
+            if not record or not target_isp:
+                return
+            try:
+                commit_run(record, target_isp, **kwargs)
+            except Exception as exc:  # noqa: BLE001 — must surface on the run row
+                db.session.rollback()
+                record = ImportRun.query.get(run_id)
+                if record:
+                    record.status = 'failed'
+                    record.error = str(exc)[:1000]
+                    record.finished_at = datetime.utcnow()
+                    db.session.commit()
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {'started': True, 'committed': None, 'expiry_preview': preview,
+            'total': len(importable)}
 
 
 def revert_run(run):

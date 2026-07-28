@@ -35,6 +35,7 @@ from .commit import (  # noqa: F401
     commit_run,
     expiry_preview,
     revert_run,
+    start_commit,
 )
 # Re-exported under a distinct name on purpose: binding the function as
 # `fingerprint` here would shadow the `fingerprint` submodule on the package, so
@@ -55,5 +56,6 @@ from .scan import (  # noqa: F401
     run_options,
     scan_device,
     scan_from_export,
+    start_device_scan,
     store_options,
 )

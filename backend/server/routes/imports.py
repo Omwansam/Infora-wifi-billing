@@ -10,7 +10,7 @@ of a single credential behind an explicit, audited request.
 """
 import json
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from auth_utils import get_current_user
@@ -244,19 +244,20 @@ def scan_router():
     if user.isp_id and device.isp_id != user.isp_id:
         return jsonify({'error': 'Access denied'}), 403
 
+    # Asynchronous: an empty router already takes ~15 s over the management
+    # tunnel, and a few hundred secrets will take much longer than a worker will
+    # wait. The client polls GET /api/import/runs/<id> until status leaves
+    # 'scanning'.
     try:
-        run, inventory = router_scan.scan_device(
-            isp, user, device, mine_comments=bool(data.get('mine_comments', True))
+        run = scan_service.start_device_scan(
+            current_app._get_current_object(), isp, user, device,
+            mine_comments=bool(data.get('mine_comments', True)),
         )
     except Exception as exc:  # noqa: BLE001 — surfaced to the operator verbatim
         db.session.rollback()
-        return jsonify({'error': f'Scan failed: {exc}'}), 502
+        return jsonify({'error': f'Could not start scan: {exc}'}), 502
 
-    return jsonify({
-        'run': serialize_run(run, detail=True),
-        'packages': inventory['packages'],
-        'counts': inventory['counts'],
-    }), 200
+    return jsonify({'run': serialize_run(run, detail=True), 'started': True}), 202
 
 
 @imports_bp.route('/router/scan/upload', methods=['POST'])
@@ -310,13 +311,35 @@ def agent_script():
     if not isp:
         return jsonify({'error': 'No ISP context'}), 400
 
+    # Resolve the upload URL from configuration, NEVER from request.host_url.
+    # Behind the reverse proxy the request arrives as plain http, so host_url
+    # yields an http:// URL that redirects 301 to https. RouterOS `/tool fetch`
+    # is not expected to follow that, and every fetch in the generated script is
+    # `on-error={}` guarded — so the operator would see "scan uploaded" and no
+    # data would ever arrive. It would also push subscriber passwords in the
+    # clear. Reuses the resolver the provisioning one-liner already relies on.
+    from services.provisioning_scripts import resolve_provision_base_url
+
     data = request.get_json(silent=True) or {}
+    base = ((data.get('base_url') or resolve_provision_base_url()) or '').strip().rstrip('/')
+    if not base:
+        return jsonify({
+            'error': 'No public base URL configured — set PUBLIC_BASE_URL so the router '
+                     'has an address to upload its scan to.',
+        }), 400
+    if not base.startswith('https://'):
+        # Refuse rather than mint a script that fails silently or leaks credentials.
+        return jsonify({
+            'error': f'Refusing to build a scan script that uploads over {base.split("://")[0]}. '
+                     'The router would send subscriber passwords in the clear, and a redirect '
+                     'to https would be dropped. Configure PUBLIC_BASE_URL as an https:// URL.',
+        }), 400
+
     device = MikrotikDevice.query.get(data.get('device_id') or 0)
     run = scan_service.create_run(isp, user, 'router-agent', device=device)
     token = scan_service.issue_ingest_token(run)
     db.session.commit()
 
-    base = (data.get('base_url') or request.host_url).rstrip('/')
     ingest_url = f'{base}/api/import/router/ingest?token={token}'
     try:
         script = router_scan.build_agent_script(ingest_url)
@@ -416,9 +439,13 @@ def commit_run_route(run_id):
     options = scan_service.run_options(run)
     drafts = data.get('packages') or options.get('packages') or []
 
+    # Asynchronous, for the same reason as the scan: 400 customers means 400
+    # inserts plus ~1,600 RADIUS rows. The past-dated-expiry guard is still
+    # evaluated synchronously, so a blocked commit answers with its reason (409)
+    # rather than failing invisibly in the background.
     try:
-        summary = commit_service.commit_run(
-            run, isp,
+        summary = commit_service.start_commit(
+            current_app._get_current_object(), run, isp,
             anchor=data.get('anchor') or options.get('anchor') or commit_service.ANCHOR_UNIFORM,
             grace_days=int(data.get('grace_days') or options.get('grace_days')
                            or commit_service.DEFAULT_GRACE_DAYS),
@@ -432,7 +459,7 @@ def commit_run_route(run_id):
         db.session.commit()
         return jsonify({'error': f'Import failed: {exc}'}), 500
 
-    status = 200 if summary.get('committed') else 409
+    status = 202 if summary.get('started') else 409
     return jsonify({'run': serialize_run(run), **summary}), status
 
 

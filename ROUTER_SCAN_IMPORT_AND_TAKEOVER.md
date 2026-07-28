@@ -1,6 +1,10 @@
 # Router-scan import & live-system takeover
 
-**Status: design / not built.** This is the plan, not an as-built record.
+**Status: built and deployed** (2026-07-28) — `services/router_scan/`, `routes/imports.py`,
+`ImportRun`/`ImportCandidate`, and the `/import` section of the admin UI are live on the Contabo
+deployment. All three transports and the commit/revert cycle were tested against production
+(including a real RouterOS 7.23.2 router); see **§20** for the results and the five defects that
+testing found. Sections 1–19 remain the design of record.
 
 Companion to [MIGRATION_FROM_OTHER_BILLING.md](MIGRATION_FROM_OTHER_BILLING.md), which covers the
 **CSV** path (shipped: `Customer.radius_login`, `POST /api/customers/import`, the wizard at
@@ -774,7 +778,126 @@ block Phases 1–4.
 
 ---
 
-## 20. Open questions
+## 20. Production test results (2026-07-28) & the fixes they found
+
+> **All five defects below are fixed**, along with the two pending design items
+> (async scan/commit, scan-shaped fixtures). Test suite: 52 passing. The
+> defect write-ups are kept as the record of *why* each guard exists — every one
+> of them now has a named regression test.
+
+All three transports plus commit/revert were exercised against the live Contabo
+deployment (`billing.ruirufactorymabati.com`), including a real SSH scan of
+**Kifaru** — a hEX lite (RB750r2) on RouterOS **7.23.2** over the management
+tunnel. The database was returned to its exact pre-test baseline afterwards
+(2 customers, 13 packages, 0 runs).
+
+### What passed
+
+| Check | Result |
+|---|---|
+| Transport 1 — `/export` upload | 3 subscribers, 3 packages, correct fingerprint |
+| Transport 2 — agent ingest, incl. multi-chunk `seq` assembly | reassembled correctly |
+| Transport 3 — live SSH scan of a real RouterOS 7.23.2 router | completed in **14.9 s** (~23 commands) |
+| **Read-only guarantee on a live router** | `/export` body hash **identical** before/after; object counts unchanged. Only the volatile `# <timestamp> by RouterOS` header differed — confirmed by taking a second control read. |
+| Agent script contains no menu writes | verified by regex over the rendered script |
+| Passwords absent from list responses | verified — `has_password` only |
+| Commit → customers + RADIUS | password `pw one!` preserved **verbatim including the space**; `5M/10M` and `10M/20M` emitted the right way round; static IP → `Framed-IP-Address`; disabled secret → `suspended` with **no** RADIUS rows |
+| Revert | 3 created, 3 deleted, RADIUS rows cascaded away, baseline restored |
+
+### Defect 1 — the agent transport is silently broken in production (**high**)
+
+`POST /api/import/router/agent-script` builds its ingest URL from
+`request.host_url`, which behind dan-proxy yields **`http://`**. Confirmed live:
+that URL returns **301** to the https equivalent, which answers 200.
+
+RouterOS `/tool fetch` is not expected to follow redirects, and every fetch in
+the generated script is wrapped in `:do{...} on-error={}` — so the operator sees
+`Infora scan uploaded.` and **no data ever arrives**. Silent failure is the worst
+possible shape for this. Independently, the script would be shipping subscriber
+passwords over plaintext http.
+
+*Fix:* stop deriving the URL from the request. Reuse the existing
+`resolve_provision_base_url()` pattern in
+[provisioning_scripts.py](backend/server/services/provisioning_scripts.py#L22),
+which already solves exactly this for the one-liner (`PUBLIC_BASE_URL` is set on
+this server). Add an assertion that the built URL is `https://` — refuse to mint
+an agent script otherwise. *Confirm on 7.23.2 whether `fetch` follows the 301;
+the fix is required either way because of the plaintext exposure.*
+
+### Defect 2 — RouterOS built-ins are imported as subscribers (**medium**)
+
+The live scan returned one "subscriber": `default-trial`, RouterOS's built-in
+counters/limits placeholder. Verified on the router:
+
+```text
+.id=*0;comment=counters and limits for trial users;default=true;dynamic=false;name=default-trial
+```
+
+`default=true` is a readable property, so the fix is clean: add `default` and
+`dynamic` to the emitter field lists for `/ip hotspot user`, `/ppp secret`,
+`/ppp profile` and `/queue simple`, and filter them in
+[inventory.py](backend/server/services/router_scan/inventory.py). The existing
+name-based `STOCK_PROFILE_NAMES` becomes a fallback for exports (an `/export`
+omits built-ins anyway, which is why the fixture tests never caught this — a
+gap worth closing with a scan-shaped fixture).
+
+This also fixes the `auth_mode` misclassification below.
+
+### Defect 3 — false "missing sensitive policy" alarm (**medium-high**)
+
+Because the only roster entry was that built-in — which has **no** `password`
+property at all — `password_readability()` concluded every password was empty and
+raised the **blocking** message telling the operator to add the RouterOS
+`sensitive` policy. That advice was wrong: the scan user `infora-mgmt` is in
+group `full`, whose policy list already includes `sensitive` (verified on the
+router). The router simply has zero subscribers.
+
+A scary, blocking, incorrect message is worse than no message — it is exactly the
+kind of thing that makes an operator distrust the whole tool.
+
+*Fix:* (a) exclude built-ins from the roster before computing readability, and
+return `no-roster` rather than `hidden` when nothing real remains; (b) make the
+claim factual instead of inferred — read `/user group print` for the connecting
+user's group and only name the `sensitive` policy when it is genuinely absent.
+Add `/user` + `/user group` to the read-only allowlist for this.
+
+### Defect 4 — self-contradicting findings text (**low**)
+
+The card said *"authenticates 0 PPPoE subscribers from its own database"* and
+*"1 subscribers found"* in consecutive sentences. The `local` branch hardcodes
+"PPPoE" and uses `secret_count`, while the password roster also counts hotspot
+users.
+
+*Fix:* compose the sentence from the actual per-kind counts, and give the
+zero-subscriber case its own wording ("no subscribers configured on this router").
+
+### Defect 5 — `auth_mode` reported `local` on a router with no subscribers
+
+Downstream of Defect 2: `has_local` was true only because of the built-in. Fixed
+by the same filter; add a regression test asserting a router with zero real
+subscribers classifies as `unknown`, not `local`.
+
+### Still-pending design items this run reinforced
+
+- **Async scan/commit (§13).** 14.9 s for a router with *zero* subscribers is
+  fine; the same synchronous request against 400 secrets will be far longer and
+  risks the gunicorn worker timeout. The background-job design is no longer
+  optional — promote it ahead of new features.
+- **Scan-shaped fixtures.** Every parser test feeds `/export` output. The three
+  defects above all live in the *emitter* path that only a live scan exercises.
+  Capture Kifaru's raw section output as a fixture and test against it.
+
+### Suggested order
+
+1. Defect 1 (broken transport, silent)
+2. Defects 2/3/5 (one filter + honest messaging — they share a fix)
+3. Defect 4 (wording)
+4. Async scan/commit
+5. Scan-shaped fixtures
+
+---
+
+## 21. Open questions
 
 1. **Which RouterOS versions must this support?** v6 and v7 differ on `/export` sensitivity, User
    Manager, and some property names. v6.4x+ and v7.x is the assumption above — confirm against the

@@ -145,7 +145,21 @@ def parse_data_cap_bytes(value):
 # Stock RouterOS profiles that are configuration, not packages. Importing these
 # as 0-price packages with real subscribers attached is exactly the quiet mess
 # the pricing step exists to prevent, so they default to skipped.
-STOCK_PROFILE_NAMES = {'default', 'default-encryption'}
+#
+# The names are the fallback for `/export` input (which omits built-ins, so the
+# properties never appear); a live scan carries `default=true`, which is
+# authoritative and survives RouterOS renaming its stock entries.
+STOCK_PROFILE_NAMES = {'default', 'default-encryption', 'default-trial'}
+_TRUTHY = ('true', 'yes', '1')
+
+
+def _is_stock(record):
+    name = (record.get('name') or '').strip().lower()
+    if str(record.get('default') or '').strip().lower() in _TRUTHY:
+        return True
+    if str(record.get('dynamic') or '').strip().lower() in _TRUTHY:
+        return True
+    return name in STOCK_PROFILE_NAMES
 
 
 def profile_to_draft(record, kind='pppoe'):
@@ -157,7 +171,7 @@ def profile_to_draft(record, kind='pppoe'):
     """
     name = (record.get('name') or '').strip()
     rate = parse_rate_limit(record.get('rate-limit'))
-    is_stock = name.lower() in STOCK_PROFILE_NAMES
+    is_stock = _is_stock(record)
     has_speed = bool(rate['download_mbps'])
 
     draft = {

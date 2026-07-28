@@ -54,6 +54,7 @@ export default function ImportRunDetail() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [progress, setProgress] = useState(null);
 
   const load = useCallback(async () => {
     const [runResponse, candidateResponse] = await Promise.all([
@@ -99,9 +100,32 @@ export default function ImportRunDetail() {
     setBusy(false);
   };
 
+  /**
+   * Poll a run through its import until it settles.
+   *
+   * Committing is asynchronous — several hundred customers plus their RADIUS
+   * rows is not request-shaped work — so progress arrives via `counts` on the
+   * run while `status` is 'importing'.
+   */
+  const awaitCommit = async (tries = 300, intervalMs = 2000) => {
+    for (let attempt = 0; attempt < tries; attempt += 1) {
+      const response = await importService.getRun(runId);
+      if (!response.success) return { error: response.error || 'Lost contact with the import' };
+      const current = response.data.run;
+      if (current.status === 'failed') return { error: current.error || 'Import failed' };
+      if (current.status !== 'importing') return { data: current.counts || {} };
+      const done = current.counts?.progress ?? 0;
+      const total = current.counts?.total ?? 0;
+      setProgress(total ? `Importing ${done} of ${total}…` : 'Importing…');
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return { error: 'Import is taking unusually long — check Import history.' };
+  };
+
   const commit = async (force = false) => {
     setBusy(true);
     setError(null);
+    setProgress(null);
     const response = await importService.commitRun(runId, {
       packages,
       anchor,
@@ -109,7 +133,11 @@ export default function ImportRunDetail() {
       force,
     });
     if (response.success) {
-      setResult(response.data);
+      // 202 — the work runs in the background; poll it to completion.
+      const settled = await awaitCommit();
+      setProgress(null);
+      if (settled.error) setError(settled.error);
+      else setResult(settled.data);
       await load();
     } else {
       // A 409 here is the past-dated-expiry guard, not a crash — surface the
@@ -490,7 +518,7 @@ export default function ImportRunDetail() {
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Import {candidates.filter((c) => c.status === 'new').length} clients
+                {progress || `Import ${candidates.filter((c) => c.status === 'new').length} clients`}
               </button>
             </div>
           )}

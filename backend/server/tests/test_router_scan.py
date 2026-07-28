@@ -383,3 +383,169 @@ def test_queue_billed_router_is_detected():
     fp = fingerprint.fingerprint(sections)
     assert fp['auth_mode'] == 'queue-billed'
     assert any('will not be able to disconnect' in f for f in fp['findings'])
+
+
+# --- Scan-shaped fixtures ------------------------------------------------
+#
+# Everything above this line feeds `/export` output. All five defects found in
+# the 2026-07-28 production test lived in the *emitter* path instead — which an
+# export never exercises, because an export omits RouterOS built-ins entirely.
+# These fixtures are the real `#REC` stream, captured from a live hEX lite on
+# RouterOS 7.23.2.
+
+# Verbatim from the production router: `default-trial` is RouterOS's own
+# counters placeholder, carries `default=true`, and has NO password property at
+# all — the guarded emitter simply omits the field.
+SCAN_HOTSPOT_BUILTIN_ONLY = """#REC
+name=default-trial
+profile=
+server=all
+limit-uptime=0s
+limit-bytes-total=0
+disabled=false
+comment=counters and limits for trial users
+default=true
+dynamic=false
+"""
+
+SCAN_PROFILES_WITH_BUILTINS = """#REC
+name=default
+default=true
+dynamic=false
+#REC
+name=infora-pppoe
+local-address=172.31.0.1
+remote-address=infora-pppoe-pool
+only-one=true
+default=false
+dynamic=false
+#REC
+name=default-encryption
+default=true
+dynamic=false
+"""
+
+SCAN_REAL_SECRETS = """#REC
+name=real_client
+password=realpass
+profile=PPPOE-10M
+disabled=false
+default=false
+dynamic=false
+"""
+
+# `full` is the group the provisioning script puts the management user in.
+SCAN_USERS_FULL = '#REC\nname=infora-mgmt\ngroup=full\ndisabled=false\n'
+SCAN_GROUPS_FULL = (
+    '#REC\nname=full\n'
+    'policy=local,telnet,ssh,ftp,reboot,read,write,policy,test,winbox,'
+    'password,web,sniff,sensitive,api,romon,rest-api\n'
+)
+SCAN_USERS_READONLY = '#REC\nname=scanner\ngroup=readonly\ndisabled=false\n'
+SCAN_GROUPS_READONLY = '#REC\nname=readonly\npolicy=local,ssh,read,test,winbox,api\n'
+
+
+def _scan(**sections):
+    return {k: parser.parse_records(v) for k, v in sections.items()}
+
+
+def test_builtin_hotspot_user_is_not_a_subscriber():
+    """RouterOS `default-trial` is a counters placeholder, not a client.
+
+    Regression for the production scan that imported it as a phantom subscriber.
+    """
+    inv = inventory.build_inventory(_scan(hotspot_users=SCAN_HOTSPOT_BUILTIN_ONLY))
+    assert inv['candidates'] == []
+    assert inv['counts']['total'] == 0
+
+
+def test_builtin_profiles_are_marked_skip_by_property():
+    inv = inventory.build_inventory(_scan(ppp_profiles=SCAN_PROFILES_WITH_BUILTINS))
+    by_name = {p['name']: p for p in inv['packages']}
+    assert by_name['default']['decision'] == 'skip'
+    assert by_name['default-encryption']['decision'] == 'skip'
+    assert by_name['default']['is_stock'] and by_name['default-encryption']['is_stock']
+
+
+def test_dynamic_entries_are_not_subscribers():
+    stream = '#REC\nname=ppp-session-tmp\npassword=x\ndefault=false\ndynamic=true\n'
+    inv = inventory.build_inventory(_scan(ppp_secrets=stream))
+    assert inv['candidates'] == []
+
+
+def test_router_with_only_builtins_is_not_local_auth():
+    """The exact production case: zero real subscribers must not read as 'local'.
+
+    Before the fix this returned auth_mode='local' and a *blocking* "every
+    password came back empty" warning on a router that simply had no clients.
+    """
+    fp = fingerprint.fingerprint(_scan(
+        hotspot_users=SCAN_HOTSPOT_BUILTIN_ONLY,
+        ppp_profiles=SCAN_PROFILES_WITH_BUILTINS,
+        ppp_aaa='#REC\nuse-radius=false\n',
+    ))
+    assert fp['auth_mode'] == 'unknown'
+    assert fp['blocking'] is False
+    assert fp['passwords']['state'] == 'no-roster'
+    assert fp['counts']['hotspot_users'] == 0
+    assert 'nothing here to import' in ' '.join(fp['findings'])
+
+
+def test_password_diagnosis_does_not_blame_a_policy_that_is_present():
+    """With `sensitive` granted, blank passwords must not be blamed on it."""
+    fp = fingerprint.fingerprint(
+        _scan(
+            ppp_secrets='#REC\nname=a\ndefault=false\n#REC\nname=b\ndefault=false\n',
+            router_users=SCAN_USERS_FULL,
+            router_groups=SCAN_GROUPS_FULL,
+        ),
+        scan_username='infora-mgmt',
+    )
+    detail = fp['passwords']['detail']
+    assert fp['blocking'] is True          # still blocking — the passwords ARE missing
+    assert 'not a permissions problem' in detail
+    assert 'show-sensitive' in detail
+
+
+def test_password_diagnosis_names_the_group_when_policy_is_missing():
+    fp = fingerprint.fingerprint(
+        _scan(
+            ppp_secrets='#REC\nname=a\ndefault=false\n',
+            router_users=SCAN_USERS_READONLY,
+            router_groups=SCAN_GROUPS_READONLY,
+        ),
+        scan_username='scanner',
+    )
+    detail = fp['passwords']['detail']
+    assert fp['blocking'] is True
+    assert "'readonly'" in detail and 'does NOT grant' in detail
+    assert '/user group set readonly' in detail
+
+
+def test_findings_do_not_contradict_themselves_on_a_hotspot_only_router():
+    """Regression: "0 PPPoE subscribers" printed beside "1 subscribers found"."""
+    fp = fingerprint.fingerprint(_scan(
+        hotspot_users='#REC\nname=walkin1\npassword=abc\ndefault=false\n',
+        ppp_aaa='#REC\nuse-radius=false\n',
+    ))
+    text = ' '.join(fp['findings'])
+    assert fp['auth_mode'] == 'local'
+    assert '1 hotspot user' in text
+    assert '0 PPPoE' not in text
+
+
+def test_real_subscriber_still_imports_alongside_builtins():
+    inv = inventory.build_inventory(_scan(
+        ppp_secrets=SCAN_REAL_SECRETS,
+        hotspot_users=SCAN_HOTSPOT_BUILTIN_ONLY,
+        ppp_profiles=SCAN_PROFILES_WITH_BUILTINS,
+    ))
+    assert [c['login'] for c in inv['candidates']] == ['real_client']
+    assert inv['counts']['with_password'] == 1
+
+
+def test_user_menus_are_in_the_read_only_catalogue():
+    keys = {k for k, _menu, _mode, _f, _r in commands.SCAN_PLAN}
+    assert {'router_users', 'router_groups'} <= keys
+    for key, command, _required in commands.build_scan_commands():
+        assert commands.assert_read_only(command), key
