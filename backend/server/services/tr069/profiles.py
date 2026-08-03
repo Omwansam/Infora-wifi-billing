@@ -25,6 +25,7 @@ FIELDS = (
     'manufacturer', 'model', 'software_version', 'hardware_version', 'serial_number',
     'uptime', 'wan_ip', 'pppoe_username', 'pppoe_password',
     'wifi_ssid', 'wifi_password', 'wifi_enabled', 'wifi_channel',
+    'wifi_ssid_5g', 'wifi_password_5g',
     'connected_clients', 'rx_power', 'tx_power',
 )
 
@@ -130,12 +131,43 @@ _ZTE_ONT = _extend(
     optical_scale=1.0,
 )
 
-_PROFILES = (_HUAWEI_ONT, _ZTE_ONT, _TR181, _TR098)
+# Tenda. TR-069 is present on some models only (the vendor's own docs say
+# "available only for some models") — the UI exposes ACS URL, ACS
+# username/password, periodic notification + interval, connection request
+# username/password/port, and STUN for NAT traversal. Firmware is TR-098 based;
+# no optical parameters, these are copper/WiFi routers rather than ONTs.
+_TENDA = _extend(
+    _TR098, 'tenda', 'Tenda router (TR-098)',
+    params={
+        # Tenda commonly exposes the 5 GHz radio as WLANConfiguration.5.
+        'wifi_ssid_5g': 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+        'wifi_password_5g': (
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.KeyPassphrase'
+        ),
+    },
+    supports_connection_request=True,  # has a Connection Request port + STUN
+)
+
+# MikroTik RouterOS. CWMP is NOT built in — it needs the optional
+# `tr069-client` package installed (check `/system package print`). When present
+# it is a full CWMP client on TR-181 Issue 2 Amendment 11 and interoperates with
+# standard ACSs. Note we normally manage MikroTiks over the RouterOS API/SSH via
+# the management WireGuard tunnel, which is richer than CWMP — this profile is
+# for MikroTik CPE at subscriber sites that we do NOT own a tunnel into.
+_MIKROTIK = _extend(
+    _TR181, 'mikrotik', 'MikroTik RouterOS (TR-181, needs tr069-client package)',
+    supports_connection_request=True,
+)
+
+_PROFILES = (_HUAWEI_ONT, _ZTE_ONT, _TENDA, _MIKROTIK, _TR181, _TR098)
 
 # manufacturer substring (lowercase) -> profile
 _BY_MANUFACTURER = {
     'huawei': _HUAWEI_ONT,
     'zte': _ZTE_ONT,
+    'tenda': _TENDA,
+    'mikrotik': _MIKROTIK,
+    'routerboard': _MIKROTIK,
 }
 
 

@@ -49,6 +49,40 @@ ensure_radius_forward() {
     echo "[infora-wg] RADIUS DNAT 1812-1813 -> $FR_IP"
 }
 
+ensure_acs_forward() {
+    # TR-069 CPE (ONTs, Tenda/vendor routers) sit on the subscriber LAN behind a
+    # managed MikroTik, which already routes 10.250.0.0/24 down the tunnel. So
+    # they can reach the ACS at 10.250.0.1:7547 without the ACS being exposed to
+    # the public internet at all — the same trick RADIUS uses above, over TCP.
+    #
+    # This is strictly better than a public acs.<domain> vhost for CPE behind our
+    # own routers: no internet exposure, no CDN/WAF mangling SOAP, no TLS-chain
+    # problems on budget firmware. A public vhost is only needed for CPE that do
+    # NOT sit behind a managed router.
+    #
+    # Source is masqueraded here (unlike RADIUS): the ACS identifies devices by
+    # their CWMP credentials and DeviceId, never by source IP, and the flask
+    # container has no return route to 10.250.0.0/24.
+    FLASK_IP=$(getent hosts infora_flask 2>/dev/null | awk '{print $1; exit}')
+    if [ -z "$FLASK_IP" ]; then
+        FLASK_IP=$(getent hosts flask_app 2>/dev/null | awk '{print $1; exit}')
+    fi
+    if [ -z "$FLASK_IP" ] || ! ip link show wg-mgmt >/dev/null 2>&1; then
+        return 0
+    fi
+    iptables -t nat -N INFORA_ACS 2>/dev/null || true
+    iptables -t nat -F INFORA_ACS 2>/dev/null || true
+    if ! iptables -t nat -C PREROUTING -i wg-mgmt -d 10.250.0.1 -p tcp -j INFORA_ACS 2>/dev/null; then
+        iptables -t nat -A PREROUTING -i wg-mgmt -d 10.250.0.1 -p tcp -j INFORA_ACS
+    fi
+    iptables -t nat -A INFORA_ACS -p tcp --dport 7547 -j DNAT --to-destination "$FLASK_IP:5000"
+    # Masquerade only this flow, so replies come back through us.
+    if ! iptables -t nat -C POSTROUTING -d "$FLASK_IP" -p tcp --dport 5000 -j MASQUERADE 2>/dev/null; then
+        iptables -t nat -A POSTROUTING -d "$FLASK_IP" -p tcp --dport 5000 -j MASQUERADE
+    fi
+    echo "[infora-wg] ACS DNAT tcp/7547 -> $FLASK_IP:5000"
+}
+
 ensure_default_route() {
     # Inbound MikroTik handshakes are DNAT'd from the router's PUBLIC IP. Without
     # a default route the container kernel has (a) no reverse path back to that
@@ -103,6 +137,7 @@ apply_all() {
     ensure_default_route
     ensure_mgmt_nat
     ensure_radius_forward
+    ensure_acs_forward
 }
 
 # Signature of every managed config (path + mtime). Changes the moment Flask
@@ -135,13 +170,14 @@ LAST_SIG="$(configs_signature)"
             apply_all
             LAST_SIG="$SIG"
         fi
-        # Re-assert NAT / RADIUS DNAT roughly every 2 min in case the freeradius
-        # container IP changed. Both are idempotent (-C guarded) and do not
-        # disturb the live tunnel.
+        # Re-assert NAT / RADIUS / ACS DNAT roughly every 2 min in case the
+        # freeradius or flask container IP changed. All are idempotent
+        # (-C guarded) and do not disturb the live tunnel.
         ticks=$((ticks + 1))
         if [ "$ticks" -ge 24 ]; then
             ensure_mgmt_nat 2>/dev/null || true
             ensure_radius_forward 2>/dev/null || true
+            ensure_acs_forward 2>/dev/null || true
             ticks=0
         fi
     done

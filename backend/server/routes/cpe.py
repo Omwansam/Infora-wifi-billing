@@ -29,6 +29,7 @@ VALID_STATUSES = {'pending', 'active', 'disabled'}
 # they write. Keeping this allow-list here means the API never accepts a raw
 # CWMP path from the browser.
 WRITABLE_FIELDS = {'wifi_ssid', 'wifi_password', 'wifi_enabled', 'wifi_channel',
+                   'wifi_ssid_5g', 'wifi_password_5g',
                    'pppoe_username', 'pppoe_password'}
 
 # A device is "online" if it has informed within a few periodic intervals.
