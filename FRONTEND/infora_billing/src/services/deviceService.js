@@ -162,18 +162,23 @@ class DeviceService {
     }
   }
 
-  async syncDevice(token, deviceId) {
+  // Waits for the sync to actually finish. Sending no body made the backend
+  // default to async, which answered 202 "started in background" in a few ms —
+  // so every caller refetched the device before the probe had run and rendered
+  // the *pre-sync* status. A router that had just come back online kept showing
+  // Offline, under a toast claiming it had synced.
+  async syncDevice(token, deviceId, { background = false } = {}) {
     try {
       const response = await fetch(`${API_ENDPOINTS.DEVICE_SYNC}/${deviceId}`, {
         method: 'POST',
         headers: getAuthHeaders(token),
+        body: JSON.stringify({ async: background }),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
       const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP error! status: ${response.status}`);
+      }
       return data;
     } catch (error) {
       console.error('Error syncing device:', error);

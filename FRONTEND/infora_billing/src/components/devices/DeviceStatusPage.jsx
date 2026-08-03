@@ -83,9 +83,13 @@ export default function DeviceStatusPage() {
     try {
       setSyncingId(deviceId);
       const token = getAccessToken();
-      await deviceService.syncDevice(token, deviceId);
-      toast.success('Status refresh started');
-      loadDevices();
+      const result = await deviceService.syncDevice(token, deviceId);
+      if (result?.reachable === false) {
+        toast.error(result.error || 'Device is unreachable');
+      } else {
+        toast.success('Status refreshed');
+      }
+      await loadDevices();
     } catch (error) {
       toast.error(error.message || 'Sync failed');
     } finally {
@@ -98,8 +102,8 @@ export default function DeviceStatusPage() {
       setBulkSyncing(true);
       const token = getAccessToken();
       await Promise.all(devices.map((d) => deviceService.syncDevice(token, d.id)));
-      toast.success('All devices queued for sync');
-      loadDevices();
+      toast.success('All devices refreshed');
+      await loadDevices();
     } catch {
       toast.error('Bulk sync failed');
     } finally {

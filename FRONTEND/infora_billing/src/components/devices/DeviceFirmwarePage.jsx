@@ -70,9 +70,13 @@ export default function DeviceFirmwarePage() {
     try {
       setActionId(device.id);
       const token = getAccessToken();
-      await deviceService.syncDevice(token, device.id);
-      toast.success('Device synced — version info refreshed');
-      loadDevices();
+      const result = await deviceService.syncDevice(token, device.id);
+      if (result?.reachable === false) {
+        toast.error(result.error || 'Device is unreachable');
+      } else {
+        toast.success('Device synced — version info refreshed');
+      }
+      await loadDevices();
     } catch (error) {
       toast.error(error.message || 'Sync failed');
     } finally {

@@ -131,9 +131,20 @@ export default function MikrotikPage() {
     try {
       setActionId(deviceId);
       const token = getAccessToken();
-      await deviceService.syncDevice(token, deviceId);
-      toast.success('Device synced');
-      loadDevices();
+      const result = await deviceService.syncDevice(token, deviceId);
+      // Report what actually happened. The sync route answers 200 for an
+      // unreachable router too (so the UI shows status instead of throwing),
+      // so success is not implied by the request completing.
+      if (result?.busy) {
+        toast('Router is busy with another operation — try again shortly');
+      } else if (result?.reachable === false) {
+        toast.error(result.error || 'Device is unreachable');
+      } else if (result?.sync_details?.stats_stale) {
+        toast.success('Device is online (stats unavailable this round)');
+      } else {
+        toast.success('Device synced');
+      }
+      await loadDevices();
     } catch (error) {
       toast.error(error.message || 'Sync failed');
     } finally {

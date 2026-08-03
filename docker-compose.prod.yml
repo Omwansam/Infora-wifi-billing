@@ -80,6 +80,15 @@ services:
       MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
       MPESA_PASSKEY: ${MPESA_PASSKEY:-}
       MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
+      # TR-069 ACS. The URL must be reachable from the *subscriber* network and
+      # served DNS-only (grey cloud) — a CDN/WAF in front of CWMP mangles SOAP
+      # POSTs, and budget ONTs fail on modern TLS chains. See TR069.md.
+      TR069_ACS_URL: ${TR069_ACS_URL:-}
+      # Off by default in production: the ACS is exposed to the whole internet,
+      # so only pre-enrolled devices (with credentials) may register.
+      TR069_ALLOW_UNKNOWN: ${TR069_ALLOW_UNKNOWN:-false}
+      TR069_PERIODIC_INFORM_INTERVAL: ${TR069_PERIODIC_INFORM_INTERVAL:-300}
+      TR069_SESSION_RETENTION_DAYS: ${TR069_SESSION_RETENTION_DAYS:-7}
     volumes: !override
       - wireguard_configs:/app/wireguard_configs
       - isp_uploads:/app/uploads

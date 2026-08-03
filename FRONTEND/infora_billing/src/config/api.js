@@ -82,6 +82,22 @@ export const API_ENDPOINTS = {
   DEVICE_RESTORE: `${API_BASE_URL}/api/devices/restore`,
   DEVICE_REBOOT: `${API_BASE_URL}/api/devices/reboot`,
   DEVICE_UPDATE: `${API_BASE_URL}/api/devices/update`,
+  deviceDiagnose: (deviceId) => `${API_BASE_URL}/api/devices/${deviceId}/diagnose`,
+
+  // TR-069 CPE endpoints (customer premises equipment — ONTs, vendor routers)
+  CPE: `${API_BASE_URL}/api/cpe`,
+  CPE_STATS: `${API_BASE_URL}/api/cpe/stats`,
+  CPE_PROFILES: `${API_BASE_URL}/api/cpe/profiles`,
+  CPE_ENROLLMENT: `${API_BASE_URL}/api/cpe/enrollment`,
+  cpeDevice: (id) => `${API_BASE_URL}/api/cpe/${id}`,
+  cpeApprove: (id) => `${API_BASE_URL}/api/cpe/${id}/approve`,
+  cpeRefresh: (id) => `${API_BASE_URL}/api/cpe/${id}/refresh`,
+  cpeSettings: (id) => `${API_BASE_URL}/api/cpe/${id}/settings`,
+  cpeReboot: (id) => `${API_BASE_URL}/api/cpe/${id}/reboot`,
+  cpeFactoryReset: (id) => `${API_BASE_URL}/api/cpe/${id}/factory-reset`,
+  cpeTasks: (id) => `${API_BASE_URL}/api/cpe/${id}/tasks`,
+  cpeSessions: (id) => `${API_BASE_URL}/api/cpe/${id}/sessions`,
+  cpeCancelTask: (taskId) => `${API_BASE_URL}/api/cpe/tasks/${taskId}`,
   
   // ISP endpoints
   ISPS: `${API_BASE_URL}/api/isps`,

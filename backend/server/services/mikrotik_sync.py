@@ -34,7 +34,7 @@ def _mark_online(device):
     device.last_synced = datetime.utcnow()
 
 
-def mark_unreachable(device):
+def mark_unreachable(device, already_probed=False):
     """Decide a failed device's status with hysteresis instead of a hard OFFLINE.
 
     A NAT router on the management tunnel proves it's alive continuously —
@@ -43,23 +43,33 @@ def mark_unreachable(device):
     flaky SSH banner, a momentary port block) is NOT evidence it's down. This
     keeps "Online" sticky:
 
-      * Re-probe the tunnel with retries. If the router answers, it's alive at
-        the tunnel layer even if the SSH stat pull failed — keep it ONLINE and
-        refresh the contact time.
+      * Gather every liveness signal (see ``services.device_liveness``), not just
+        the outbound TCP probe. Inbound evidence — RADIUS accounting from this
+        NAS, a recent provisioning fetch — proves the router is up even when the
+        server cannot reach it, which is exactly the state a router lands in
+        after a long outage: WireGuard peers behind NAT are configured with no
+        ``Endpoint``, so until the router re-handshakes the server can only
+        listen, never initiate. Probing alone reports a live router as dead.
       * Otherwise only flip OFFLINE once there's been no proven contact for the
         grace window (``DEVICE_OFFLINE_GRACE_SECONDS``); within the window keep
         the last-known status so a transient blip can't knock a live router off.
 
+    ``already_probed=True`` skips the network probe when the caller just ran one
+    and it failed — otherwise every failed sync paid for the probe twice.
+
     Must be called with the caller's failed transaction already rolled back.
     Commits the resulting status. Returns the DeviceStatus it settled on.
     """
-    use_tunnel = bool(device.management_wg_enabled and device.management_wg_ip)
-    if use_tunnel:
-        from services.device_config_ops import probe_tunnel
-        if probe_tunnel(device, timeout=2, attempts=3)['up']:
-            _mark_online(device)
-            db.session.commit()
-            return DeviceStatus.ONLINE
+    from services.device_liveness import gather_evidence
+
+    evidence = gather_evidence(device, probe=not already_probed)
+    if evidence['alive']:
+        _mark_online(device)
+        db.session.commit()
+        current_app.logger.info(
+            'Device %s kept ONLINE by %s', device.id, evidence['source'],
+        )
+        return DeviceStatus.ONLINE
 
     grace = timedelta(seconds=_offline_grace_seconds())
     within_grace = bool(device.last_synced and datetime.utcnow() - device.last_synced < grace)
@@ -136,7 +146,29 @@ def sync_device_stats(device, connection_type=None):
         # Retry the sweep — the first packet after idle wakes the WG handshake,
         # so a lone 2s connect can time out on a router that is perfectly alive.
         if not probe_tunnel(device, timeout=2, attempts=3)['up']:
-            raise MikroTikSSHError('Router unreachable on management tunnel (powered off or tunnel down)')
+            # The probe is outbound, and outbound is precisely what breaks after
+            # a long outage (no learned WireGuard endpoint for a NAT'd peer).
+            # Before calling it down, check the inbound signals — a router
+            # forwarding RADIUS accounting is up regardless of what we can reach.
+            from services.device_liveness import gather_evidence
+
+            evidence = gather_evidence(device, probe=False)
+            if not evidence['alive']:
+                raise MikroTikSSHError(
+                    'Router unreachable on management tunnel (powered off or tunnel down)'
+                )
+            _mark_online(device)
+            db.session.commit()
+            return {
+                'uptime': device.uptime,
+                'client_count': device.client_count,
+                'cpu_load': device.cpu_load,
+                'memory_usage': None,
+                'version': device.os_version,
+                'board_name': device.device_model,
+                'stats_stale': True,
+                'liveness_source': evidence['source'],
+            }
         # The tunnel answered => the router is alive. Mark it ONLINE up front so
         # a flaky SSH banner on the stat pull below can't flip a live router
         # OFFLINE; the stats just stay at their last-known values this round.
@@ -213,7 +245,7 @@ def sync_device_async(app, device_id, connection_type=None):
                 db.session.rollback()
                 device = MikrotikDevice.query.get(device_id)
                 if device:
-                    mark_unreachable(device)
+                    mark_unreachable(device, already_probed=True)
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -236,7 +268,9 @@ def bulk_sync_devices(isp_id=None):
             # Hysteresis, not a hard OFFLINE: a live router that just missed one
             # probe/SSH stays ONLINE; only genuinely-gone routers flip.
             db.session.rollback()
-            mark_unreachable(device)
-            failed += 1
+            if mark_unreachable(device, already_probed=True) == DeviceStatus.ONLINE:
+                synced += 1
+            else:
+                failed += 1
 
     return {'synced': synced, 'failed': failed, 'total': len(devices)}

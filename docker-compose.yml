@@ -39,6 +39,15 @@ services:
       WIREGUARD_CONFIG_DIR: /app/wireguard_configs
       WIREGUARD_MIKROTIK_AUTO_PUSH: "true"
       RADIUS_CLIENTS_CONF_PATH: /config/freeradius/clients.conf
+      # TR-069 ACS. 7547 is the IANA CWMP port; in dev it maps to the same Flask
+      # app, so a CPE (or the simulator) can reach it at either port.
+      TR069_ACS_URL: http://${PUBLIC_SERVER_HOST:-10.0.0.10}:7547/tr069
+      # Dev only: let an unrecognised CPE register itself so you can point real
+      # hardware at the ACS without pre-enrolling it. It lands in 'pending' and
+      # receives no configuration until an operator approves it. Keep this OFF
+      # in production — the ACS is reachable from the whole internet.
+      TR069_ALLOW_UNKNOWN: "true"
+      TR069_PERIODIC_INFORM_INTERVAL: "300"
     volumes:
       - ./backend:/app
       - ./certs:/app/certs
@@ -46,6 +55,7 @@ services:
       - ./config/freeradius/clients.conf:/config/freeradius/clients.conf
     ports:
       - "5000:5000"
+      - "7547:5000"
     depends_on:
       postgres:
         condition: service_healthy

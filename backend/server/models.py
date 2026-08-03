@@ -2137,3 +2137,204 @@ class ImportCandidate(db.Model):
 
     def __repr__(self):
         return f'<ImportCandidate {self.login or self.mac} {self.status}>'
+
+
+# =========================
+#   TR-069 / CWMP Models
+# =========================
+#
+# These describe *customer premises equipment* (GPON ONTs, vendor routers), not
+# the MikroTik routers in `mikrotik_devices`. RouterOS has no CWMP client, so the
+# two fleets never overlap: MikroTiks are managed over the API/SSH + WireGuard
+# tunnel, CPE are managed by the ACS in `services/tr069`.
+
+
+class CpeDevice(db.Model):
+    """A TR-069 customer premises device known to the ACS.
+
+    Identity is the CWMP DeviceId triplet (OUI + ProductClass + SerialNumber),
+    flattened into ``serial_key`` because that is what every Inform carries and
+    what the operator reads off the sticker.
+    """
+    __tablename__ = 'cpe_devices'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    # Nullable: a device informs before anyone has claimed it for a subscriber.
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id', ondelete='SET NULL'),
+                            nullable=True, index=True)
+
+    # --- CWMP identity (from Inform DeviceId) ---
+    serial_key = db.Column(db.String(160), unique=True, nullable=False, index=True)
+    oui = db.Column(db.String(12), nullable=True)
+    serial_number = db.Column(db.String(80), nullable=True, index=True)
+    product_class = db.Column(db.String(80), nullable=True)
+    manufacturer = db.Column(db.String(80), nullable=True)
+    # 'Device.' (TR-181) or 'InternetGatewayDevice.' (TR-098). Every parameter
+    # path is relative to this, so the vendor profile cannot resolve without it.
+    data_model_root = db.Column(db.String(32), nullable=True)
+    software_version = db.Column(db.String(60), nullable=True)
+    hardware_version = db.Column(db.String(60), nullable=True)
+    # Which entry in services/tr069/profiles.py resolved this device.
+    profile_key = db.Column(db.String(40), nullable=True)
+
+    # 'pending'  — informed but not approved by an operator
+    # 'active'   — managed
+    # 'disabled' — ignored; informs are answered but no tasks are issued
+    status = db.Column(db.String(12), default='pending', nullable=False, index=True)
+
+    # --- Contact tracking ---
+    last_inform_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_boot_at = db.Column(db.DateTime, nullable=True)
+    last_inform_event = db.Column(db.String(60), nullable=True)
+    inform_count = db.Column(db.Integer, default=0, nullable=False)
+    # Source address of the last Inform — the CPE's public IP (or the CGNAT
+    # egress), useful for correlating with a subscriber session.
+    peer_ip = db.Column(db.String(45), nullable=True)
+
+    # --- Connection Request (ACS -> CPE) ---
+    # Only usable when the CPE is actually routable from us; behind CGNAT it is
+    # not, and tasks wait for the next periodic Inform instead.
+    connection_request_url = db.Column(db.String(255), nullable=True)
+    connection_request_username = db.Column(db.String(80), nullable=True)
+    connection_request_password_encrypted = db.Column(db.Text, nullable=True)
+
+    # --- CPE -> ACS auth (the CPE presents these on every Inform) ---
+    cwmp_username = db.Column(db.String(80), nullable=True, index=True)
+    cwmp_password_encrypted = db.Column(db.Text, nullable=True)
+
+    periodic_inform_interval = db.Column(db.Integer, default=300, nullable=False)
+
+    # Full parameter snapshot as JSON. One row per parameter would mean 3000+
+    # rows per ONT; nothing queries individual parameters, the UI reads the blob
+    # and the few things worth filtering on are denormalised below.
+    parameters = db.Column(db.Text, nullable=True)
+    parameters_at = db.Column(db.DateTime, nullable=True)
+
+    # --- Denormalised hot fields (indexed, drive the fleet list) ---
+    wan_ip = db.Column(db.String(45), nullable=True)
+    ssid = db.Column(db.String(64), nullable=True)
+    pppoe_username = db.Column(db.String(120), nullable=True, index=True)
+    uptime_seconds = db.Column(db.Integer, nullable=True)
+    connected_clients = db.Column(db.Integer, nullable=True)
+    # GPON optical receive power in dBm. Healthy -8..-25; below -27 the fibre or
+    # a connector is failing. The single most diagnostic number an ONT reports.
+    rx_power_dbm = db.Column(db.Float, nullable=True)
+    tx_power_dbm = db.Column(db.Float, nullable=True)
+
+    tags = db.Column(db.String(255), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(),
+                           onupdate=db.func.current_timestamp())
+
+    isp = db.relationship('ISP')
+    customer = db.relationship('Customer', backref=db.backref('cpe_devices', passive_deletes=True))
+
+    @staticmethod
+    def build_serial_key(oui, product_class, serial_number):
+        """Stable identity from the Inform DeviceId triplet."""
+        return '-'.join(str(part or '').strip() for part in (oui, product_class, serial_number))
+
+    def __repr__(self):
+        return f'<CpeDevice {self.serial_key} ({self.status})>'
+
+
+class CpeTask(db.Model):
+    """One queued CWMP RPC for a CPE.
+
+    Tasks are queued rather than executed: a CPE behind CGNAT cannot be reached
+    on demand, so work is handed over during the device's next session. The UI
+    must show this honestly — 'queued' is a real state that can last minutes.
+    """
+    __tablename__ = 'cpe_tasks'
+
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('cpe_devices.id', ondelete='CASCADE'),
+                          nullable=False, index=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True, index=True)
+
+    # get_parameter_values | set_parameter_values | get_parameter_names |
+    # reboot | factory_reset | download | add_object | delete_object
+    kind = db.Column(db.String(30), nullable=False)
+    payload = db.Column(db.Text, nullable=True)   # JSON args for the RPC
+    result = db.Column(db.Text, nullable=True)    # JSON response from the CPE
+
+    # queued -> sent -> done | failed | expired
+    status = db.Column(db.String(12), default='queued', nullable=False, index=True)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    max_attempts = db.Column(db.Integer, default=3, nullable=False)
+    fault_code = db.Column(db.String(20), nullable=True)
+    fault_string = db.Column(db.Text, nullable=True)
+
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    delivered_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+    device = db.relationship('CpeDevice', backref=db.backref(
+        'tasks', cascade='all, delete-orphan', passive_deletes=True,
+        order_by='CpeTask.created_at.desc()'))
+
+    def __repr__(self):
+        return f'<CpeTask {self.kind} device={self.device_id} {self.status}>'
+
+
+class CpeSession(db.Model):
+    """One CWMP session (Inform ... 204), kept for troubleshooting.
+
+    High churn — every CPE opens one per periodic interval — so this is pruned
+    by services/data_retention.py rather than kept forever.
+    """
+    __tablename__ = 'cpe_sessions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('cpe_devices.id', ondelete='CASCADE'),
+                          nullable=True, index=True)
+    session_token = db.Column(db.String(64), nullable=False, index=True)
+    peer_ip = db.Column(db.String(45), nullable=True)
+    events = db.Column(db.String(255), nullable=True)   # Inform EventCodes, comma-joined
+    rpc_count = db.Column(db.Integer, default=0, nullable=False)
+    fault_count = db.Column(db.Integer, default=0, nullable=False)
+    started_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), index=True)
+    ended_at = db.Column(db.DateTime, nullable=True)
+
+    device = db.relationship('CpeDevice', backref=db.backref(
+        'sessions', cascade='all, delete-orphan', passive_deletes=True))
+
+    def __repr__(self):
+        return f'<CpeSession {self.session_token} device={self.device_id}>'
+
+
+class CpeFirmware(db.Model):
+    """A firmware image the ACS can push with the CWMP Download RPC.
+
+    The CPE fetches the file itself over HTTP from a token URL (same shape as
+    routes/provision.py), so the image must be reachable from the subscriber
+    network, not just from the server.
+    """
+    __tablename__ = 'cpe_firmware'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    version = db.Column(db.String(60), nullable=True)
+    # Targeting: only offered to CPE whose Inform matches these.
+    manufacturer = db.Column(db.String(80), nullable=True)
+    product_class = db.Column(db.String(80), nullable=True)
+
+    filename = db.Column(db.String(255), nullable=False)
+    storage_path = db.Column(db.String(512), nullable=False)
+    size_bytes = db.Column(db.Integer, default=0)
+    sha256 = db.Column(db.String(64), nullable=True)
+    # Opaque token in the download URL handed to the CPE.
+    download_token = db.Column(db.String(64), unique=True, nullable=True, index=True)
+
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    isp = db.relationship('ISP')
+
+    def __repr__(self):
+        return f'<CpeFirmware {self.name} {self.version}>'

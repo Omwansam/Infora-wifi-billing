@@ -651,6 +651,28 @@ def sync_device_alias(device_id):
     return sync_device(device_id)
 
 
+@devices_bp.route('/<int:device_id>/diagnose', methods=['GET', 'POST'])
+@rate_limit(limit=10, window=60, scope='device-diagnose')
+@jwt_required()
+def diagnose_device_route(device_id):
+    """Layer-by-layer connectivity report (record → WG peer → route → TCP → SSH).
+
+    Answers "why is this router showing Offline" with the specific failing hop
+    instead of a single boolean, including whether it is provably up but simply
+    unreachable from the server.
+    """
+    device, err = _device_for_user(device_id)
+    if err:
+        return err
+    from services.device_diagnostics import diagnose_device
+
+    try:
+        return jsonify(diagnose_device(device)), 200
+    except Exception as e:
+        current_app.logger.exception('Device diagnosis failed for %s', device_id)
+        return jsonify({'error': f'Diagnosis failed: {str(e)}'}), 500
+
+
 def _device_for_user(device_id):
     """Fetch a device + enforce tenant scoping. Returns (device, error_response)."""
     device = MikrotikDevice.query.get_or_404(device_id)

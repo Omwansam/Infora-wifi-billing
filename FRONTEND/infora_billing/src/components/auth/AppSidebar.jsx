@@ -43,6 +43,9 @@ import {
   ArrowLeftRight,
   FileSpreadsheet,
   Router,
+  HardDrive,
+  Wrench,
+  Upload,
 } from 'lucide-react';
 
 const sidebarTransition = { duration: 0.28, ease: [0.4, 0, 0.2, 1] };
@@ -257,11 +260,7 @@ const AppSidebar = () => {
     if (url === '/import') {
       return location.pathname === '/import';
     }
-    // Devices is a single link but should stay active across all /devices/* tabs.
-    if (url === '/devices/mikrotik') {
-      return location.pathname.startsWith('/devices');
-    }
-    // Network is a single link too — active across all /network/* tabs.
+    // Network is a single link — active across all /network/* tabs.
     if (url === '/network/isps') {
       return location.pathname.startsWith('/network');
     }
@@ -317,7 +316,23 @@ const AppSidebar = () => {
               ],
             },
             { type: 'link', title: 'Communication', url: '/communication', icon: MessageSquare },
-            { type: 'link', title: 'Devices', url: '/devices/mikrotik', icon: Server },
+            {
+              // Was a bare link to /devices/mikrotik, which left Status, Backup
+              // and Firmware routed but unreachable from the nav. Customer CPE
+              // (TR-069) joins them here.
+              type: 'section',
+              title: 'Devices',
+              icon: Server,
+              section: 'devices',
+              items: [
+                { title: 'Mikrotik', url: '/devices/mikrotik', icon: Router },
+                { title: 'Customer CPE', url: '/devices/cpe', icon: HardDrive },
+                { title: 'Equipment', url: '/devices/equipment', icon: Wrench },
+                { title: 'Status', url: '/devices/status', icon: Activity },
+                { title: 'Backup', url: '/devices/backup', icon: ArrowDownToLine },
+                { title: 'Firmware', url: '/devices/firmware', icon: Upload },
+              ],
+            },
             {
               type: 'section',
               title: 'Network',

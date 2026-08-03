@@ -36,6 +36,8 @@ import FupMonitorPage from './components/monitoring/FupMonitorPage';
 import MikrotikPage from './components/devices/MikrotikPage';
 import DeviceDetailPage from './components/devices/DeviceDetailPage';
 import EquipmentPage from './components/devices/EquipmentPage';
+import CpePage from './components/devices/CpePage';
+import CpeDetailPage from './components/devices/CpeDetailPage';
 import DeviceStatusPage from './components/devices/DeviceStatusPage';
 import DeviceBackupPage from './components/devices/DeviceBackupPage';
 import DeviceFirmwarePage from './components/devices/DeviceFirmwarePage';
@@ -184,6 +186,8 @@ function AppRoutes() {
       <Route path="/devices/mikrotik" element={<AdminRoute><MainLayout><MikrotikPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/mikrotik/:id" element={<AdminRoute><MainLayout><DeviceDetailPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/equipment" element={<AdminRoute><MainLayout><EquipmentPage /></MainLayout></AdminRoute>} />
+      <Route path="/devices/cpe" element={<AdminRoute><MainLayout><CpePage /></MainLayout></AdminRoute>} />
+      <Route path="/devices/cpe/:id" element={<AdminRoute><MainLayout><CpeDetailPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/status" element={<AdminRoute><MainLayout><DeviceStatusPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/backup" element={<AdminRoute><MainLayout><DeviceBackupPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/firmware" element={<AdminRoute><MainLayout><DeviceFirmwarePage /></MainLayout></AdminRoute>} />

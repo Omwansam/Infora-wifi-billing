@@ -34,6 +34,8 @@ from routes.settings import settings_bp
 from routes.support import support_bp
 from routes.reports import reports_bp
 from routes.imports import imports_bp
+from routes.tr069 import tr069_bp
+from routes.cpe import cpe_bp
 from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
@@ -104,6 +106,9 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(support_bp)
 app.register_blueprint(reports_bp)
 app.register_blueprint(imports_bp)
+# Device-facing CWMP endpoint (no JWT — CPE authenticate with HTTP Basic).
+app.register_blueprint(tr069_bp)
+app.register_blueprint(cpe_bp)
 
 
 def ensure_schema_upgrades():
@@ -181,8 +186,11 @@ def ensure_schema_upgrades():
         # New tables ship without migrations too: create_all() only runs from the
         # `initdb` CLI command, so an existing deployment never grows a table on
         # boot. checkfirst=True makes this a no-op once they exist.
-        from models import ImportCandidate, ImportRun
-        for model in (ImportRun, ImportCandidate):
+        from models import (
+            CpeDevice, CpeFirmware, CpeSession, CpeTask, ImportCandidate, ImportRun,
+        )
+        for model in (ImportRun, ImportCandidate,
+                      CpeDevice, CpeTask, CpeSession, CpeFirmware):
             model.__table__.create(bind=db.engine, checkfirst=True)
     except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
         app.logger.warning('Schema upgrade check skipped: %s', exc)
@@ -453,6 +461,37 @@ def verify_deployment_command():
                 ep = 'OK' if s['endpoint_ok'] else 'FIX ENDPOINT'
                 click.echo(f"  [{ep}] {s['name']} {s['endpoint']}:{s['port']} mode={s['deployment_mode']}")
         click.echo('\nNext: flask generate-radius-clients && restart freeradius')
+
+
+@app.cli.command('diagnose-device')
+@click.argument('device')
+def diagnose_device_command(device):
+    """Explain why a router shows Offline. DEVICE is an id or a name substring."""
+    from models import MikrotikDevice
+    from services.device_diagnostics import diagnose_device
+
+    with app.app_context():
+        if device.isdigit():
+            row = MikrotikDevice.query.get(int(device))
+        else:
+            row = MikrotikDevice.query.filter(
+                MikrotikDevice.device_name.ilike(f'%{device}%')
+            ).first()
+        if not row:
+            click.echo(f'No device matching "{device}"')
+            raise SystemExit(1)
+
+        report = diagnose_device(row)
+        click.echo(f"=== {report['device_name']} (id={report['device_id']}) ===")
+        click.echo(f"Stored status: {report['device_status']}  last_synced: {report['last_synced']}")
+        click.echo('')
+        for check in report['checks']:
+            mark = 'PASS' if check['ok'] else ('warn' if check['severity'] == 'warn' else 'FAIL')
+            click.echo(f"  [{mark:4}] {check['label']}")
+            if check['detail']:
+                click.echo(f"         {check['detail']}")
+        click.echo('')
+        click.echo(f"Verdict: {report['verdict']}")
 
 
 @app.cli.command('generate-radius-clients')

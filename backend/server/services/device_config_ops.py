@@ -18,6 +18,7 @@ import os
 import re
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from mikrotik_client import (
     ConnectionType,
@@ -206,19 +207,29 @@ def probe_tunnel(device, timeout=2, attempts=1):
 
     host = device.management_wg_ip.split('/')[0]
     ports = [device.ssh_port or 22, 8291, device.api_port or 8728]
+
+    def _try_port(port):
+        start = time.time()
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return port, int((time.time() - start) * 1000)
+        except OSError:
+            return None
+
+    # Sweep the ports concurrently. Serially this cost timeout*len(ports) per
+    # attempt (18s worst case at the default 2s/3 attempts), which is far too
+    # slow to run inside a request — it was the reason sync had to be fired into
+    # a background thread whose result nobody ever read.
     for attempt in range(max(1, attempts)):
-        for port in ports:
-            start = time.time()
-            try:
-                with socket.create_connection((host, port), timeout=timeout):
-                    ms = int((time.time() - start) * 1000)
+        with ThreadPoolExecutor(max_workers=len(ports)) as pool:
+            for result in pool.map(_try_port, ports):
+                if result:
+                    port, ms = result
                     return {
                         'up': True,
                         'applicable': True,
                         'detail': f'Reply from {host} in {ms} ms (tcp/{port})',
                     }
-            except OSError:
-                continue
         if attempt < max(1, attempts) - 1:
             time.sleep(0.5)
     return {'up': False, 'applicable': True, 'detail': f'No reply from {host} yet'}

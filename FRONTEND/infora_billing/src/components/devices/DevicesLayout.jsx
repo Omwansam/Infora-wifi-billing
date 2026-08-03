@@ -1,11 +1,14 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Router, Wrench, Activity, Download, Upload } from 'lucide-react';
+import { Router, Wrench, Activity, Download, Upload, HardDrive } from 'lucide-react';
 import PageShell from '../layout/PageShell';
 
 const TABS = [
   { label: 'Mikrotik', path: '/devices/mikrotik', icon: Router },
+  // Customer premises equipment — a separate fleet from the MikroTiks above.
+  // RouterOS has no TR-069 client, so the two never overlap.
+  { label: 'Customer CPE', path: '/devices/cpe', icon: HardDrive },
   { label: 'Equipment', path: '/devices/equipment', icon: Wrench },
   { label: 'Status', path: '/devices/status', icon: Activity },
   { label: 'Backup', path: '/devices/backup', icon: Download },

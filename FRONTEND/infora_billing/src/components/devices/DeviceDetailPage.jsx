@@ -124,9 +124,13 @@ export default function DeviceDetailPage() {
   const handleRefresh = async () => {
     setSyncing(true);
     try {
-      await deviceService.syncDevice(getAccessToken(), id);
-      toast.success('Sync started — refreshing…');
-      setTimeout(load, 1500);
+      const result = await deviceService.syncDevice(getAccessToken(), id);
+      if (result?.reachable === false) {
+        toast.error(result.error || 'Device is unreachable');
+      } else {
+        toast.success('Device synced');
+      }
+      await load();
     } catch (e) {
       toast.error(e.message || 'Sync failed');
     } finally {

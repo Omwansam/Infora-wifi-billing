@@ -77,6 +77,26 @@ class Config:
     # Only flip a device OFFLINE after this many seconds with no proven contact
     # (hysteresis) — keeps a live router stuck ONLINE instead of flapping.
     DEVICE_OFFLINE_GRACE_SECONDS = int(os.getenv('DEVICE_OFFLINE_GRACE_SECONDS', '300'))
+    # Inbound proof-of-life windows. These are router→server signals, so unlike
+    # an outbound probe they still work when the server has no WireGuard
+    # endpoint for a NAT'd peer (see services/device_liveness.py).
+    DEVICE_RADIUS_EVIDENCE_SECONDS = int(os.getenv('DEVICE_RADIUS_EVIDENCE_SECONDS', '900'))
+    DEVICE_PROVISION_EVIDENCE_SECONDS = int(os.getenv('DEVICE_PROVISION_EVIDENCE_SECONDS', '600'))
+
+    # --- TR-069 / CWMP ACS ------------------------------------------------
+    # URL the CPE is configured to call home to. Must be reachable from the
+    # subscriber network and, in production, served on its own vhost/port
+    # (7547 is the IANA CWMP port) — never behind a CDN/WAF, which mangles SOAP.
+    TR069_ACS_URL = os.getenv('TR069_ACS_URL', '')
+    # Onboarding mode: allow a CPE with unrecognised credentials to register
+    # itself (landing in 'pending', where it receives no tasks). Off by default —
+    # an ACS is exposed to the whole internet.
+    TR069_ALLOW_UNKNOWN = os.getenv('TR069_ALLOW_UNKNOWN', 'false').lower() in ('1', 'true', 'yes')
+    # Default PeriodicInformInterval handed to newly seen devices, in seconds.
+    # Also the ceiling on how long a queued task waits before delivery.
+    TR069_PERIODIC_INFORM_INTERVAL = int(os.getenv('TR069_PERIODIC_INFORM_INTERVAL', '300'))
+    # How long CWMP session rows are kept (pruned by data retention).
+    TR069_SESSION_RETENTION_DAYS = int(os.getenv('TR069_SESSION_RETENTION_DAYS', '7'))
     # Timezone applied to MikroTik routers during self-provisioning
     ROUTER_TIMEZONE = os.getenv('ROUTER_TIMEZONE', 'Africa/Nairobi')
     # Public base URL the router uses to fetch its provisioning script (HTTPS)

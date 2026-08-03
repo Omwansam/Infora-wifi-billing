@@ -9,8 +9,15 @@ from services.radius_provisioning import deprovision_customer_radius, radius_use
 def purge_expired_data(dry_run=False):
     """Delete expired hotspot users and old paid records past each ISP's retention window."""
     isps = ISP.query.filter(ISP.data_retention_days.isnot(None)).all()
-    summary = {'customers': 0, 'invoices': 0, 'payments': 0}
+    summary = {'customers': 0, 'invoices': 0, 'payments': 0, 'cpe_sessions': 0}
     now = datetime.utcnow()
+
+    # CWMP session rows are high churn — every managed CPE opens one per
+    # periodic inform interval (5 min by default), so a 1000-device fleet writes
+    # ~288k rows a day. They exist for troubleshooting a recent problem, not as
+    # history. Retention is global rather than per-ISP because the volume, not
+    # the tenant, is what makes them expensive.
+    summary['cpe_sessions'] = _purge_cpe_sessions(now, dry_run)
 
     for isp in isps:
         days = max(7, int(isp.data_retention_days))
@@ -44,3 +51,16 @@ def purge_expired_data(dry_run=False):
     if not dry_run and any(summary.values()):
         db.session.commit()
     return summary
+
+
+def _purge_cpe_sessions(now, dry_run):
+    """Drop CWMP session rows past the retention window."""
+    from flask import current_app
+    from models import CpeSession
+
+    days = int(current_app.config.get('TR069_SESSION_RETENTION_DAYS', 7) or 7)
+    cutoff = now - timedelta(days=max(1, days))
+    query = CpeSession.query.filter(CpeSession.started_at < cutoff)
+    if dry_run:
+        return query.count()
+    return query.delete(synchronize_session=False)
