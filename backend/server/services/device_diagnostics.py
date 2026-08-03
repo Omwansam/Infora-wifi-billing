@@ -44,8 +44,12 @@ def _mgmt_subnet():
 
 
 def _server_wg_conf_path():
-    base = current_app.config.get('WIREGUARD_CONFIG_DIR', '/app/wireguard_configs')
-    return os.path.join(base, 'wg-mgmt.conf')
+    # Ask wireguard_management for the directory rather than rebuilding the path
+    # here — the config lives in a 'mgmt' subdirectory, and duplicating that
+    # detail made this check report a missing file on a perfectly healthy server.
+    from services.wireguard_management import _mgmt_config_dir
+
+    return os.path.join(_mgmt_config_dir(), 'wg-mgmt.conf')
 
 
 def _diagnose_record(device):
