@@ -422,9 +422,12 @@ def run_self_check(device):
             # Without a resolver the hotspot cannot answer (and rewrite) client
             # DNS, so no device ever sees the "Sign in to network" prompt.
             dns = _parse_kv(cli('/ip dns print'))
+            dns_ok = dns.get('allow-remote-requests') == 'yes'
             add('hotspot_dns', 'Router answers client DNS (captive redirect works)',
-                dns.get('allow-remote-requests') == 'yes',
-                'allow-remote-requests is off — re-run provisioning')
+                dns_ok,
+                # Only on failure — this read as "PASS … re-run provisioning",
+                # which sends an operator to redo a router that is already fine.
+                '' if dns_ok else 'allow-remote-requests is off — re-run provisioning')
         if want_pppoe:
             add('pppoe_server', 'PPPoE server exists',
                 'infora' in cli('/interface pppoe-server server print terse'))
