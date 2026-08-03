@@ -208,8 +208,21 @@ def build_radius_script(device, snmp_community='infora'):
         f'/snmp community add name="{snmp_community}"',
         '/snmp set enabled=yes contact="Infora Billing"',
         '',
-        '# --- 6. Timezone (accurate accounting) ---',
+        '# --- 6. Clock: timezone + NTP (accurate accounting AND a working tunnel) ---',
         f':do {{ /system clock set time-zone-name={timezone} }} on-error={{}}',
+        # NTP is not optional. Boards like the hEX lite have no RTC battery, so
+        # after a power cut the clock resumes at roughly the moment it stopped.
+        # WireGuard's handshake carries a TAI64N timestamp and the responder
+        # silently drops any initiation older than the newest it has already
+        # seen from that peer — so a router whose clock is behind can never
+        # bring the management tunnel up itself. It stays "offline" until the
+        # server happens to initiate, which is exactly the failure this fixes.
+        # Setting the clock forward once also unblocks the peer immediately.
+        ':do { /system ntp client set enabled=yes mode=unicast '
+        'servers=time.google.com,time.cloudflare.com,pool.ntp.org } on-error={ '
+        # RouterOS 6 has no `servers=` on the client; fall back to its own syntax.
+        ':do { /system ntp client set enabled=yes primary-ntp=216.239.35.0 '
+        'secondary-ntp=162.159.200.1 } on-error={} }',
     ]
 
     # --- 7. Billing management user + remote access ---

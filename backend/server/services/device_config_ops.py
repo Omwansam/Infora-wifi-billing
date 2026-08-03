@@ -235,6 +235,38 @@ def probe_tunnel(device, timeout=2, attempts=1):
     return {'up': False, 'applicable': True, 'detail': f'No reply from {host} yet'}
 
 
+def _clock_skew_seconds(clock_output):
+    """Router clock minus server clock, in seconds, or None if unreadable.
+
+    ``/system clock print`` reports local time plus a gmt-offset like ``+03:00``,
+    so the offset has to come back out to compare against the server's UTC.
+    """
+    from datetime import datetime, timedelta
+
+    fields = _parse_kv(clock_output)
+    date_str, time_str = fields.get('date'), fields.get('time')
+    if not date_str or not time_str:
+        return None
+
+    stamp = None
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%b/%d/%Y %H:%M:%S'):
+        try:
+            stamp = datetime.strptime(f'{date_str} {time_str}', fmt)
+            break
+        except ValueError:
+            continue
+    if stamp is None:
+        return None
+
+    match = re.match(r'([+-])(\d{2}):(\d{2})', fields.get('gmt-offset', '') or '')
+    if match:
+        sign = 1 if match.group(1) == '+' else -1
+        offset = timedelta(hours=int(match.group(2)), minutes=int(match.group(3)))
+        stamp -= sign * offset  # local -> UTC
+
+    return (stamp - datetime.utcnow()).total_seconds()
+
+
 def _parse_terse_rows(output):
     """Parse 'print terse' output into dicts, keeping RouterOS flag letters.
 
@@ -342,6 +374,23 @@ def run_self_check(device):
         if wg_enabled:
             add('wg_watchdog', 'WireGuard watchdog (netwatch) exists',
                 WG_WATCHDOG_COMMENT in cli('/tool netwatch print terse'))
+
+        # Clock accuracy is a tunnel dependency, not just a reporting nicety.
+        # These boards have no RTC battery, so after a power cut the clock
+        # resumes where it stopped. WireGuard drops handshake initiations whose
+        # TAI64N timestamp is older than the newest already seen from that peer,
+        # so a router running behind can never re-establish the tunnel itself.
+        ntp = _parse_kv(cli('/system ntp client print'))
+        ntp_on = (ntp.get('enabled') or '').lower() == 'yes'
+        add('ntp_client', 'NTP client enabled', ntp_on,
+            'Clock drifts after every power cut without it; a router whose clock '
+            'is behind cannot re-establish the management tunnel'
+            if not ntp_on else ntp.get('status', ''))
+
+        skew = _clock_skew_seconds(cli('/system clock print'))
+        add('clock_accurate', 'Router clock within 60s of server',
+            skew is not None and abs(skew) < 60,
+            f'{int(skew):+d}s vs server' if skew is not None else 'could not read clock')
 
         # Service artifacts — verify only what this device is configured for, so
         # a "configured OK" result can no longer hide a missing hotspot/PPPoE
