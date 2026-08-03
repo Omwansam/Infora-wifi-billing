@@ -37,6 +37,7 @@ PPPOE_PROFILE_NAME = 'infora-pppoe'
 DHCP_NAME = 'infora-dhcp'
 MGMT_ACCESS_COMMENT = 'infora-mgmt-access'
 WG_WATCHDOG_COMMENT = 'infora-wg-watchdog'
+DHCP_ALERT_COMMENT = 'infora-dhcp-alert'
 INTERFACE_NAME_RE = re.compile(r'^[\w.\-/]+$')
 
 # Local "Management" port — a bare ether an operator can plug a laptop into and
@@ -235,6 +236,35 @@ def probe_tunnel(device, timeout=2, attempts=1):
     return {'up': False, 'applicable': True, 'detail': f'No reply from {host} yet'}
 
 
+def _foreign_subnets_on_bridge(cli, params_subnet=None):
+    """Addresses on the service bridge that are outside the bridge's own subnet.
+
+    A CPE in router mode advertises its private gateway (192.168.0.1 and the
+    like) onto our bridge, which is the fingerprint of the rogue-DHCP problem.
+    Returns the offending addresses, newest-looking first, capped for the UI.
+    """
+    own = set()
+    for row in _parse_terse_rows(cli(f'/ip address print terse where interface={BRIDGE_NAME}')):
+        address = (row.get('address') or '').split('/')[0]
+        if address:
+            own.add(address)
+    networks = set()
+    for address in own:
+        parts = address.split('.')
+        if len(parts) == 4:
+            networks.add('.'.join(parts[:2]))  # /16 service subnet
+
+    foreign = []
+    for row in _parse_terse_rows(cli(f'/ip arp print terse where interface={BRIDGE_NAME}')):
+        address = (row.get('address') or '').strip()
+        if not address or address in own:
+            continue
+        prefix = '.'.join(address.split('.')[:2])
+        if prefix and prefix not in networks and address not in foreign:
+            foreign.append(address)
+    return foreign[:5]
+
+
 def _clock_skew_seconds(clock_output):
     """Router clock minus server clock, in seconds, or None if unreadable.
 
@@ -428,6 +458,17 @@ def run_self_check(device):
                 # Only on failure — this read as "PASS … re-run provisioning",
                 # which sends an operator to redo a router that is already fine.
                 '' if dns_ok else 'allow-remote-requests is off — re-run provisioning')
+
+            # A customer CPE left in router mode puts its own gateway on our
+            # service bridge and answers DHCP before we do. Clients then get its
+            # private lease, sit outside the hotspot subnet, never see the portal
+            # and drop the SSID. Spot it by foreign subnets in the ARP table.
+            foreign = _foreign_subnets_on_bridge(cli, params_subnet=None)
+            add('no_rogue_gateway', 'No foreign gateway on the service bridge',
+                not foreign,
+                'Found {} — a customer CPE is in router mode; switch it to '
+                'AP/bridge mode and turn OFF its DHCP server'.format(', '.join(foreign))
+                if foreign else '')
         if want_pppoe:
             add('pppoe_server', 'PPPoE server exists',
                 'infora' in cli('/interface pppoe-server server print terse'))
@@ -1099,6 +1140,25 @@ def build_services_commands(opts):
                 '/ip dns set servers=8.8.8.8,1.1.1.1 allow-remote-requests=yes',
                 ':do {/ip dns cache flush} on-error={}',
             ],
+        ))
+        # Rogue-DHCP watch. The single most common hotspot failure is a customer
+        # CPE left in router mode on a service port: it answers DHCP faster than
+        # we do, so clients get its private lease (192.168.x.x) instead of ours,
+        # land outside the hotspot's subnet, never see the portal, and the phone
+        # drops the SSID as "no internet". Without this the router looks fine and
+        # only a lease/ARP dump reveals the second server.
+        steps.append(_step(
+            'dhcp-alert',
+            [
+                f':do {{/ip dhcp-server alert remove [find comment="{DHCP_ALERT_COMMENT}"]}} on-error={{}}',
+                (
+                    f'/ip dhcp-server alert add interface={BRIDGE_NAME} '
+                    f'alert-timeout=1h comment="{DHCP_ALERT_COMMENT}" '
+                    'on-alert=":log warning \\"Infora: rogue DHCP server on the service '
+                    'bridge — a customer CPE is in router mode, put it in AP/bridge mode\\""'
+                ),
+            ],
+            critical=False,
         ))
 
     # 6. PPPoE — dedicated pool + profile, then ONE server bound to the shared
