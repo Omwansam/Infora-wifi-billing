@@ -9,7 +9,7 @@ import { AdminRoute, AdminOrSupportRoute } from './components/auth/RoleBasedRout
 import MainLayout from './components/layout/MainLayout';
 import Dashboard from './components/Dashboard';
 import LoginPage from './components/auth/login';
-import SignupPage from './components/auth/signup';
+import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import DashboardRedirect from './components/auth/DashboardRedirect';
 import ClientsPage from './components/clients/ClientsPage';
 import ClientForm from './components/clients/ClientForm';
@@ -115,8 +115,11 @@ function AppRoutes() {
     <Routes>
       {/* Public Routes */}
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/signup" element={<SignupPage />} />
-      
+      {/* Self-serve ISP signup — provisions a real tenant (ISP + admin user).
+          See ONBOARDING.md. */}
+      <Route path="/signup" element={<OnboardingWizard />} />
+      <Route path="/get-started" element={<Navigate to="/signup" replace />} />
+
       {/* Public captive portal — no login required */}
       <Route path="/portal" element={<CaptivePortalPage />} />
       <Route path="/portal/voucher" element={<HotspotVoucherPage />} />

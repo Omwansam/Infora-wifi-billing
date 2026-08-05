@@ -16,7 +16,25 @@ export const API_ENDPOINTS = {
   TWO_FACTOR_SETUP: `${API_BASE_URL}/api/auth/2fa/setup`,
   TWO_FACTOR_VERIFY: `${API_BASE_URL}/api/auth/2fa/verify`,
   TWO_FACTOR_DISABLE: `${API_BASE_URL}/api/auth/2fa/disable`,
-  
+
+  // Self-serve ISP onboarding (public — no token). See ONBOARDING.md.
+  ONBOARDING_COUNTRIES: `${API_BASE_URL}/api/onboarding/countries`,
+  ONBOARDING_LOCALE: `${API_BASE_URL}/api/onboarding/locale`,
+  ONBOARDING_START: `${API_BASE_URL}/api/onboarding/start`,
+  ONBOARDING_RESEND: `${API_BASE_URL}/api/onboarding/resend`,
+  ONBOARDING_CHANGE_NUMBER: `${API_BASE_URL}/api/onboarding/change-number`,
+  ONBOARDING_VERIFY: `${API_BASE_URL}/api/onboarding/verify`,
+  ONBOARDING_ACCOUNT: `${API_BASE_URL}/api/onboarding/account`,
+  ONBOARDING_PROFILE: `${API_BASE_URL}/api/onboarding/profile`,
+  ONBOARDING_COMPLETE: `${API_BASE_URL}/api/onboarding/complete`,
+  onboardingSlugCheck: (params) =>
+    `${API_BASE_URL}/api/onboarding/slug-check?${new URLSearchParams(params).toString()}`,
+  onboardingStatus: (token) =>
+    `${API_BASE_URL}/api/onboarding/status?token=${encodeURIComponent(token)}`,
+  onboardingSession: (token) =>
+    `${API_BASE_URL}/api/onboarding/session?token=${encodeURIComponent(token)}`,
+
+
   // Customer endpoints (RADIUS-aware via legacy hooks on /api/customers)
   CUSTOMERS: `${API_BASE_URL}/api/customers`,
   CUSTOMERS_ACTIVE_SESSIONS: `${API_BASE_URL}/api/customers/sessions/active`,

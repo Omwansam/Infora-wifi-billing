@@ -92,6 +92,12 @@ class User(db.Model):
     two_factor_enabled = db.Column(db.Boolean, default=False, nullable=False)
     two_factor_secret = db.Column(db.Text, nullable=True)
     two_factor_backup_codes = db.Column(db.Text, nullable=True)
+    # Contact verified during self-serve onboarding. The WhatsApp number is the
+    # one that received the signup OTP, so it doubles as an account-recovery
+    # channel; timestamps record *when* proof was obtained, not merely that it was.
+    whatsapp_number = db.Column(db.String(20), nullable=True)
+    whatsapp_verified_at = db.Column(db.DateTime, nullable=True)
+    email_verified_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
     last_login = db.Column(db.DateTime, server_default=db.func.current_timestamp())
@@ -1910,6 +1916,10 @@ class ISP(db.Model):
     name = db.Column(db.String(100), nullable=False)
     company_name = db.Column(db.String(200), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
+    # Permanent account address label, chosen at signup ("infora" in
+    # infora.<app domain>). Immutable once issued — it is the tenant's public
+    # identity. Nullable only so pre-onboarding rows survive the backfill.
+    slug = db.Column(db.String(63), unique=True, nullable=True, index=True)
     phone = db.Column(db.String(20), nullable=True)
     address = db.Column(db.Text, nullable=True)
     website = db.Column(db.String(200), nullable=True)
@@ -1944,6 +1954,14 @@ class ISP(db.Model):
     # --- Captive portal (Settings > Captive Portal) ---
     default_portal_theme = db.Column(db.String(30), nullable=True, default='clean')
     after_login_redirect_url = db.Column(db.String(500), nullable=True)
+
+    # --- Operating locale (captured at signup, editable in Settings) ---
+    # `currency` above is the billing currency and predates onboarding — these
+    # three sit alongside it rather than duplicating it.
+    country = db.Column(db.String(2), nullable=True)          # ISO 3166-1 alpha-2
+    timezone = db.Column(db.String(64), nullable=True)        # IANA, e.g. Africa/Nairobi
+    referral_source = db.Column(db.String(60), nullable=True)  # "how did you hear about us"
+    onboarded_at = db.Column(db.DateTime, nullable=True)
 
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
@@ -2137,6 +2155,84 @@ class ImportCandidate(db.Model):
 
     def __repr__(self):
         return f'<ImportCandidate {self.login or self.mac} {self.status}>'
+
+
+# =========================
+#   Self-serve onboarding
+# =========================
+
+class OnboardingSignup(db.Model):
+    """One in-progress ISP signup, from "send me a code" to a provisioned tenant.
+
+    The wizard is a *server-side* state machine, not client-held state. The
+    client is handed an opaque ``token`` at step 1 and carries it through every
+    later call; each endpoint re-checks ``step``/``status`` before it acts, so a
+    hand-crafted request cannot reach ``/complete`` without a verified WhatsApp
+    number no matter what it claims.
+
+    Persisting the attempt (rather than signing the wizard state into a JWT) is
+    what makes the OTP rate limits, the attempt lockout and the resumable
+    provisioning job possible — the same reasoning as ImportRun above.
+    """
+    __tablename__ = 'onboarding_signups'
+
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), unique=True, nullable=False, index=True)
+
+    # --- Step 1: who is signing up -------------------------------------
+    full_name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(120), nullable=False, index=True)
+    whatsapp_e164 = db.Column(db.String(20), nullable=False, index=True)
+
+    # --- Step 2: WhatsApp OTP ------------------------------------------
+    # Hashed, never the plain code: a DB dump must not hand over live codes.
+    otp_hash = db.Column(db.Text, nullable=True)
+    otp_expires_at = db.Column(db.DateTime, nullable=True)
+    otp_attempts = db.Column(db.Integer, default=0, nullable=False)
+    otp_sent_count = db.Column(db.Integer, default=0, nullable=False)
+    otp_last_sent_at = db.Column(db.DateTime, nullable=True)
+    whatsapp_verified_at = db.Column(db.DateTime, nullable=True)
+
+    # --- Step 3: account address ---------------------------------------
+    isp_name = db.Column(db.String(100), nullable=True)
+    slug = db.Column(db.String(63), nullable=True, index=True)
+
+    # --- Step 4: where they operate ------------------------------------
+    country = db.Column(db.String(2), nullable=True)
+    timezone = db.Column(db.String(64), nullable=True)
+    currency = db.Column(db.String(10), nullable=True)
+    referral_source = db.Column(db.String(60), nullable=True)
+
+    # --- Progress ------------------------------------------------------
+    # Highest step the signup has *reached* (1-5). Guards step skipping.
+    step = db.Column(db.Integer, default=1, nullable=False)
+    # 'pending' | 'provisioning' | 'completed' | 'failed'
+    status = db.Column(db.String(16), default='pending', nullable=False, index=True)
+    # JSON list of {key,label,status,detail} — the rows the UI polls while the
+    # provisioning job runs.
+    tasks = db.Column(db.Text, nullable=True)
+    error = db.Column(db.Text, nullable=True)
+
+    # --- Result --------------------------------------------------------
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    # --- Forensics -----------------------------------------------------
+    ip_address = db.Column(db.String(45), nullable=True)
+    user_agent = db.Column(db.String(255), nullable=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(),
+                           onupdate=db.func.current_timestamp())
+    expires_at = db.Column(db.DateTime, nullable=True)
+    provisioning_started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    isp = db.relationship('ISP', foreign_keys=[isp_id])
+    user = db.relationship('User', foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f'<OnboardingSignup {self.email} step={self.step} {self.status}>'
 
 
 # =========================

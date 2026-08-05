@@ -34,6 +34,7 @@ from routes.settings import settings_bp
 from routes.support import support_bp
 from routes.reports import reports_bp
 from routes.imports import imports_bp
+from routes.onboarding import onboarding_bp
 from routes.tr069 import tr069_bp
 from routes.cpe import cpe_bp
 from services.subscription_expiry import enforce_expired_subscriptions
@@ -106,6 +107,8 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(support_bp)
 app.register_blueprint(reports_bp)
 app.register_blueprint(imports_bp)
+# Public self-serve ISP signup (no JWT — see ONBOARDING.md).
+app.register_blueprint(onboarding_bp)
 # Device-facing CWMP endpoint (no JWT — CPE authenticate with HTTP Basic).
 app.register_blueprint(tr069_bp)
 app.register_blueprint(cpe_bp)
@@ -138,11 +141,20 @@ def ensure_schema_upgrades():
         'isps': {
             'account_number_prefix': 'VARCHAR(12)',
             'account_number_seq': 'INTEGER DEFAULT 100000',
+            # Self-serve onboarding: permanent account address + operating locale.
+            'slug': 'VARCHAR(63)',
+            'country': 'VARCHAR(2)',
+            'timezone': 'VARCHAR(64)',
+            'referral_source': 'VARCHAR(60)',
+            'onboarded_at': 'TIMESTAMP',
         },
         'users': {
             'two_factor_enabled': 'BOOLEAN DEFAULT FALSE NOT NULL',
             'two_factor_secret': 'TEXT',
             'two_factor_backup_codes': 'TEXT',
+            'whatsapp_number': 'VARCHAR(20)',
+            'whatsapp_verified_at': 'TIMESTAMP',
+            'email_verified_at': 'TIMESTAMP',
         },
     }
     try:
@@ -182,15 +194,24 @@ def ensure_schema_upgrades():
                 'CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_isp_account_number '
                 'ON customers (isp_id, account_number) WHERE account_number IS NOT NULL'
             ))
+            # The tenant account address. This index is not an optimisation —
+            # it is what actually settles two signups racing for the same slug,
+            # since the availability check at step 3 is only advisory.
+            conn.execute(text(
+                'CREATE UNIQUE INDEX IF NOT EXISTS uq_isps_slug '
+                'ON isps (lower(slug)) WHERE slug IS NOT NULL'
+            ))
 
         # New tables ship without migrations too: create_all() only runs from the
         # `initdb` CLI command, so an existing deployment never grows a table on
         # boot. checkfirst=True makes this a no-op once they exist.
         from models import (
             CpeDevice, CpeFirmware, CpeSession, CpeTask, ImportCandidate, ImportRun,
+            OnboardingSignup,
         )
         for model in (ImportRun, ImportCandidate,
-                      CpeDevice, CpeTask, CpeSession, CpeFirmware):
+                      CpeDevice, CpeTask, CpeSession, CpeFirmware,
+                      OnboardingSignup):
             model.__table__.create(bind=db.engine, checkfirst=True)
     except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
         app.logger.warning('Schema upgrade check skipped: %s', exc)
@@ -224,6 +245,31 @@ def backfill_account_numbers():
     except Exception as exc:
         db.session.rollback()
         app.logger.warning('Account-number backfill skipped: %s', exc)
+
+
+def backfill_isp_slugs():
+    """Give pre-onboarding ISPs an account address derived from their name.
+
+    Every tenant created before self-serve signup has slug NULL, which would
+    leave them with no account address in the console and no way to reach a
+    per-tenant URL later. Derived once, then immutable like any other slug.
+    Idempotent: only touches rows where slug IS NULL.
+    """
+    try:
+        from models import ISP
+        from services.tenant_slug import suggest_slug
+
+        pending = ISP.query.filter(ISP.slug.is_(None)).all()
+        if not pending:
+            return
+        for isp in pending:
+            isp.slug = suggest_slug(isp.name or isp.company_name or f'isp{isp.id}')
+            db.session.flush()  # so the next suggest_slug sees this one
+        db.session.commit()
+        app.logger.info('Backfilled account addresses for %d ISPs', len(pending))
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.warning('ISP slug backfill skipped: %s', exc)
 
 
 def purge_legacy_radius_accept_rows():
@@ -267,6 +313,7 @@ def purge_demo_accounting_rows():
 with app.app_context():
     ensure_schema_upgrades()
     backfill_account_numbers()
+    backfill_isp_slugs()
     purge_legacy_radius_accept_rows()
     purge_demo_accounting_rows()
 

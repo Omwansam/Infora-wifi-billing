@@ -1,0 +1,738 @@
+/*
+ * Onboarding visual system.
+ *
+ * Scoped to `.onb` rather than extended into tailwind.config so the signup
+ * wizard can look nothing like the console without shifting a single existing
+ * screen. Everything here is a token or a primitive the steps compose.
+ *
+ * The palette is near-black with a single orange accent; labels are uppercase
+ * monospace, which is also what marks machine-issued values (the slug, the
+ * tenant chip) apart from things the user typed.
+ */
+
+.onb {
+  --onb-bg: #0c0c0d;
+  --onb-bg-elev: #141416;
+  --onb-card: #111113;
+  --onb-line: #2a2a2e;
+  --onb-line-soft: #1e1e21;
+  --onb-text: #f5f5f6;
+  --onb-text-dim: #a1a1aa;
+  --onb-text-faint: #6b6b73;
+  --onb-accent: #f5920b;
+  --onb-accent-hi: #ff9f1a;
+  --onb-accent-dim: rgba(245, 146, 11, 0.14);
+  --onb-ok: #22c55e;
+  --onb-err: #ef4444;
+  --onb-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  min-height: 100vh;
+  background: var(--onb-bg);
+  color: var(--onb-text);
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Light theme. The wizard is designed dark; this keeps it legible for anyone
+   whose system or toggle says otherwise rather than pretending the choice
+   does not exist. */
+:root:not(.dark) .onb {
+  --onb-bg: #fafaf9;
+  --onb-bg-elev: #ffffff;
+  --onb-card: #ffffff;
+  --onb-line: #e4e4e7;
+  --onb-line-soft: #efeff1;
+  --onb-text: #18181b;
+  --onb-text-dim: #52525b;
+  --onb-text-faint: #a1a1aa;
+  --onb-accent: #ea7c05;
+  --onb-accent-hi: #f5920b;
+  --onb-accent-dim: rgba(234, 124, 5, 0.1);
+}
+
+/* --- Constellation backdrop --------------------------------------------- */
+
+.onb__backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.onb__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, var(--onb-line-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--onb-line-soft) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 20%, transparent 75%);
+  opacity: 0.5;
+}
+
+.onb__constellation {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.onb__constellation line {
+  stroke: var(--onb-accent);
+  stroke-width: 1;
+  opacity: 0.16;
+}
+
+.onb__constellation circle {
+  fill: var(--onb-accent);
+  opacity: 0.5;
+}
+
+/* --- Shell -------------------------------------------------------------- */
+
+.onb__shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px 20px;
+}
+
+.onb__card {
+  width: 100%;
+  max-width: 600px;
+  background: var(--onb-card);
+  border: 1px solid var(--onb-line);
+  border-radius: 18px;
+  padding: 34px 40px 38px;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.6);
+}
+
+@media (max-width: 640px) {
+  .onb__card { padding: 26px 20px 30px; border-radius: 14px; }
+}
+
+.onb__footer {
+  margin-top: 26px;
+  font-family: var(--onb-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--onb-text-faint);
+  text-align: center;
+}
+
+.onb__theme-toggle {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--onb-line);
+  background: var(--onb-bg-elev);
+  color: var(--onb-text-dim);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.onb__theme-toggle:hover { color: var(--onb-accent); border-color: var(--onb-accent); }
+
+/* --- Step indicator ----------------------------------------------------- */
+
+.onb__steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 26px;
+  position: relative;
+}
+
+.onb__back {
+  position: absolute;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  font-size: 14px;
+  color: var(--onb-text-dim);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.onb__back:hover { color: var(--onb-text); }
+
+.onb__pip {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px solid var(--onb-line);
+  color: var(--onb-text-faint);
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+  transition: border-color 0.25s, color 0.25s, background 0.25s;
+}
+
+.onb__pip--active {
+  border-color: var(--onb-accent);
+  color: var(--onb-accent);
+  box-shadow: 0 0 0 4px var(--onb-accent-dim);
+}
+
+.onb__pip--done {
+  border-color: var(--onb-accent);
+  background: var(--onb-accent);
+  color: #fff;
+}
+
+.onb__rule {
+  width: 30px;
+  height: 1.5px;
+  background: var(--onb-line);
+  flex-shrink: 0;
+  transition: background 0.25s;
+}
+
+.onb__rule--done { background: var(--onb-accent); }
+
+@media (max-width: 480px) {
+  .onb__rule { width: 16px; }
+  .onb__back { position: static; margin-right: auto; }
+}
+
+/* --- Headings ----------------------------------------------------------- */
+
+.onb__title {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: center;
+  margin: 0 0 8px;
+}
+
+.onb__subtitle {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--onb-text-dim);
+  text-align: center;
+  margin: 0 auto 26px;
+  max-width: 400px;
+}
+
+/* --- Fields ------------------------------------------------------------- */
+
+.onb__field { margin-bottom: 18px; }
+
+.onb__label {
+  display: block;
+  font-family: var(--onb-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--onb-text-dim);
+  margin-bottom: 7px;
+}
+
+.onb__req { color: var(--onb-err); margin-left: 3px; }
+
+/* Descendant-scoped on purpose. index.css carries a global
+   `.dark input, .dark select, .dark textarea { @apply bg-slate-900 … }`, which
+   at (0,1,1) outranks a bare `.onb__input` and tints every field navy. Two
+   classes beat one-class-plus-element, so `.onb .onb__input` wins without
+   touching the global rule other screens rely on. */
+.onb .onb__input,
+.onb .onb__select {
+  width: 100%;
+  background: var(--onb-bg-elev);
+  border: 1px solid var(--onb-line);
+  border-radius: 9px;
+  padding: 12px 14px;
+  font-size: 15px;
+  color: var(--onb-text);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.onb .onb__input::placeholder { color: var(--onb-text-faint); }
+
+.onb .onb__input:focus,
+.onb .onb__select:focus {
+  border-color: var(--onb-accent);
+  box-shadow: 0 0 0 3px var(--onb-accent-dim);
+}
+
+.onb .onb__input:disabled,
+.onb .onb__select:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.onb .onb__input--error,
+.onb .onb__input--error:focus {
+  border-color: var(--onb-err);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.onb__select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 34px;
+  cursor: pointer;
+}
+
+.onb__hint {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--onb-text-faint);
+}
+
+.onb__error {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--onb-err);
+}
+
+.onb__ok-text {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--onb-accent);
+}
+
+/* --- Phone group -------------------------------------------------------- */
+
+.onb__phone { display: grid; grid-template-columns: 116px 1fr; gap: 10px; }
+
+.onb__phone .onb__select { padding-right: 26px; font-size: 14px; }
+
+/* --- Buttons ------------------------------------------------------------ */
+
+.onb__submit {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 13px 20px;
+  border: none;
+  border-radius: 9px;
+  background: linear-gradient(180deg, var(--onb-accent-hi), var(--onb-accent));
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 26px -10px var(--onb-accent);
+  transition: filter 0.15s, opacity 0.15s;
+}
+
+.onb__submit:hover:not(:disabled) { filter: brightness(1.07); }
+
+.onb__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.onb__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--onb-accent);
+  font-size: 13.5px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.onb__link:hover { text-decoration: underline; }
+.onb__link:disabled { opacity: 0.5; cursor: not-allowed; text-decoration: none; }
+
+.onb__link--ext {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.onb__reveal {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--onb-text-faint);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.onb__reveal:hover { color: var(--onb-text-dim); }
+
+/* --- Step 2: code boxes ------------------------------------------------- */
+
+.onb__code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.onb__timer {
+  font-family: var(--onb-mono);
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--onb-accent);
+  color: var(--onb-accent);
+  background: var(--onb-accent-dim);
+}
+
+.onb__timer--expired { border-color: var(--onb-err); color: var(--onb-err); background: none; }
+
+.onb__code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-bottom: 4px;
+}
+
+.onb__code-dash { color: var(--onb-text-faint); user-select: none; }
+
+.onb .onb__code-box {
+  width: 52px;
+  height: 56px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  font-family: var(--onb-mono);
+  background: var(--onb-bg-elev);
+  border: 1px solid var(--onb-line);
+  border-radius: 9px;
+  color: var(--onb-text);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.onb .onb__code-box:focus {
+  border-color: var(--onb-accent);
+  box-shadow: 0 0 0 3px var(--onb-accent-dim);
+}
+
+.onb .onb__code-box--error { border-color: var(--onb-err); }
+
+@media (max-width: 480px) {
+  .onb__code { gap: 5px; }
+  .onb__code-box { width: 42px; height: 50px; font-size: 19px; }
+}
+
+.onb__center {
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--onb-text-dim);
+  margin-top: 14px;
+}
+
+.onb__note {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--onb-line-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--onb-text-dim);
+  text-align: center;
+}
+
+/* --- Step 3: slug preview ----------------------------------------------- */
+
+.onb__slug {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--onb-line);
+  border-radius: 9px;
+  background: var(--onb-bg-elev);
+  font-family: var(--onb-mono);
+  font-size: 14px;
+  color: var(--onb-text-faint);
+  overflow: hidden;
+}
+
+.onb__slug--ok { border-color: var(--onb-accent); background: var(--onb-accent-dim); }
+.onb__slug--bad { border-color: var(--onb-err); }
+
+.onb__slug-value {
+  color: var(--onb-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onb__slug-mark { margin-left: auto; display: grid; place-items: center; flex-shrink: 0; }
+
+/* --- Step 4: verified summary ------------------------------------------- */
+
+.onb__summary {
+  border: 1px solid var(--onb-accent);
+  border-radius: 11px;
+  overflow: hidden;
+  margin-bottom: 22px;
+  background: var(--onb-accent-dim);
+}
+
+.onb__summary-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.onb__summary-row + .onb__summary-row { border-top: 1px solid var(--onb-line-soft); }
+
+.onb__summary-row:last-child { background: rgba(0, 0, 0, 0.16); }
+
+:root:not(.dark) .onb__summary-row:last-child { background: rgba(0, 0, 0, 0.03); }
+
+.onb__summary-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--onb-accent);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.onb__summary-icon--muted { background: var(--onb-line); color: var(--onb-text-dim); }
+
+.onb__summary-key {
+  font-family: var(--onb-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--onb-text-dim);
+  width: 74px;
+  flex-shrink: 0;
+}
+
+.onb__summary-val {
+  font-family: var(--onb-mono);
+  font-size: 13px;
+  color: var(--onb-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onb__chip {
+  margin-left: auto;
+  font-family: var(--onb-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--onb-line);
+  color: var(--onb-text-dim);
+  flex-shrink: 0;
+}
+
+.onb__chip--ok { background: rgba(245, 146, 11, 0.24); color: var(--onb-accent); }
+
+@media (max-width: 520px) {
+  .onb__summary-key { width: 60px; font-size: 9.5px; }
+  .onb__summary-val { font-size: 11.5px; }
+}
+
+/* --- Step 5: password strength ------------------------------------------ */
+
+.onb__meter { display: flex; gap: 5px; margin-top: 9px; }
+
+.onb__meter-seg {
+  height: 3px;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--onb-line);
+  transition: background 0.25s;
+}
+
+.onb__strength {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.onb__strength-label { font-size: 12.5px; font-weight: 600; }
+
+.onb__reqs { display: flex; gap: 5px; flex-wrap: wrap; }
+
+.onb__req-chip {
+  font-family: var(--onb-mono);
+  font-size: 10.5px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--onb-line);
+  color: var(--onb-text-faint);
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.onb__req-chip--met { border-color: var(--onb-ok); color: var(--onb-ok); }
+
+.onb__terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 18px 0 4px;
+  font-size: 13.5px;
+  color: var(--onb-text-dim);
+}
+
+.onb__checkbox {
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  accent-color: var(--onb-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* --- Provisioning ------------------------------------------------------- */
+
+.onb__card--wide { max-width: 660px; }
+
+.onb__prov-title { font-size: 27px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+
+.onb__prov-sub {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--onb-text-dim);
+  margin: 0 0 26px;
+  max-width: 400px;
+}
+
+.onb__task {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 15px 17px;
+  border: 1px solid var(--onb-line);
+  border-radius: 11px;
+  margin-bottom: 11px;
+  transition: border-color 0.25s, background 0.25s;
+}
+
+.onb__task--running { border-color: var(--onb-accent); }
+.onb__task--done { border-color: rgba(245, 146, 11, 0.5); background: var(--onb-accent-dim); }
+.onb__task--failed { border-color: var(--onb-err); }
+
+.onb__task-mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--onb-line);
+  color: var(--onb-text-faint);
+  flex-shrink: 0;
+}
+
+.onb__task-mark--running { border-color: var(--onb-accent); color: var(--onb-accent); }
+.onb__task-mark--done { border-color: var(--onb-accent); background: var(--onb-accent); color: #fff; }
+.onb__task-mark--failed { border-color: var(--onb-err); color: var(--onb-err); }
+
+.onb__task-body { min-width: 0; flex: 1; }
+
+/* Both are spans (they sit inside a span wrapper), so they need an explicit
+   block display or the detail runs on from the label mid-sentence. */
+.onb__task-label { display: block; font-size: 14.5px; font-weight: 500; }
+
+.onb__task-detail {
+  display: block;
+  font-size: 12.5px;
+  color: var(--onb-text-dim);
+  margin-top: 2px;
+}
+
+.onb__task-state {
+  font-family: var(--onb-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--onb-accent);
+  flex-shrink: 0;
+}
+
+.onb__task-state--failed { color: var(--onb-err); }
+
+.onb__meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  font-family: var(--onb-mono);
+  font-size: 11.5px;
+  color: var(--onb-text-faint);
+  flex-wrap: wrap;
+}
+
+.onb__meta code {
+  background: var(--onb-bg-elev);
+  border: 1px solid var(--onb-line);
+  border-radius: 5px;
+  padding: 2px 7px;
+  color: var(--onb-text-dim);
+}
+
+.onb__spin { animation: onb-spin 0.9s linear infinite; }
+
+@keyframes onb-spin { to { transform: rotate(360deg); } }
+
+/* --- Banner ------------------------------------------------------------- */
+
+.onb__banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--onb-err);
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--onb-err);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 18px;
+}
+
+.onb__banner--info {
+  border-color: var(--onb-accent);
+  background: var(--onb-accent-dim);
+  color: var(--onb-accent);
+}
+
+.onb__banner svg { flex-shrink: 0; margin-top: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .onb__spin { animation: none; }
+  .onb *, .onb *::before, .onb *::after { transition-duration: 0.01ms !important; }
+}
