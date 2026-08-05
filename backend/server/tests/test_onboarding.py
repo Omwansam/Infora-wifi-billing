@@ -321,3 +321,88 @@ def test_initial_tasks_match_the_declared_steps():
 
 def test_task_labels_are_present():
     assert all(t['label'] for t in initial_tasks())
+
+
+# --- password policy -------------------------------------------------------
+# Regression cover for the Settings > Account crash: Werkzeug 3 removed the
+# named hash methods, so `generate_password_hash(pw, method='sha256')` raises
+# ValueError("Invalid hash method"). Nothing may pin a method again.
+
+from services import password_policy  # noqa: E402
+
+
+def test_hash_uses_werkzeug_default_not_a_pinned_method():
+    digest = password_policy.hash_password('a-good-passphrase')
+    assert digest.startswith('scrypt:'), digest.split('$')[0]
+    assert password_policy.verify_password(digest, 'a-good-passphrase')
+    assert not password_policy.verify_password(digest, 'wrong')
+
+
+def test_no_call_site_pins_a_hash_method():
+    """The bug was one stray `method=` argument. Guard the whole package."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    offenders = []
+    for path in root.rglob('*.py'):
+        if '.venv' in path.parts or path.name == pathlib.Path(__file__).name:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if 'generate_password_hash(' in line and 'method=' in line:
+                offenders.append(f'{path.relative_to(root)}:{lineno}')
+    assert not offenders, f'pinned hash method found: {offenders}'
+
+
+@pytest.mark.parametrize('bad_hash', [
+    'sha256$abc$deadbeef',   # written by an older Werkzeug
+    'md5$x$y', 'not-a-hash', '', None,
+])
+def test_unparseable_hash_reads_as_wrong_password(bad_hash):
+    """A hash this build cannot parse must be a failed login, never a 500."""
+    assert password_policy.verify_password(bad_hash, 'anything') is False
+
+
+@pytest.mark.parametrize('password,confirm,ok', [
+    ('a-good-passphrase', 'a-good-passphrase', True),
+    ('exactlyten', 'exactlyten', True),
+    ('nine-char', 'nine-char', False),
+    ('a-good-passphrase', 'mismatched-value', False),
+    ('', '', False),
+    (None, None, False),
+    ('x' * 201, 'x' * 201, False),
+])
+def test_validate_password(password, confirm, ok):
+    if ok:
+        assert password_policy.validate_password(password, confirm) == password
+    else:
+        with pytest.raises(password_policy.WeakPassword):
+            password_policy.validate_password(password, confirm)
+
+
+def test_signup_and_change_password_share_one_minimum():
+    """They disagreed (signup 10, Settings 6), so Settings could weaken an
+    account below the bar it was created under. Both must read one constant."""
+    import re
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for module in ('routes/onboarding.py', 'routes/auth.py'):
+        source = (root / module).read_text()
+        # No module may carry its own length literal any more.
+        assert not re.search(r'MIN_PASSWORD_LENGTH\s*=\s*\d', source), (
+            f'{module} redefines the minimum instead of importing it'
+        )
+        assert 'password_policy' in source, f'{module} bypasses the shared policy'
+
+
+def test_frontend_meter_agrees_with_the_server_minimum():
+    """The signup meter and Settings both gate on MIN_LENGTH; if it drifts from
+    the server the button enables for a password the API will reject."""
+    import pathlib
+    import re
+
+    repo = pathlib.Path(__file__).resolve().parents[3]
+    source = (repo / 'FRONTEND/infora_billing/src/lib/passwordStrength.js').read_text()
+    match = re.search(r'MIN_LENGTH\s*=\s*(\d+)', source)
+    assert match, 'MIN_LENGTH not found in passwordStrength.js'
+    assert int(match.group(1)) == password_policy.MIN_PASSWORD_LENGTH

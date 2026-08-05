@@ -84,11 +84,13 @@ export function PrimaryButton({ children, loading, className = '', ...props }) {
   );
 }
 
-export function SaveBar({ onSave, saving, label = 'Save Changes', children }) {
+export function SaveBar({ onSave, saving, disabled, label = 'Save Changes', children }) {
   return (
     <div className="flex items-center justify-end gap-3 pt-1">
       {children}
-      <PrimaryButton onClick={onSave} loading={saving}>{label}</PrimaryButton>
+      <PrimaryButton onClick={onSave} loading={saving} disabled={disabled}>
+        {label}
+      </PrimaryButton>
     </div>
   );
 }

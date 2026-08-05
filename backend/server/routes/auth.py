@@ -43,8 +43,11 @@ def login():
         if not user.is_active:
             return jsonify({"error": "Account is deactivated. Please contact administrator."}), 401
         
-        # Verify password using Werkzeug hashing
-        if not check_password_hash(user.password_hash, password):
+        # Verify password. Goes through the policy helper so a hash written by
+        # an older Werkzeug (whose method this build no longer understands)
+        # reads as a failed login rather than a 500.
+        from services.password_policy import verify_password
+        if not verify_password(user.password_hash, password):
             record_system_log('auth', f'Failed login for {email}', 'WARNING',
                               user_id=user.id, commit=True)
             return jsonify({"error": "Invalid email or password"}), 401
@@ -260,25 +263,37 @@ def change_password():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
+        from services.password_policy import (
+            WeakPassword, hash_password, validate_password, verify_password,
+        )
+
         current_password = data.get('current_password')
         new_password = data.get('new_password')
-        
+
         if not current_password or not new_password:
             return jsonify({'error': 'Current password and new password are required'}), 400
-        
-        # Validate new password strength
-        if len(new_password) < 6:
-            return jsonify({'error': 'New password must be at least 6 characters long'}), 400
-        
-        # Verify current password
-        if not check_password_hash(user.password_hash, current_password):
+
+        # Verify the current password before saying anything about the new one,
+        # so an unauthenticated-ish caller learns nothing from the error text.
+        if not verify_password(user.password_hash, current_password):
+            record_system_log('auth', f'Failed password change for {user.email}',
+                              'WARNING', user_id=user.id, commit=True)
             return jsonify({'error': 'Current password is incorrect'}), 401
-        
-        # Hash and update new password
-        user.password_hash = generate_password_hash(new_password, method='sha256')
+
+        try:
+            validate_password(new_password, data.get('confirm_password'))
+        except WeakPassword as exc:
+            return jsonify({'error': str(exc)}), 400
+
+        if verify_password(user.password_hash, new_password):
+            return jsonify({'error': 'New password must be different from your current one'}), 400
+
+        user.password_hash = hash_password(new_password)
         user.updated_at = datetime.now()
+        record_system_log('auth', f'{user.email} changed their password',
+                          'INFO', user_id=user.id)
         db.session.commit()
-        
+
         return jsonify({
             'success': True,
             'message': 'Password changed successfully'

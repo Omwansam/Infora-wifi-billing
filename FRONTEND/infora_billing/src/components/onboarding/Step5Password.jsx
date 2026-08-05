@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AlertCircle, ChevronRight, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
-import { MIN_LENGTH, REQUIREMENTS, scorePassword } from './passwordStrength';
+import { MIN_LENGTH, REQUIREMENTS, scorePassword } from '../../lib/passwordStrength';
 
 /**
  * Step 5 — set the console password, accept terms, then provision.

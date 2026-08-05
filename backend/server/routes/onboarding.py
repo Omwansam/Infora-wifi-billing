@@ -22,6 +22,7 @@ from models import OnboardingSignup, User
 from services import tenant_slug, whatsapp_otp
 from services.brand_constants import BRAND_NAME
 from services.email_validation import InvalidEmail, validate_signup_email
+from services.password_policy import MIN_PASSWORD_LENGTH, WeakPassword, validate_password
 from services.phone_utils import (
     DEFAULT_COUNTRY,
     InvalidPhone,
@@ -38,7 +39,6 @@ from services.tenant_provisioning import initial_tasks, load_tasks, start_provis
 onboarding_bp = Blueprint('onboarding', __name__, url_prefix='/api/onboarding')
 
 SIGNUP_TTL_HOURS = 24
-MIN_PASSWORD_LENGTH = 10
 
 REFERRAL_SOURCES = [
     'Search engine', 'Social media', 'Friend or colleague', 'Existing customer',
@@ -511,11 +511,12 @@ def complete():
     if missing:
         return _error(f'Missing {missing[0]} — go back and complete that step.', 400)
 
-    password = data.get('password') or ''
-    if len(password) < MIN_PASSWORD_LENGTH:
-        return _error(f'Password must be at least {MIN_PASSWORD_LENGTH} characters')
-    if password != (data.get('confirm_password') or password):
-        return _error('Passwords do not match')
+    try:
+        password = validate_password(
+            data.get('password'), data.get('confirm_password') or data.get('password'),
+        )
+    except WeakPassword as exc:
+        return _error(str(exc))
     if not data.get('accept_terms'):
         return _error('Accept the terms of service and privacy policy to continue')
 
