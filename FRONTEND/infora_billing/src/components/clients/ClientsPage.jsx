@@ -83,6 +83,15 @@ export default function ClientsPage() {
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [statusFilter, setStatusFilter] = useState('all');
   const [actionId, setActionId] = useState(null);
+  // Selection is by id, so it survives a re-render but is cleared whenever the
+  // filters change — a selection made under one filter must not be acted on
+  // under another.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  // True once the operator escalates from "the rows on this page" to "every
+  // subscriber matching the current filter", which may exceed what is loaded.
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
+  const [totalMatching, setTotalMatching] = useState(0);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const loadStats = useCallback(async () => {
     try {
@@ -104,6 +113,7 @@ export default function ClientsPage() {
       });
       if (result.success) {
         setClients(result.data.customers || []);
+        setTotalMatching(result.data.total ?? (result.data.customers || []).length);
       } else {
         toast.error(result.error || 'Failed to load clients');
       }
@@ -112,6 +122,12 @@ export default function ClientsPage() {
     } finally {
       setLoading(false);
     }
+  }, [search, connectionType, statusFilter]);
+
+  // Any change to what is being shown invalidates the selection.
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setSelectAllMatching(false);
   }, [search, connectionType, statusFilter]);
 
   useEffect(() => {
@@ -222,6 +238,125 @@ export default function ClientsPage() {
       loadStats();
     } else {
       toast.error(result.error || 'Delete failed');
+    }
+  };
+
+  // --- Bulk selection ------------------------------------------------------
+
+  const allVisibleSelected =
+    filteredClients.length > 0 && filteredClients.every((c) => selectedIds.has(c.id));
+  // The page holds at most `per_page` rows, so "all on screen" is not "all
+  // matching" whenever the server reports more. That gap is the whole reason
+  // the escalation banner exists.
+  const moreBeyondPage = totalMatching > filteredClients.length;
+
+  const selectedCount = selectAllMatching ? totalMatching : selectedIds.size;
+
+  const toggleOne = (id) => {
+    setSelectAllMatching(false);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = () => {
+    setSelectAllMatching(false);
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(filteredClients.map((c) => c.id)));
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectAllMatching(false);
+  };
+
+  const filterSummary = () => {
+    const parts = [];
+    if (connectionType !== 'all') parts.push(connectionType === 'pppoe' ? 'PPPoE' : 'hotspot');
+    if (statusFilter !== 'all') parts.push(statusFilter);
+    if (search) parts.push(`matching “${search}”`);
+    return parts.length ? parts.join(' · ') : null;
+  };
+
+  const handleBulkDelete = async () => {
+    if (!selectedCount || bulkBusy) return;
+
+    const noFilters = connectionType === 'all' && statusFilter === 'all' && !search;
+    // "Everything" is about coverage, not the escalation banner: on an account
+    // with fewer subscribers than one page, ticking the header box already
+    // selects the entire list without the banner ever appearing.
+    const coversEverything = noFilters && selectedCount >= totalMatching && totalMatching > 0;
+    const activeFilter = filterSummary();
+
+    // Wiping a whole list is the one action worth making deliberately slow, so
+    // it always requires typing — a small ISP's 9 subscribers is still all of
+    // them. Large partial selections get the same treatment.
+    const requireText =
+      coversEverything || selectAllMatching || selectedCount >= 10
+        ? String(selectedCount)
+        : null;
+
+    const ok = await confirm({
+      title: coversEverything
+        ? 'Delete every subscriber?'
+        : `Delete ${selectedCount} subscriber${selectedCount === 1 ? '' : 's'}?`,
+      message: coversEverything
+        ? `All ${selectedCount} subscribers in this account will be permanently deleted.`
+        : selectAllMatching
+          ? `All ${selectedCount} subscribers ${activeFilter ? `(${activeFilter})` : ''} will be permanently deleted.`
+          : `${selectedCount} selected subscriber${selectedCount === 1 ? '' : 's'} will be permanently deleted.`,
+      details:
+        'This cannot be undone. Their invoices, payments, devices, tickets and '
+        + 'RADIUS credentials go with them, and anyone currently online will lose access.',
+      requireText,
+      confirmLabel: coversEverything ? 'Delete everything' : 'Delete permanently',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    setBulkBusy(true);
+    try {
+      const result = await customerService.bulkDeleteCustomers(
+        selectAllMatching
+          ? {
+              scope: 'filtered',
+              filters: {
+                connection_type: connectionType,
+                status: statusFilter === 'connected' ? 'active'
+                  : statusFilter === 'offline' ? 'suspended'
+                    : statusFilter,
+                search: search || undefined,
+              },
+              expectedCount: selectedCount,
+            }
+          : { scope: 'ids', ids: [...selectedIds], expectedCount: selectedIds.size },
+      );
+
+      if (!result.success) {
+        toast.error(result.error || 'Bulk delete failed');
+        return;
+      }
+
+      const { deleted = 0, failed = [] } = result.data || {};
+      if (failed.length) {
+        toast.error(
+          `Deleted ${deleted}, but ${failed.length} could not be removed: `
+          + failed.slice(0, 3).map((f) => f.name).join(', ')
+          + (failed.length > 3 ? '…' : ''),
+          { duration: 8000 },
+        );
+      } else {
+        toast.success(`Deleted ${deleted} subscriber${deleted === 1 ? '' : 's'}`);
+      }
+      clearSelection();
+      loadClients();
+      loadStats();
+    } catch {
+      toast.error('Bulk delete failed');
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -365,10 +500,86 @@ export default function ClientsPage() {
             </div>
           </div>
 
+          {/* Selection toolbar — only present once something is selected, so it
+              never competes with the filters for attention. */}
+          {selectedCount > 0 && (
+            <div className="flex flex-col gap-3 border-b border-rose-100 bg-rose-50/70 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-rose-900">
+                  {selectedCount} subscriber{selectedCount === 1 ? '' : 's'} selected
+                  {selectAllMatching && ' — everything matching this view'}
+                </p>
+                {/* The escalation. Without this, ticking the header box selects
+                    only the loaded page while reading as "all". */}
+                {!selectAllMatching && allVisibleSelected && moreBeyondPage && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectAllMatching(true)}
+                    className="mt-0.5 text-sm font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900"
+                  >
+                    Select all {totalMatching} subscribers
+                    {filterSummary() ? ` (${filterSummary()})` : ' in this account'}
+                  </button>
+                )}
+                {selectAllMatching && (
+                  <button
+                    type="button"
+                    onClick={toggleAllVisible}
+                    className="mt-0.5 text-sm font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900"
+                  >
+                    Select only the {filteredClients.length} shown here
+                  </button>
+                )}
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  disabled={bulkBusy}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDelete}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
+                >
+                  {bulkBusy ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  {bulkBusy ? 'Deleting…' : `Delete ${selectedCount}`}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="min-w-full">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-100">
+                  <th className="w-12 px-5 py-3 text-left">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all clients on this page"
+                      checked={allVisibleSelected}
+                      // Indeterminate when the page is partly selected, or when
+                      // the selection extends past what is rendered.
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate =
+                            !allVisibleSelected
+                            && (selectedIds.size > 0 || selectAllMatching);
+                        }
+                      }}
+                      onChange={toggleAllVisible}
+                      disabled={loading || filteredClients.length === 0}
+                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-rose-600 focus:ring-rose-500 disabled:opacity-40"
+                    />
+                  </th>
                   {[
                     'Client',
                     ...(isAll ? ['Type'] : []),
@@ -393,14 +604,14 @@ export default function ClientsPage() {
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={isAll ? 8 : 7} className="px-5 py-16 text-center text-slate-500">
+                    <td colSpan={isAll ? 9 : 8} className="px-5 py-16 text-center text-slate-500">
                       <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-blue-500" />
                       Loading clients…
                     </td>
                   </tr>
                 ) : filteredClients.length === 0 ? (
                   <tr>
-                    <td colSpan={isAll ? 8 : 7} className="px-5 py-16 text-center">
+                    <td colSpan={isAll ? 9 : 8} className="px-5 py-16 text-center">
                       {isHotspot ? (
                         <Wifi className="h-10 w-10 text-slate-300 mx-auto mb-3" />
                       ) : isPppoe ? (
@@ -433,12 +644,24 @@ export default function ClientsPage() {
                   filteredClients.map((client) => {
                     const connected = isClientConnected(client);
                     const busy = actionId === client.id;
+                    const checked = selectAllMatching || selectedIds.has(client.id);
                     return (
                       <tr
                         key={client.id}
-                        className="hover:bg-blue-50/30 transition-colors cursor-pointer"
+                        className={`transition-colors cursor-pointer ${
+                          checked ? 'bg-rose-50/60 hover:bg-rose-50' : 'hover:bg-blue-50/30'
+                        }`}
                         onClick={() => navigate(`/clients/${client.id}`)}
                       >
+                        <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${client.name}`}
+                            checked={checked}
+                            onChange={() => toggleOne(client.id)}
+                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                          />
+                        </td>
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
                             <div

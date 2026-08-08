@@ -45,6 +45,29 @@ export const customerService = {
     });
   },
 
+  /**
+   * Permanently delete many subscribers at once.
+   *
+   * Either `ids` (an explicit selection) or `scope: 'filtered'` with the same
+   * filters the list is showing — the latter is how "delete everything" works
+   * without shipping thousands of ids.
+   *
+   * `expectedCount` is what the operator was shown and agreed to. The server
+   * refuses with 409 if the real count differs, so a subscriber created between
+   * the confirmation and the request cannot be swept up silently.
+   */
+  async bulkDeleteCustomers({ ids, scope = 'ids', filters, expectedCount }) {
+    const url = `${API_ENDPOINTS.CUSTOMERS}/bulk-delete`;
+    return authenticatedApiCall(url, getAccessToken(), {
+      method: 'POST',
+      body: JSON.stringify({
+        scope,
+        ...(scope === 'ids' ? { ids } : { filters }),
+        expected_count: expectedCount,
+      }),
+    });
+  },
+
   /** Connect client — provision RADIUS at plan speed */
   async connectClient(clientId) {
     const url = `${API_ENDPOINTS.CUSTOMERS}/${clientId}/connect`;

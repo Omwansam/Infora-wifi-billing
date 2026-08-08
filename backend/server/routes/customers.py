@@ -17,6 +17,7 @@ from services.radius_provisioning import (
     ensure_account_number,
     find_customer_by_login,
 )
+from services.system_log import record_system_log
 import secrets
 
 customers_bp = Blueprint('customers', __name__, url_prefix='/api/customers')
@@ -684,6 +685,195 @@ def delete_customer(customer_id):
             return jsonify({'error': 'Customer not found'}), 404
         else:
             return jsonify({'error': f'Failed to delete customer: {str(e)}'}), 500
+
+class AmbiguousTenant(Exception):
+    """The caller has no ISP of their own and the system has more than one."""
+
+
+def _resolve_bulk_delete_isp_id(user, requested_isp_id=None):
+    """The single ISP whose subscribers this call may delete.
+
+    Scoping is *strict* and deliberately does not follow the
+    ``user.role != 'admin'`` pattern used elsewhere in this file. That pattern
+    dates from when 'admin' meant one operator on a single-tenant install; with
+    self-serve signup every new ISP owner is an admin, so honouring it would let
+    one tenant's admin wipe another tenant's subscriber list.
+
+    Accounts seeded before multi-tenancy have ``isp_id`` NULL. Rather than
+    refuse them (which would make this unusable on exactly the installs that
+    need it), fall back only when the answer is unambiguous: one ISP in the
+    system, or an explicit ``isp_id`` the caller supplied. Never guess between
+    several — picking "the first active ISP" is fine for a read, and unforgivable
+    for a delete.
+    """
+    if user.isp_id:
+        return user.isp_id
+
+    if requested_isp_id:
+        isp = ISP.query.get(int(requested_isp_id))
+        if not isp:
+            raise AmbiguousTenant('That ISP does not exist')
+        return isp.id
+
+    isp_ids = [row[0] for row in db.session.query(ISP.id).all()]
+    if len(isp_ids) == 1:
+        return isp_ids[0]
+    raise AmbiguousTenant(
+        'Your account is not linked to an ISP and this system has several. '
+        'Ask an administrator to set your ISP before deleting subscribers.'
+    )
+
+
+def _bulk_delete_query(user, filters, isp_id=None):
+    """Customers this user is allowed to bulk-delete, narrowed by ``filters``."""
+    scoped_isp_id = isp_id if isp_id is not None else user.isp_id
+    query = Customer.query.filter(Customer.isp_id == scoped_isp_id)
+
+    connection_type = (filters.get('connection_type') or '').strip()
+    if connection_type and connection_type != 'all':
+        if connection_type not in {'hotspot', 'pppoe', 'wireguard'}:
+            raise ValueError('Invalid connection_type')
+        query = query.filter(Customer.connection_type == connection_type)
+
+    status = (filters.get('status') or '').strip()
+    if status and status != 'all':
+        try:
+            query = query.filter(Customer.status == CustomerStatus(status))
+        except ValueError:
+            raise ValueError('Invalid status value')
+
+    search = (filters.get('search') or '').strip()
+    if search:
+        term = f'%{search}%'
+        query = query.filter(or_(
+            Customer.full_name.ilike(term),
+            Customer.email.ilike(term),
+            Customer.phone.ilike(term),
+        ))
+
+    return query
+
+
+@customers_bp.route('/bulk-delete', methods=['POST'])
+@jwt_required()
+def bulk_delete_customers():
+    """Permanently delete many subscribers at once.
+
+    Two modes, both scoped to the caller's ISP:
+
+    * ``{"ids": [1, 2, 3]}``           — exactly these subscribers.
+    * ``{"scope": "filtered", ...}``   — everything matching the same filters
+      the list view is showing (``connection_type``, ``status``, ``search``).
+      With no filters this is "delete every subscriber".
+
+    ``expected_count`` is required and must equal what the query actually
+    matches. The client sends the number it showed the operator, so if the set
+    changed between the confirmation and the request — a hotspot signup landing
+    mid-confirm, say — this refuses rather than deleting more than was agreed to.
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        if user.role != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+
+        data = request.get_json() or {}
+
+        # Resolve the one tenant this call may touch before looking at anything
+        # else — nothing below is safe without a boundary.
+        try:
+            isp_id = _resolve_bulk_delete_isp_id(user, data.get('isp_id'))
+        except AmbiguousTenant as exc:
+            return jsonify({'error': str(exc)}), 403
+
+        scope = (data.get('scope') or 'ids').strip()
+
+        if scope == 'ids':
+            ids = data.get('ids') or []
+            if not isinstance(ids, list) or not ids:
+                return jsonify({'error': 'Select at least one subscriber'}), 400
+            try:
+                ids = [int(i) for i in ids]
+            except (TypeError, ValueError):
+                return jsonify({'error': 'Invalid subscriber id'}), 400
+            query = Customer.query.filter(
+                Customer.isp_id == isp_id, Customer.id.in_(ids),
+            )
+        elif scope == 'filtered':
+            try:
+                query = _bulk_delete_query(user, data.get('filters') or {}, isp_id=isp_id)
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+        else:
+            return jsonify({'error': 'Invalid scope'}), 400
+
+        targets = query.all()
+        if not targets:
+            return jsonify({'error': 'No matching subscribers to delete'}), 404
+
+        expected = data.get('expected_count')
+        if expected is None:
+            return jsonify({'error': 'expected_count is required'}), 400
+        if int(expected) != len(targets):
+            return jsonify({
+                'error': (
+                    f'This would delete {len(targets)} subscribers, but you '
+                    f'confirmed {int(expected)}. The list changed — refresh and try again.'
+                ),
+                'actual_count': len(targets),
+            }), 409
+
+        isp_cache = {}
+        deleted, failed = [], []
+
+        for customer in targets:
+            name = customer.full_name
+            customer_id = customer.id
+            try:
+                if customer.isp_id:
+                    if customer.isp_id not in isp_cache:
+                        isp_cache[customer.isp_id] = ISP.query.get(customer.isp_id)
+                    isp = isp_cache[customer.isp_id]
+                    if isp:
+                        # Drop RADIUS access first: a deleted row with live
+                        # RADIUS credentials would keep authenticating.
+                        deprovision_customer_radius(customer, isp)
+                db.session.delete(customer)
+                # Commit per subscriber so one undeletable row (an unexpected FK)
+                # cannot roll back the whole batch.
+                db.session.commit()
+                deleted.append(customer_id)
+            except Exception as exc:
+                db.session.rollback()
+                failed.append({
+                    'id': customer_id,
+                    'name': name,
+                    'error': 'Has related records that must be removed first'
+                             if 'foreign key' in str(exc).lower() else str(exc)[:160],
+                })
+
+        record_system_log(
+            'customers',
+            f'{user.email} bulk-deleted {len(deleted)} subscriber(s)'
+            + (f', {len(failed)} failed' if failed else ''),
+            'WARNING' if failed else 'INFO',
+            user_id=user.id,
+            commit=True,
+        )
+
+        return jsonify({
+            'success': True,
+            'deleted': len(deleted),
+            'failed': failed,
+            'requested': len(targets),
+            'message': f'Deleted {len(deleted)} of {len(targets)} subscribers',
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Bulk delete failed: {str(e)}'}), 500
+
 
 @customers_bp.route('/<int:customer_id>/status', methods=['PUT'])
 @jwt_required()
