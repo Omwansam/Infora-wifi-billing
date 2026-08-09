@@ -1,0 +1,324 @@
+"""Tests for dual-WAN load balancing.
+
+The fixtures here are real output captured from Kifaru (hEX lite, RouterOS
+7.23.2) while its load balancing was silently inert — every WAN1 rule accepted
+by the router and then flagged invalid, and "WAN2" patched into the router's own
+LAN. That state is the regression these tests exist to catch, so the strings are
+reproduced verbatim rather than idealised.
+
+Run: backend/.venv/bin/python -m pytest backend/server/tests -q
+"""
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from services import load_balancing as lb  # noqa: E402
+
+
+class FakeDevice:
+    device_name = 'Kifaru'
+    os_version = '7.23.2 (stable)'
+    id = 37
+
+
+# --- captured from the live router -----------------------------------------
+
+BROKEN_INTERFACES = """\
+Flags: R - RUNNING; S - SLAVE
+Columns: NAME, TYPE, ACTUAL-MTU, L2MTU, MAX-L2MTU, MAC-ADDRESS
+#    NAME                TYPE      ACTUAL-MTU  L2MTU  MAX-  MAC-ADDRESS
+0 RS ether1              ether           1500   1598  2028  E4:8D:8C:96:A3:19
+1 R  ether2              ether           1500   1598  2028  E4:8D:8C:96:A3:1A
+2    ether3              ether           1500   1598  2028  E4:8D:8C:96:A3:1B
+3  S ether4              ether           1500   1598  2028  E4:8D:8C:96:A3:1C
+6 R  infora-bridge       bridge          1500   1598        E4:8D:8C:96:A3:1A
+"""
+
+BROKEN_BRIDGE_PORTS = """\
+Flags: I - INACTIVE; H - HW-OFFLOAD
+Columns: INTERFACE, BRIDGE, HW, HORIZON, PVID
+#    INTERFACE  BRIDGE         HW   HORI  P
+0  H ether1     bridgeLocal    yes  none  1
+1 I  ether4     infora-bridge  yes  none  1
+"""
+
+BROKEN_ADDRESSES = """\
+Flags: X - DISABLED, I - INVALID; D - DYNAMIC; S - SLAVE
+ 1     ;;; infora-billing
+       address=172.31.0.1/16 network=172.31.0.0 interface=infora-bridge
+       actual-interface=infora-bridge vrf=main
+
+ 3  D  address=172.31.0.101/16 network=172.31.0.0 interface=ether2
+       actual-interface=ether2 vrf=main
+"""
+
+BROKEN_MANGLE = """\
+Flags: X - DISABLED, I - INVALID; D - DYNAMIC
+ 0 I  ;;; infora-lb
+      ;;; in/out-interface matcher not possible when interface (ether1) is slave - use master instead (bridgeLocal)
+      chain=input action=mark-connection new-connection-mark=WAN1_conn
+      passthrough=yes in-interface=ether1
+
+ 1    ;;; infora-lb
+      chain=input action=mark-connection new-connection-mark=WAN2_conn
+      passthrough=yes in-interface=ether2
+"""
+
+BROKEN_DHCP = """\
+Flags: X - DISABLED, I - INVALID, D - DYNAMIC
+ 0   ;;; defconf
+     name="client1" interface=bridgeLocal add-default-route=yes status=bound
+
+ 1 I ;;; infora-wan-dhcp
+     ;;; DHCP client can not run on slave or passthrough interface!
+     name="client2" interface=ether1 add-default-route=yes status=bound
+"""
+
+HEALTHY_INTERFACES = """\
+Flags: R - RUNNING; S - SLAVE
+#    NAME           TYPE    ACTUAL-MTU
+0 R  ether1         ether         1500
+1 R  ether2         ether         1500
+6 R  infora-bridge  bridge        1500
+"""
+
+HEALTHY_ADDRESSES = """\
+Flags: X - DISABLED, I - INVALID; D - DYNAMIC
+ 0     address=172.31.0.1/16 network=172.31.0.0 interface=infora-bridge
+       actual-interface=infora-bridge vrf=main
+
+ 1  D  address=41.90.10.5/24 network=41.90.10.0 interface=ether1
+       actual-interface=ether1 vrf=main
+
+ 2  D  address=105.20.30.7/24 network=105.20.30.0 interface=ether2
+       actual-interface=ether2 vrf=main
+"""
+
+
+def _config(**over):
+    base = {
+        'mode': 'failover', 'lan_interface': 'infora-bridge',
+        'wan1': {'port': 'ether1', 'type': 'dhcp', 'weight': 1},
+        'wan2': {'port': 'ether2', 'type': 'dhcp', 'weight': 1},
+        'probe_hosts': ['8.8.8.8', '1.0.0.1'], 'primary_wan': 'wan1',
+        'subscriber_list': 'ISP2-SUBS', 'pin_management_to': None, 'enabled': True,
+    }
+    base.update(over)
+    return base
+
+
+def _state(**over):
+    base = {
+        'interfaces': HEALTHY_INTERFACES,
+        'bridge_ports': 'Columns: INTERFACE, BRIDGE\n',
+        'addresses': HEALTHY_ADDRESSES,
+        'dhcp_clients': '',
+        'routes': '  DAd+ 0.0.0.0/0  41.90.10.1  main  1\n',
+        'mangle': '', 'nat': '', 'tables': '',
+    }
+    base.update(over)
+    return base
+
+
+# --- the root cause: both WAN ports must be reclaimed ----------------------
+
+def test_both_wan_ports_are_reclaimed_from_any_bridge():
+    """Only WAN2 used to be reclaimed. On a factory hEX, defconf leaves ether1
+    in bridgeLocal, and RouterOS then refuses every rule WAN1 needs."""
+    steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
+
+    assert 'reclaim-wan1' in steps, 'WAN1 is never freed from its bridge'
+    assert 'reclaim-wan2' in steps
+    assert 'ether1' in steps['reclaim-wan1']
+    assert 'ether2' in steps['reclaim-wan2']
+    for label in ('reclaim-wan1', 'reclaim-wan2'):
+        assert '/interface bridge port remove' in steps[label]
+
+
+def test_defconf_uplink_is_retired():
+    """defconf's client keeps installing a competing distance-1 default, so the
+    recursive failover defaults never win."""
+    steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
+    assert 'retire-defconf-dhcp' in steps
+    assert 'comment="defconf"' in steps['retire-defconf-dhcp']
+
+
+def test_ports_are_reclaimed_before_addressing_is_applied():
+    """Order matters: a DHCP client added to a still-enslaved port is rejected."""
+    labels = [label for label, _ in lb.build_lb_steps(FakeDevice(), _config())]
+    assert labels.index('reclaim-wan1') < labels.index('wan1-dhcp')
+    assert labels.index('reclaim-wan2') < labels.index('wan2-dhcp')
+
+
+def test_masquerade_exists_for_both_wans():
+    steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
+    assert 'out-interface=ether1' in steps['nat-1']
+    assert 'out-interface=ether2' in steps['nat-2']
+    assert 'action=masquerade' in steps['nat-1']
+
+
+# --- parsing the router's own output ---------------------------------------
+
+def test_slave_detection_on_real_output():
+    state = _state(interfaces=BROKEN_INTERFACES, bridge_ports=BROKEN_BRIDGE_PORTS)
+    assert lb._iface_is_slave(state, 'ether1') is True
+    assert lb._iface_is_slave(state, 'ether4') is True
+    assert lb._iface_is_slave(state, 'ether2') is False
+    assert lb._iface_is_slave(state, 'ether3') is False
+
+
+def test_address_extraction():
+    state = _state(addresses=BROKEN_ADDRESSES)
+    assert '172.31.0.101/16' in lb._addresses_on(state, 'ether2')
+    assert '172.31.0.1/16' in lb._addresses_on(state, 'infora-bridge')
+    assert lb._addresses_on(state, 'ether1') == []
+
+
+@pytest.mark.parametrize('a,b,overlaps', [
+    ('172.31.0.101/16', '172.31.0.1/16', True),
+    ('41.90.10.5/24', '172.31.0.1/16', False),
+    ('192.168.1.101/24', '172.31.0.1/16', False),
+    (None, '172.31.0.1/16', False),
+    ('garbage', '172.31.0.1/16', False),
+])
+def test_same_subnet(a, b, overlaps):
+    assert lb._same_subnet(a, b) is overlaps
+
+
+def test_invalid_objects_are_surfaced_with_routeros_reason():
+    state = _state(mangle=BROKEN_MANGLE, dhcp_clients=BROKEN_DHCP)
+    problems = lb._invalid_lb_objects(state)
+    joined = ' '.join(reason for _, reason in problems)
+    assert problems, 'RouterOS rejected rules but none were reported'
+    assert 'not possible' in joined or 'can not run' in joined
+
+
+# --- pre-flight -------------------------------------------------------------
+
+def test_preflight_blocks_a_wan_patched_into_our_own_lan(monkeypatch):
+    """Kifaru's ether2 leased 172.31.0.101 from this router's own pool, so the
+    "WAN2" default pointed back into the LAN. That is a loop, not an uplink."""
+    monkeypatch.setattr(lb, '_read_router_state',
+                        lambda *a, **k: _state(addresses=BROKEN_ADDRESSES))
+    blockers, _ = lb.preflight_wan_config(FakeDevice(), _config())
+    assert any('LAN subnet' in b for b in blockers), blockers
+
+
+def test_preflight_blocks_a_missing_interface(monkeypatch):
+    monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state())
+    blockers, _ = lb.preflight_wan_config(
+        FakeDevice(), _config(wan2={'port': 'ether9', 'type': 'dhcp', 'weight': 1}))
+    assert any('does not exist' in b for b in blockers), blockers
+
+
+def test_preflight_blocks_using_the_lan_as_a_wan(monkeypatch):
+    monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state())
+    blockers, _ = lb.preflight_wan_config(
+        FakeDevice(), _config(wan2={'port': 'infora-bridge', 'type': 'dhcp', 'weight': 1}))
+    assert any('LAN interface' in b for b in blockers), blockers
+
+
+def test_preflight_warns_but_does_not_block_on_a_slave_port(monkeypatch):
+    """The push now reclaims it, so this is information, not a refusal."""
+    monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state(
+        interfaces=BROKEN_INTERFACES, bridge_ports=BROKEN_BRIDGE_PORTS,
+        addresses=HEALTHY_ADDRESSES))
+    blockers, warnings = lb.preflight_wan_config(FakeDevice(), _config())
+    assert not blockers, blockers
+    assert any('bridge slave' in w for w in warnings), warnings
+
+
+def test_preflight_warns_about_losing_the_defconf_uplink(monkeypatch):
+    monkeypatch.setattr(lb, '_read_router_state',
+                        lambda *a, **k: _state(dhcp_clients=BROKEN_DHCP))
+    _, warnings = lb.preflight_wan_config(FakeDevice(), _config())
+    assert any('defconf' in w for w in warnings), warnings
+
+
+def test_preflight_passes_on_a_healthy_router(monkeypatch):
+    monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state())
+    blockers, _ = lb.preflight_wan_config(FakeDevice(), _config())
+    assert blockers == []
+
+
+def test_unreachable_router_is_a_blocker(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError('ssh timed out')
+    monkeypatch.setattr(lb, '_read_router_state', boom)
+    blockers, _ = lb.preflight_wan_config(FakeDevice(), _config())
+    assert blockers and 'pre-check' in blockers[0]
+
+
+def test_preflight_is_a_noop_when_mode_is_off(monkeypatch):
+    monkeypatch.setattr(lb, '_read_router_state',
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError('should not read')))
+    assert lb.preflight_wan_config(FakeDevice(), _config(mode='off')) == ([], [])
+
+
+# --- post-push verification -------------------------------------------------
+
+def test_verification_fails_on_the_exact_state_we_found(monkeypatch):
+    """The whole point: this config previously reported as applied and healthy."""
+    monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state(
+        interfaces=BROKEN_INTERFACES, bridge_ports=BROKEN_BRIDGE_PORTS,
+        addresses=BROKEN_ADDRESSES, mangle=BROKEN_MANGLE, dhcp_clients=BROKEN_DHCP,
+        nat='', tables='', routes=' 0  Is  0.0.0.0/0  8.8.8.8  main  1\n'))
+    checks = lb.verify_lb(FakeDevice(), _config())
+    failed = {c['id'] for c in checks if not c['ok']}
+
+    assert 'wan1-free' in failed, 'enslaved WAN1 not caught'
+    assert 'no-invalid' in failed, 'RouterOS-rejected rules not caught'
+    assert 'wan2-address' in failed, 'LAN-subnet WAN2 not caught'
+    assert 'tables' in failed
+    assert 'wan1-nat' in failed and 'wan2-nat' in failed
+    assert 'default-active' in failed, 'inactive defaults not caught'
+
+
+def test_verification_passes_on_a_healthy_router(monkeypatch):
+    monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state(
+        tables='0 D name="main" fib\n1 name="to_WAN1" fib\n2 name="to_WAN2" fib\n',
+        nat=('chain=srcnat action=masquerade out-interface=ether1\n'
+             'chain=srcnat action=masquerade out-interface=ether2\n'),
+        routes='  DAd+ 0.0.0.0/0  41.90.10.1  main  1\n',
+    ))
+    checks = lb.verify_lb(FakeDevice(), _config())
+    failed = [c for c in checks if not c['ok']]
+    assert not failed, failed
+
+
+def test_verification_of_teardown(monkeypatch):
+    monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state())
+    checks = lb.verify_lb(FakeDevice(), _config(mode='off'))
+    assert checks[0]['id'] == 'torn-down'
+    assert checks[0]['ok'] is True
+
+
+def test_verification_reports_an_unreachable_router(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError('no route to host')
+    monkeypatch.setattr(lb, '_read_router_state', boom)
+    checks = lb.verify_lb(FakeDevice(), _config())
+    assert checks == [c for c in checks if not c['ok']]
+    assert checks[0]['id'] == 'reachable'
+
+
+# --- endpoint contract ------------------------------------------------------
+
+def test_configure_endpoint_preflights_verifies_and_gates_the_save():
+    """Persisting an unverified config is what let the console claim LB was live
+    while the router ignored it."""
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[1]
+              / 'routes' / 'devices.py').read_text()
+    body = source.split('def configure_load_balancing')[1].split('\n@devices_bp')[0]
+
+    assert 'preflight_wan_config' in body, 'no pre-flight before pushing'
+    assert 'verify_lb' in body, 'no verification after pushing'
+    assert body.index('preflight_wan_config') < body.index('push_lb_steps')
+    assert body.index('push_lb_steps') < body.index('verify_lb')
+    # The save must sit behind result['ok'], which verification can clear.
+    assert body.index('verify_lb') < body.index('device.wan_config = json.dumps')

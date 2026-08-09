@@ -186,8 +186,33 @@ def build_lb_steps(device, config):
     add('reset-mangle', f':do {{/ip firewall mangle remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
     add('reset-nat', f':do {{/ip firewall nat remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
 
-    # --- 1. Reclaim the WAN2 port from the LAN bridge --------------------------
-    add('reclaim-wan2', f':do {{/interface bridge port remove [find interface={w2["port"]}]}} on-error={{}}')
+    # --- 1. Reclaim BOTH WAN ports from any bridge -----------------------------
+    #     This used to reclaim only WAN2, on the assumption that WAN1 was already
+    #     a free uplink port. It is not on a factory router: MikroTik's `defconf`
+    #     puts ether1 into `bridgeLocal`, and RouterOS then silently refuses
+    #     everything WAN1 needs —
+    #       DHCP client: "can not run on slave or passthrough interface!"
+    #       mangle/NAT:  "in/out-interface matcher not possible when interface
+    #                     (ether1) is slave - use master instead"
+    #     The rules are still *accepted*, just flagged invalid, so the push looks
+    #     clean while the router does nothing. Reclaim both, always.
+    for key, wan in (('wan1', w1), ('wan2', w2)):
+        add(f'reclaim-{key}',
+            f':do {{/interface bridge port remove [find interface={wan["port"]}]}} on-error={{}}')
+
+    # --- 1b. Retire the defconf uplink -----------------------------------------
+    #     `defconf` ships a DHCP client with add-default-route=yes on the bridge
+    #     that owns ether1. Left in place it keeps installing a competing
+    #     distance-1 default, so the recursive failover defaults below never win
+    #     and the WAN the router actually uses is not one we manage. Its dynamic
+    #     address disappears with it.
+    add('retire-defconf-dhcp',
+        ':do {/ip dhcp-client remove [find comment="defconf"]} on-error={}')
+    #     Any other client already bound to a WAN port (ours from a previous run,
+    #     or one added by hand) is replaced by the one we add below.
+    for key, wan in (('wan1', w1), ('wan2', w2)):
+        add(f'clear-dhcp-{key}',
+            f':do {{/ip dhcp-client remove [find interface={wan["port"]}]}} on-error={{}}')
 
     # --- 2. WAN addressing (static address / dhcp client) ---------------------
     add('wan-addr-reset', f':do {{/ip address remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
@@ -287,7 +312,13 @@ def build_lb_steps(device, config):
             f'action=mark-routing new-routing-mark={tbl} comment="{LB_COMMENT}" place-before=0')
 
     # --- 9. Per-WAN NAT (replaces the blanket infora-masquerade) --------------
+    #     These are only valid once the ports are free of a bridge (step 1). A
+    #     masquerade naming a slave interface is accepted and then flagged
+    #     invalid, which is how Kifaru ended up with *no* working masquerade on
+    #     the path that carried its traffic: LAN clients left un-NATed and got
+    #     no replies, while the router itself still pinged out from its own IP.
     add('nat-reset', ':do {/ip firewall nat remove [find comment="infora-masquerade"]} on-error={}')
+    add('nat-defconf-reset', ':do {/ip firewall nat remove [find comment="defconf"]} on-error={}')
     add('nat-1', f'/ip firewall nat add chain=srcnat out-interface={w1["port"]} action=masquerade comment="{LB_COMMENT}"')
     add('nat-2', f'/ip firewall nat add chain=srcnat out-interface={w2["port"]} action=masquerade comment="{LB_COMMENT}"')
 
@@ -350,6 +381,257 @@ def build_lb_script(device, config):
     lines = _header(device, config) + [cmd for _, cmd in steps]
     lines += ['', ':put "Infora dual-WAN configuration applied."']
     return '\n'.join(lines) + '\n'
+
+
+# ---------------------------------------------------------------------------
+# Live-router inspection
+#
+# validate_wan_config() checks the shape of a dict. It cannot know that the port
+# it was handed is a bridge slave, or is patched into our own LAN rather than an
+# ISP. Both of those produce a config the router accepts and then ignores, so
+# the two functions below ask the router itself — once before pushing, once
+# after.
+# ---------------------------------------------------------------------------
+
+def _read_router_state(device, timeout=25, lock_wait=30):
+    """Read-only snapshot of the interface/address/route facts LB depends on."""
+    from services.device_config_ops import mikrotik_ssh
+
+    probes = {
+        'interfaces': '/interface print without-paging',
+        'bridge_ports': '/interface bridge port print without-paging',
+        'addresses': '/ip address print without-paging',
+        'dhcp_clients': '/ip dhcp-client print without-paging',
+        'routes': '/ip route print without-paging',
+        'mangle': '/ip firewall mangle print without-paging',
+        'nat': '/ip firewall nat print without-paging',
+        'tables': '/routing table print without-paging',
+    }
+    state = {}
+    with mikrotik_ssh(device, timeout=timeout, lock_wait=lock_wait) as client:
+        for key, cmd in probes.items():
+            try:
+                out, err = client.run_cli(cmd)
+                state[key] = out or err or ''
+            except Exception as exc:  # noqa: BLE001 — a probe failing is data too
+                state[key] = ''
+                state.setdefault('_errors', []).append(f'{key}: {exc}')
+    return state
+
+
+def _iface_is_slave(state, port):
+    """True when ``port`` is enslaved to a bridge.
+
+    Two independent signals, because either can be absent depending on RouterOS
+    version and how the port was added: the ``S`` flag in ``/interface print``,
+    and a row in ``/interface bridge port print`` naming the interface.
+    """
+    for line in state.get('interfaces', '').splitlines():
+        parts = line.split()
+        if port not in parts:
+            continue
+        # Everything before the name is the index plus the flag letters, e.g.
+        # "0 RS ether1 ..." → flags "RS". S there means slave.
+        flags = ''.join(parts[:parts.index(port)])
+        if 'S' in flags:
+            return True
+
+    for line in state.get('bridge_ports', '').splitlines():
+        # Skip the header/legend rows, which name columns rather than ports.
+        if line.startswith(('Flags:', 'Columns:', '#')) or ';;;' in line:
+            continue
+        if port in line.split():
+            return True
+
+    return False
+
+
+def _addresses_on(state, port):
+    """Every address string currently configured on ``port``."""
+    found, current = [], None
+    for line in state.get('addresses', '').splitlines():
+        if 'address=' in line:
+            current = line
+        if f'interface={port}' in line or f'actual-interface={port}' in line:
+            source = current or line
+            for token in source.split():
+                if token.startswith('address='):
+                    found.append(token.split('=', 1)[1])
+            current = None
+    return found
+
+
+def _invalid_lb_objects(state):
+    """infora-lb objects RouterOS has flagged invalid, with its own reason."""
+    problems = []
+    for section in ('mangle', 'nat', 'dhcp_clients', 'routes'):
+        block, tagged, reason = [], False, None
+        for line in state.get(section, '').splitlines():
+            stripped = line.strip()
+            if not stripped:
+                if tagged and block:
+                    problems.append((section, reason or block[0][:120]))
+                block, tagged, reason = [], False, None
+                continue
+            block.append(stripped)
+            if LB_COMMENT in stripped or 'infora-lb' in stripped:
+                tagged = True
+            # RouterOS prints its objection as a second ;;; comment line.
+            if 'not possible' in stripped or 'can not run' in stripped:
+                reason = stripped.lstrip('; ').strip()
+        if tagged and block and reason:
+            problems.append((section, reason))
+    return problems
+
+
+def preflight_wan_config(device, config):
+    """Inspect the router before pushing. Returns ``(blockers, warnings)``.
+
+    Blockers are conditions that guarantee the config cannot work — pushing
+    anyway just produces the invalid-rule state this function exists to prevent.
+    Warnings are things the operator should know but that the push itself fixes
+    or tolerates.
+    """
+    blockers, warnings = [], []
+    if config.get('mode') == 'off':
+        return blockers, warnings
+
+    try:
+        state = _read_router_state(device)
+    except Exception as exc:  # noqa: BLE001 — unreachable router is a blocker
+        return [f'Could not read the router to pre-check: {exc}'], warnings
+
+    lan = config['lan_interface']
+    interfaces = state.get('interfaces', '')
+
+    for key in ('wan1', 'wan2'):
+        port = config[key]['port']
+
+        if port and port not in interfaces:
+            blockers.append(f'{key}: interface {port} does not exist on this router')
+            continue
+        if port == lan:
+            blockers.append(f'{key}: {port} is the LAN interface — pick a different port')
+            continue
+
+        # The Kifaru failure: a "WAN" patched into our own LAN, leasing from the
+        # router's own DHCP pool. Routing a default out of it is a loop.
+        for addr in _addresses_on(state, port):
+            if _same_subnet(addr, _lan_address(state, lan)):
+                blockers.append(
+                    f'{key}: {port} holds {addr}, which is inside the LAN subnet — '
+                    f'it is patched into this router, not an upstream ISP'
+                )
+                break
+
+        if _iface_is_slave(state, port):
+            warnings.append(
+                f'{key}: {port} is currently a bridge slave; it will be removed '
+                f'from that bridge so it can act as a WAN'
+            )
+
+    # Retiring the defconf client drops the router's current default route. If
+    # that is the only uplink, the tunnel goes with it until the new client binds.
+    if 'defconf' in state.get('dhcp_clients', ''):
+        warnings.append(
+            'The defconf DHCP client will be removed. It currently provides this '
+            "router's default route, so management access drops until the new WAN "
+            'client binds — take a backup and be ready for a site visit.'
+        )
+
+    return blockers, warnings
+
+
+def _lan_address(state, lan):
+    for addr in _addresses_on(state, lan):
+        return addr
+    return None
+
+
+def _same_subnet(addr_a, addr_b):
+    if not addr_a or not addr_b:
+        return False
+    try:
+        net_a = ipaddress.ip_interface(addr_a).network
+        net_b = ipaddress.ip_interface(addr_b).network
+    except ValueError:
+        return False
+    return net_a.overlaps(net_b)
+
+
+def verify_lb(device, config):
+    """Read the router back and report whether the LB config is actually live.
+
+    Mirrors the service-config verification block. This is the check that was
+    missing: RouterOS accepts commands that create invalid rules, so "every
+    command ran" is not evidence the router is doing anything.
+
+    Returns a list of ``{id, label, ok, detail}``.
+    """
+    checks = []
+
+    def check(cid, label, ok, detail):
+        checks.append({'id': cid, 'label': label, 'ok': bool(ok), 'detail': detail})
+
+    try:
+        state = _read_router_state(device)
+    except Exception as exc:  # noqa: BLE001
+        return [{'id': 'reachable', 'label': 'Router reachable for verification',
+                 'ok': False, 'detail': str(exc)[:200]}]
+
+    if config.get('mode') == 'off':
+        leftover = LB_COMMENT in state.get('mangle', '') or LB_COMMENT in state.get('routes', '')
+        check('torn-down', 'Load-balancing artifacts removed', not leftover,
+              'no infora-lb objects remain' if not leftover else 'infora-lb objects still present')
+        return checks
+
+    w1, w2 = config['wan1'], config['wan2']
+
+    # 1. Both WAN ports must be free of a bridge, or everything else is invalid.
+    for key, wan in (('wan1', w1), ('wan2', w2)):
+        slave = _iface_is_slave(state, wan['port'])
+        check(f'{key}-free', f'{key.upper()} port is not a bridge slave', not slave,
+              f'{wan["port"]} is standalone' if not slave
+              else f'{wan["port"]} is still enslaved — its rules will be invalid')
+
+    # 2. RouterOS's own verdict on our objects.
+    invalid = _invalid_lb_objects(state)
+    check('no-invalid', 'No infora-lb rule rejected by RouterOS', not invalid,
+          'all rules accepted' if not invalid
+          else '; '.join(f'{sec}: {why}' for sec, why in invalid[:3])[:300])
+
+    # 3. Each WAN needs an address, and not one from our own LAN.
+    lan_addr = _lan_address(state, config['lan_interface'])
+    for key, wan in (('wan1', w1), ('wan2', w2)):
+        addrs = _addresses_on(state, wan['port'])
+        in_lan = any(_same_subnet(a, lan_addr) for a in addrs)
+        check(f'{key}-address', f'{key.upper()} has an upstream address',
+              bool(addrs) and not in_lan,
+              (f'{wan["port"]}: {", ".join(addrs)}' if addrs else f'{wan["port"]}: no address')
+              + (' — inside the LAN subnet' if in_lan else ''))
+
+    # 4. Routing tables present and the defaults actually installed.
+    tables = state.get('tables', '')
+    have_tables = 'to_WAN1' in tables and 'to_WAN2' in tables
+    check('tables', 'Per-WAN routing tables exist', have_tables,
+          'to_WAN1 and to_WAN2 present' if have_tables else 'routing tables missing')
+
+    routes = state.get('routes', '')
+    active_defaults = sum(
+        1 for line in routes.splitlines()
+        if '0.0.0.0/0' in line and 'A' in line.split('0.0.0.0/0')[0]
+    )
+    check('default-active', 'At least one default route is active', active_defaults > 0,
+          f'{active_defaults} active default route(s)')
+
+    # 5. A valid masquerade must exist per WAN, else LAN clients leave un-NATed.
+    nat = state.get('nat', '')
+    for key, wan in (('wan1', w1), ('wan2', w2)):
+        has_nat = f'out-interface={wan["port"]}' in nat
+        check(f'{key}-nat', f'{key.upper()} masquerade present', has_nat,
+              f'srcnat masquerade out {wan["port"]}' if has_nat else 'missing')
+
+    return checks
 
 
 def push_lb_steps(device, steps):

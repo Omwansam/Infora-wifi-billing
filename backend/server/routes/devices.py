@@ -1137,7 +1137,9 @@ def configure_load_balancing(device_id):
     device, denied = _lb_authz(device_id)
     if denied:
         return denied
-    from services.load_balancing import validate_wan_config, build_lb_steps, push_lb_steps
+    from services.load_balancing import (
+        build_lb_steps, preflight_wan_config, push_lb_steps, validate_wan_config, verify_lb,
+    )
 
     payload = request.get_json(silent=True) or {}
     apply_now = bool(payload.get('apply'))
@@ -1145,20 +1147,96 @@ def configure_load_balancing(device_id):
     if err:
         return jsonify({'error': err}), 400
 
-    result = {'ok': True, 'saved': True, 'applied': False, 'mode': config['mode']}
+    result = {'ok': True, 'saved': False, 'applied': False, 'mode': config['mode']}
+
     if apply_now and config['mode'] != 'off':
+        # Ask the router before touching it. validate_wan_config only sees the
+        # dict; a port that is a bridge slave or patched into our own LAN yields
+        # rules RouterOS accepts and then flags invalid, which used to look like
+        # a clean apply.
+        blockers, warnings = preflight_wan_config(device, config)
+        result['warnings'] = warnings
+        if blockers and not payload.get('force'):
+            return jsonify({
+                'ok': False, 'saved': False, 'applied': False,
+                'error': blockers[0],
+                'blockers': blockers,
+                'warnings': warnings,
+                'hint': 'Fix the wiring, or resend with force=true to push anyway.',
+            }), 409
+
         push = push_lb_steps(device, build_lb_steps(device, config))
         result['applied'] = push['success']
         result['log'] = push['log']
         result['ok'] = push['success']
 
-    # Persist the chosen config unless a push failed (so the stored state matches
-    # the router). A save-only request (apply=false) always persists.
+        # "Every command ran" is not evidence the router is doing anything, so
+        # read it back and let the checks decide.
+        if push['success']:
+            checks = verify_lb(device, config)
+            result['verification'] = checks
+            failed = [c for c in checks if not c['ok']]
+            if failed:
+                result['ok'] = False
+                result['error'] = (
+                    f'Applied, but the router did not come up as configured: '
+                    f'{failed[0]["label"]} — {failed[0]["detail"]}'
+                )
+
+    # Persist only what the router actually confirms. A save-only request
+    # (apply=false) is a draft and always persists; an apply that failed
+    # verification must not leave the console claiming LB is live.
     if result['ok']:
         device.wan_config = json.dumps(config)
         db.session.commit()
+        result['saved'] = True
         result['wan_config'] = config
     return jsonify(result), (200 if result['ok'] else 502)
+
+
+@devices_bp.route('/<int:device_id>/load-balancing/status', methods=['GET'])
+@jwt_required()
+def load_balancing_status(device_id):
+    """What the router actually has, versus what we stored.
+
+    Read-only. Exists because the two can disagree silently: the stored
+    wan_config said Kifaru was load-balancing across two WANs while every rule
+    on the router was flagged invalid and one "WAN" was patched into the LAN.
+    """
+    device, denied = _lb_authz(device_id)
+    if denied:
+        return denied
+    from services.load_balancing import preflight_wan_config, validate_wan_config, verify_lb
+
+    stored = {}
+    if device.wan_config:
+        try:
+            stored = json.loads(device.wan_config)
+        except (TypeError, ValueError):
+            stored = {}
+
+    config, err = validate_wan_config(stored or {'mode': 'off'})
+    if err:
+        return jsonify({'ok': False, 'error': f'stored wan_config is invalid: {err}'}), 500
+
+    checks = verify_lb(device, config)
+    blockers, warnings = preflight_wan_config(device, config)
+    failed = [c for c in checks if not c['ok']]
+
+    return jsonify({
+        'ok': True,
+        'stored_config': config,
+        'mode': config['mode'],
+        # The headline: does the router agree with what we think we configured?
+        'in_sync': not failed,
+        'verification': checks,
+        'blockers': blockers,
+        'warnings': warnings,
+        'summary': ('Router matches the stored configuration'
+                    if not failed else
+                    f'{len(failed)} of {len(checks)} checks failed — '
+                    f'first: {failed[0]["label"]}'),
+    }), 200
 
 
 @devices_bp.route('/<int:device_id>/load-balancing/disable', methods=['POST'])
