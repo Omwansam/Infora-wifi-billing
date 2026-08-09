@@ -461,26 +461,94 @@ def _addresses_on(state, port):
     return found
 
 
+def _iter_rule_blocks(section_text):
+    """Yield one printed object at a time as a list of its lines.
+
+    RouterOS wraps a single object over several lines, with the index and flags
+    on the first and the fields indented under it. Objects are separated by a
+    blank line, but not always — a new index in column 0 also starts one.
+    Grepping the flat text cannot tell you which object a match belongs to, or
+    whether that object is flagged invalid, so everything below works on blocks.
+    """
+    block = []
+    for line in section_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if block:
+                yield block
+                block = []
+            continue
+        if stripped.startswith(('Flags:', 'Columns:', '#')):
+            continue
+        # A leading index means the previous object ended.
+        if block and stripped.split()[0].rstrip(';').isdigit():
+            yield block
+            block = []
+        block.append(stripped)
+    if block:
+        yield block
+
+
+def _block_flags(block):
+    """Flag letters sitting between an object's index and its first field.
+
+    ``0 I  ;;; infora-lb`` -> ['I'];  ``1    chain=srcnat ...`` -> [];
+    ``0  Is  0.0.0.0/0 ...`` -> ['Is'] (routes use mixed-case flags).
+    """
+    if not block:
+        return []
+    flags = []
+    for token in block[0].split()[1:]:
+        if '=' in token or token.startswith(';') or not token.isalpha():
+            break
+        flags.append(token)
+    return flags
+
+
+def _block_is_broken(block):
+    """True when RouterOS flagged the object invalid, inactive or disabled.
+
+    ``I`` is INVALID on a rule and INACTIVE on a route; ``X`` is disabled. All
+    three mean the object exists and does nothing, which is the failure mode
+    this module exists to detect.
+    """
+    return any('I' in flag or 'X' in flag for flag in _block_flags(block))
+
+
+def _rule_is_active(section_text, needle):
+    """True when the object containing ``needle`` exists and is not broken.
+
+    A masquerade naming a bridge slave is *present* in the output and completely
+    inert. Grepping for the text alone reports a working NAT rule on a router
+    that is NAT'ing nothing — which is exactly what it did for Kifaru.
+    """
+    for block in _iter_rule_blocks(section_text):
+        if any(needle in line for line in block):
+            return not _block_is_broken(block)
+    return False
+
+
 def _invalid_lb_objects(state):
-    """infora-lb objects RouterOS has flagged invalid, with its own reason."""
+    """infora-lb objects RouterOS rejected, quoting its own reason.
+
+    Only broken blocks are reported. An earlier version returned every tagged
+    block regardless of its flags, so a healthy rule showed up in the failure
+    list beside the genuinely broken one.
+    """
     problems = []
     for section in ('mangle', 'nat', 'dhcp_clients', 'routes'):
-        block, tagged, reason = [], False, None
-        for line in state.get(section, '').splitlines():
-            stripped = line.strip()
-            if not stripped:
-                if tagged and block:
-                    problems.append((section, reason or block[0][:120]))
-                block, tagged, reason = [], False, None
+        for block in _iter_rule_blocks(state.get(section, '')):
+            if not any(LB_COMMENT in line for line in block):
                 continue
-            block.append(stripped)
-            if LB_COMMENT in stripped or 'infora-lb' in stripped:
-                tagged = True
-            # RouterOS prints its objection as a second ;;; comment line.
-            if 'not possible' in stripped or 'can not run' in stripped:
-                reason = stripped.lstrip('; ').strip()
-        if tagged and block and reason:
-            problems.append((section, reason))
+            if not _block_is_broken(block):
+                continue
+            # RouterOS explains itself in a second ;;; line under the comment.
+            reason = next(
+                (line.lstrip('; ').strip() for line in block
+                 if 'not possible' in line or 'can not run' in line),
+                None,
+            )
+            problems.append((section, reason or block[0][:120]))
     return problems
 
 
@@ -624,12 +692,19 @@ def verify_lb(device, config):
     check('default-active', 'At least one default route is active', active_defaults > 0,
           f'{active_defaults} active default route(s)')
 
-    # 5. A valid masquerade must exist per WAN, else LAN clients leave un-NATed.
+    # 5. A *working* masquerade per WAN, else LAN clients leave un-NATed and get
+    #    no replies. Presence is not enough: the rule Kifaru had named a bridge
+    #    slave, so RouterOS flagged it invalid while the text still matched a grep.
     nat = state.get('nat', '')
     for key, wan in (('wan1', w1), ('wan2', w2)):
-        has_nat = f'out-interface={wan["port"]}' in nat
-        check(f'{key}-nat', f'{key.upper()} masquerade present', has_nat,
-              f'srcnat masquerade out {wan["port"]}' if has_nat else 'missing')
+        needle = f'out-interface={wan["port"]}'
+        present = needle in nat
+        active = _rule_is_active(nat, needle)
+        check(f'{key}-nat', f'{key.upper()} masquerade is active', active,
+              f'srcnat masquerade out {wan["port"]}' if active
+              else (f'present but rejected by RouterOS (invalid/disabled) — '
+                    f'traffic out {wan["port"]} is not NAT\'d' if present
+                    else f'no masquerade for {wan["port"]}'))
 
     return checks
 

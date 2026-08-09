@@ -196,6 +196,83 @@ def test_invalid_objects_are_surfaced_with_routeros_reason():
     assert 'not possible' in joined or 'can not run' in joined
 
 
+def test_only_broken_objects_are_reported_as_invalid():
+    """BROKEN_MANGLE holds one rejected rule and one healthy one. Reporting the
+    healthy one too — which an earlier version did — makes the failure list
+    untrustworthy."""
+    problems = lb._invalid_lb_objects(_state(mangle=BROKEN_MANGLE))
+    assert len(problems) == 1, problems
+    assert 'ether1' in problems[0][1]
+
+
+def test_no_invalid_objects_on_a_clean_router():
+    healthy = (
+        'Flags: X - DISABLED, I - INVALID; D - DYNAMIC\n'
+        ' 0    ;;; infora-lb\n'
+        '      chain=srcnat action=masquerade out-interface=ether1\n'
+        '\n'
+        ' 1    ;;; infora-lb\n'
+        '      chain=srcnat action=masquerade out-interface=ether2\n'
+    )
+    assert lb._invalid_lb_objects(_state(nat=healthy)) == []
+
+
+# --- block parsing / flag reading ------------------------------------------
+
+BROKEN_NAT = """\
+Flags: X - DISABLED, I - INVALID; D - DYNAMIC
+ 0 I  ;;; infora-lb
+      ;;; in/out-interface matcher not possible when interface (ether1) is slave - use master instead (bridgeLocal)
+      chain=srcnat action=masquerade out-interface=ether1
+
+ 1    ;;; infora-lb
+      chain=srcnat action=masquerade out-interface=ether2
+"""
+
+
+def test_masquerade_on_a_slave_port_is_not_counted_as_active():
+    """The false pass: the rule text is there, but RouterOS rejected it, so
+    nothing out that interface is NAT'd."""
+    assert lb._rule_is_active(BROKEN_NAT, 'out-interface=ether1') is False
+    assert lb._rule_is_active(BROKEN_NAT, 'out-interface=ether2') is True
+    assert lb._rule_is_active(BROKEN_NAT, 'out-interface=ether9') is False
+
+
+@pytest.mark.parametrize('header,expected', [
+    ('0 I  ;;; infora-lb', ['I']),
+    ('1    ;;; infora-lb', []),
+    ('0 I  chain=srcnat action=masquerade', ['I']),
+    ('1    chain=srcnat action=masquerade', []),
+    ('0  Is  0.0.0.0/0  8.8.8.8  main  1', ['Is']),
+    ('  DAd+ 0.0.0.0/0  192.168.1.1  main  1', []),
+    ('3  X  chain=input', ['X']),
+])
+def test_flag_extraction(header, expected):
+    assert lb._block_flags([header]) == expected
+
+
+@pytest.mark.parametrize('header,broken', [
+    ('0 I  ;;; infora-lb', True),      # invalid rule
+    ('0  Is  0.0.0.0/0', True),        # inactive route
+    ('3  X  chain=input', True),       # disabled
+    ('1    ;;; infora-lb', False),
+    ('  DAc  10.250.0.0/24', False),   # dynamic+active+connected
+])
+def test_broken_detection(header, broken):
+    assert lb._block_is_broken([header]) is broken
+
+
+def test_blocks_split_without_blank_line_separators():
+    text = (
+        ' 0    chain=srcnat action=masquerade out-interface=ether1\n'
+        ' 1 I  chain=srcnat action=masquerade out-interface=ether2\n'
+    )
+    blocks = list(lb._iter_rule_blocks(text))
+    assert len(blocks) == 2, blocks
+    assert lb._rule_is_active(text, 'out-interface=ether1') is True
+    assert lb._rule_is_active(text, 'out-interface=ether2') is False
+
+
 # --- pre-flight -------------------------------------------------------------
 
 def test_preflight_blocks_a_wan_patched_into_our_own_lan(monkeypatch):
@@ -265,7 +342,7 @@ def test_verification_fails_on_the_exact_state_we_found(monkeypatch):
     monkeypatch.setattr(lb, '_read_router_state', lambda *a, **k: _state(
         interfaces=BROKEN_INTERFACES, bridge_ports=BROKEN_BRIDGE_PORTS,
         addresses=BROKEN_ADDRESSES, mangle=BROKEN_MANGLE, dhcp_clients=BROKEN_DHCP,
-        nat='', tables='', routes=' 0  Is  0.0.0.0/0  8.8.8.8  main  1\n'))
+        nat=BROKEN_NAT, tables='', routes=' 0  Is  0.0.0.0/0  8.8.8.8  main  1\n'))
     checks = lb.verify_lb(FakeDevice(), _config())
     failed = {c['id'] for c in checks if not c['ok']}
 
@@ -273,8 +350,11 @@ def test_verification_fails_on_the_exact_state_we_found(monkeypatch):
     assert 'no-invalid' in failed, 'RouterOS-rejected rules not caught'
     assert 'wan2-address' in failed, 'LAN-subnet WAN2 not caught'
     assert 'tables' in failed
-    assert 'wan1-nat' in failed and 'wan2-nat' in failed
     assert 'default-active' in failed, 'inactive defaults not caught'
+    # WAN1's masquerade is present but rejected; WAN2's is genuinely fine. The
+    # invalid one must fail even though a grep for its text would match.
+    assert 'wan1-nat' in failed, 'invalid masquerade reported as working'
+    assert 'wan2-nat' not in failed, 'valid masquerade wrongly failed'
 
 
 def test_verification_passes_on_a_healthy_router(monkeypatch):
