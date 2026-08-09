@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import SignupLink from './SignupLink';
 import { useBrand } from '../contexts/WebsiteContext';
 import DashboardMockup from './DashboardMockup';
 
@@ -46,12 +46,11 @@ export default function Hero() {
           </div>
 
           <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
-            <Link
-              to="/signup"
+            <SignupLink
               className="w-full rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-violet-600 px-8 py-3.5 text-center text-sm font-semibold text-white shadow-xl shadow-orange-500/30 transition hover:shadow-orange-500/50 sm:w-auto"
             >
               Get Started — Free
-            </Link>
+            </SignupLink>
             <a
               href={brand.demoUrl}
               target="_blank"

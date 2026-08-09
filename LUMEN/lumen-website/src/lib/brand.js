@@ -1,6 +1,12 @@
 export const APP_URL = import.meta.env.VITE_APP_URL || 'http://localhost:5173';
 export const DEMO_URL = import.meta.env.VITE_DEMO_URL || APP_URL;
 
+// Signup is the billing app's onboarding wizard (WhatsApp OTP → account
+// address → locale → password → provisioning). This site has no signup form of
+// its own; every CTA goes here. See SignupLink.jsx.
+export const SIGNUP_URL = `${APP_URL}/signup`;
+export const LOGIN_URL = `${APP_URL}/login`;
+
 export const BRAND = {
   name: 'Lumen',
   fullName: 'Lumen WiFi Billing',
@@ -12,8 +18,8 @@ export const BRAND = {
   website: 'https://lumen.app',
   whatsapp: '+254700000000',
   appUrl: APP_URL,
-  signupUrl: `${APP_URL}/signup`,
-  loginUrl: `${APP_URL}/login`,
+  signupUrl: SIGNUP_URL,
+  loginUrl: LOGIN_URL,
   demoUrl: DEMO_URL,
   // Portal preview opens the demo's captive portal — safe to explore,
   // never the production portal.

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import SignupLink from './SignupLink';
 import { BRAND } from '../lib/brand';
 import DashboardMockup from './DashboardMockup';
 
@@ -20,12 +20,11 @@ export default function WhyChoose() {
               choice for Internet Providers of all sizes.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link
-                to="/signup"
+              <SignupLink
                 className="rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-violet-600 px-8 py-3.5 text-center text-sm font-semibold text-white shadow-xl shadow-orange-500/30 transition hover:shadow-orange-500/50"
               >
                 Get Started — Free
-              </Link>
+              </SignupLink>
               <a
                 href={BRAND.demoUrl}
                 target="_blank"

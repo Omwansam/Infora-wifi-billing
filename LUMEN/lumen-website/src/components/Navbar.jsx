@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
+import SignupLink from './SignupLink';
 import { useBrand } from '../contexts/WebsiteContext';
 import LumenLogo from './LumenLogo';
 
@@ -51,12 +52,11 @@ export default function Navbar() {
           >
             View Demo
           </a>
-          <Link
-            to="/signup"
+          <SignupLink
             className="rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-orange-500/25 transition hover:shadow-orange-500/40"
           >
             Get Started — Free
-          </Link>
+          </SignupLink>
         </div>
 
         <button
@@ -106,12 +106,11 @@ export default function Navbar() {
             >
               View Demo
             </a>
-            <Link
-              to="/signup"
+            <SignupLink
               className="rounded-full bg-gradient-to-r from-amber-500 to-violet-600 py-2.5 text-center text-sm font-semibold text-white"
             >
               Get Started — Free
-            </Link>
+            </SignupLink>
           </div>
         </div>
       )}

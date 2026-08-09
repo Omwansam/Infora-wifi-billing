@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import SignupLink from './SignupLink';
 import Reveal from './Reveal';
 
 const PLANS = [
@@ -72,8 +72,7 @@ export default function Pricing() {
                 <span className="text-4xl font-bold text-slate-900">{plan.price}</span>
                 <span className="text-sm text-slate-500">{plan.unit}</span>
               </div>
-              <Link
-                to="/signup"
+              <SignupLink
                 className={`mt-6 block w-full rounded-full py-3 text-center text-sm font-semibold transition ${
                   plan.popular
                     ? 'bg-gradient-to-r from-amber-500 via-orange-500 to-violet-600 text-white shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40'
@@ -81,7 +80,7 @@ export default function Pricing() {
                 }`}
               >
                 Get Started — Free
-              </Link>
+              </SignupLink>
               <p className="mt-6 text-sm font-medium text-slate-500">What&apos;s included:</p>
               <ul className="mt-3 space-y-2.5">
                 {plan.features.map((feature) => (

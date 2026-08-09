@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useBrand } from '../contexts/WebsiteContext';
+import SignupLink from './SignupLink';
 import { BRAND } from '../lib/brand';
 import LumenLogo from './LumenLogo';
 
@@ -47,12 +48,11 @@ export default function Footer() {
               Start your 14-day free trial or talk to our sales team.
             </p>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <Link
-                to="/signup"
+              <SignupLink
                 className="rounded-full bg-gradient-to-r from-amber-500 to-violet-600 px-5 py-2 text-center text-sm font-semibold text-white"
               >
                 Free Trial
-              </Link>
+              </SignupLink>
               <a
                 href={`mailto:${brand.salesEmail}`}
                 className="rounded-full border border-slate-300 px-5 py-2 text-center text-sm font-medium text-slate-700 transition hover:border-violet-300"

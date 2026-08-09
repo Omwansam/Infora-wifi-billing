@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import SignupLink from './SignupLink';
 import { useBrand } from '../contexts/WebsiteContext';
 import Reveal from './Reveal';
 
@@ -19,12 +19,11 @@ export default function CTABanner() {
             credit card required.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
-            <Link
-              to="/signup"
+            <SignupLink
               className="w-full rounded-full bg-white px-8 py-3.5 text-sm font-semibold text-violet-700 shadow-xl transition hover:bg-slate-50 sm:w-auto"
             >
               Start Free Trial
-            </Link>
+            </SignupLink>
             <a
               href="#contact"
               className="w-full rounded-full border-2 border-white/60 px-8 py-3.5 text-sm font-semibold text-white transition hover:border-white hover:bg-white/10 sm:w-auto"

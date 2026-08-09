@@ -20,8 +20,12 @@ signup:
 The old `/signup` page posted to the first of those. Anyone signing up through
 the app landed in a broken, tenant-less state.
 
-`website_trial_signup` still exists and still works; it is the marketing-site
-path. Both now produce the same shape of tenant.
+`website_trial_signup` still exists and still works, but nothing calls it any
+more: the Lumen marketing site no longer has a signup form of its own. Every
+"Get Started" CTA there is a `SignupLink` component pointing at
+`VITE_APP_URL/signup`, and the site's own `/signup` and `/get-started` routes
+redirect to the same place. There is one signup in the product, and it is this
+wizard.
 
 ---
 

@@ -24,14 +24,18 @@ import ScrollToTop from './components/ScrollToTop';
 import ScrollToHash from './components/ScrollToHash';
 import { useEffect } from 'react';
 import { TermsPage, PrivacyPage, AffiliatePage } from './pages/LegalPages';
-import SignupPage from './pages/SignupPage';
-import { BRAND } from './lib/brand';
+import { LOGIN_URL, SIGNUP_URL } from './lib/brand';
 
-/** The billing app owns the login page — send old /login links there. */
-function LoginRedirect() {
+/**
+ * The billing app owns both auth entry points — this site only navigates to
+ * them. /signup used to render a local one-form trial page here; it now sends
+ * you to the onboarding wizard so old links, bookmarks and any stray <Link
+ * to="/signup"> land in the same place as the CTAs.
+ */
+function ExternalRedirect({ to }) {
   useEffect(() => {
-    window.location.replace(BRAND.loginUrl);
-  }, []);
+    window.location.replace(to);
+  }, [to]);
   return null;
 }
 
@@ -72,8 +76,9 @@ export default function App() {
       <ScrollToHash />
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/login" element={<LoginRedirect />} />
+        <Route path="/signup" element={<ExternalRedirect to={SIGNUP_URL} />} />
+        <Route path="/get-started" element={<ExternalRedirect to={SIGNUP_URL} />} />
+        <Route path="/login" element={<ExternalRedirect to={LOGIN_URL} />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/affiliate" element={<AffiliatePage />} />

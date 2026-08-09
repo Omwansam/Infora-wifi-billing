@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import SignupLink from './SignupLink';
 import { useBrand } from '../contexts/WebsiteContext';
 import Reveal from './Reveal';
 
@@ -108,12 +108,11 @@ export default function Comparison() {
           >
             Explore the live demo — no signup
           </a>
-          <Link
-            to="/signup"
+          <SignupLink
             className="w-full rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-violet-600 px-8 py-3 text-center text-sm font-semibold text-white shadow-lg shadow-orange-500/25 transition hover:shadow-orange-500/40 sm:w-auto"
           >
             Start free 14-day trial
-          </Link>
+          </SignupLink>
         </Reveal>
       </div>
     </section>
