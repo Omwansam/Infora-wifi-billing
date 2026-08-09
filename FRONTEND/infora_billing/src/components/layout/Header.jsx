@@ -272,7 +272,7 @@ export default function Header() {
           </button>
           {/* Breadcrumbs */}
           <nav className="flex items-center gap-1.5 min-w-0 shrink text-sm" aria-label="Breadcrumb">
-            <span className="hidden sm:inline font-medium text-slate-400 dark:text-slate-500 truncate max-w-[140px] lg:max-w-[200px]">
+            <span className="hidden sm:inline font-medium text-slate-400 dark:text-slate-400 truncate max-w-[140px] lg:max-w-[200px]">
               {orgName}
             </span>
             <ChevronRight className="hidden sm:block h-3.5 w-3.5 text-slate-300 shrink-0" />

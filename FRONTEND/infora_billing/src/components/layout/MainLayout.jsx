@@ -8,7 +8,10 @@ function MainLayoutContent({ children }) {
   const { width } = useSidebar();
 
   return (
-    <div className="flex min-h-screen min-w-0 bg-slate-50 dark:bg-slate-950">
+    // `app-theme` opts this subtree into the dark surface mapping in index.css.
+    // The captive portal and the signup wizard theme themselves and deliberately
+    // do not carry it.
+    <div className="app-theme flex min-h-screen min-w-0 bg-slate-50 dark:bg-slate-950">
       <AppSidebar />
       <motion.div
         className="flex min-h-screen min-w-0 flex-1 flex-col overflow-x-hidden"

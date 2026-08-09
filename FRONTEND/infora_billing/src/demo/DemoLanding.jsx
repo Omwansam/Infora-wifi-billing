@@ -88,7 +88,7 @@ const GRADIENT_TEXT =
 
 export default function DemoLanding() {
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="app-theme min-h-screen bg-white text-slate-900">
       {/* Nav */}
       <header className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
