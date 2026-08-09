@@ -89,6 +89,14 @@ const SETTINGS_ITEMS = [
   },
 ];
 
+/** Account-level destinations, reached from the avatar menu. */
+const ACCOUNT_MENU = [
+  { label: 'Settings', path: '/settings', icon: Settings },
+  { label: 'Two-factor auth', path: '/settings/2fa', icon: Shield },
+  { label: 'Billing & subscription', path: '/settings/billing', icon: CreditCard },
+  { label: 'System users', path: '/settings/users', icon: Users },
+];
+
 function buildNotifications(dashboard) {
   if (!dashboard) return [];
   const items = (dashboard.alerts || []).map((alert, index) => ({
@@ -596,12 +604,30 @@ export default function Header() {
                       <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{displayName}</p>
                         <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+                        <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-blue-600">
+                          {user?.is_admin ? 'Administrator' : 'Support'}
+                        </p>
                       </div>
+                      {/* The sidebar no longer carries Settings — this menu is
+                          where account-level configuration lives now. */}
                       <div className="p-1">
+                        {ACCOUNT_MENU.map((entry) => (
+                          <Link
+                            key={entry.path}
+                            to={entry.path}
+                            onClick={() => setUserMenuOpen(false)}
+                            className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          >
+                            <entry.icon className="h-4 w-4 text-slate-400" />
+                            {entry.label}
+                          </Link>
+                        ))}
+                      </div>
+                      <div className="border-t border-slate-100 dark:border-slate-800 p-1">
                         <button
                           type="button"
                           onClick={handleLogout}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-rose-600 rounded-lg hover:bg-rose-50"
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-rose-600 rounded-lg hover:bg-rose-50"
                         >
                           <LogOut className="h-4 w-4" />
                           Sign out

@@ -1,214 +1,407 @@
-import React, { useState, useMemo } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../contexts/AuthContext';
-import { useSidebar, SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED } from '../../contexts/SidebarContext';
+import {
+  useSidebar,
+  SIDEBAR_WIDTH_EXPANDED,
+  SIDEBAR_WIDTH_COLLAPSED,
+} from '../../contexts/SidebarContext';
 import { cn } from '../../lib/utils';
 import LumenLogo from '../brand/LumenLogo';
-import { BRAND } from '../../lib/brand';
 import {
-  Home,
-  Users,
-  FileText,
-  CreditCard,
-  Receipt,
-  History,
-  Gift,
-  Package,
-  DollarSign,
-  TrendingUp,
-  MessageSquare,
-  Server,
-  HelpCircle,
-  ChevronDown,
-  User,
-  LogOut,
-  Network,
-  Lock,
   Activity,
-  BarChart3,
-  ShieldCheck,
-  Gauge,
-  Key,
-  Monitor,
-  Bell,
-  Globe,
-  Database,
-  RefreshCw,
-  Settings,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Wifi,
   ArrowDownToLine,
-  ArrowLeftRight,
-  FileSpreadsheet,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  Cpu,
+  CreditCard,
+  Gauge,
+  HelpCircle,
+  LayoutDashboard,
+  LifeBuoy,
+  Megaphone,
+  MessageSquare,
+  Network,
+  Package,
+  PanelLeftOpen,
+  Radio,
   Router,
-  HardDrive,
-  Wrench,
-  Upload,
+  ShieldCheck,
+  Ticket,
+  TrendingUp,
+  Users,
+  Wallet,
+  X,
 } from 'lucide-react';
 
-const sidebarTransition = { duration: 0.28, ease: [0.4, 0, 0.2, 1] };
-const submenuTransition = { duration: 0.22, ease: [0.4, 0, 0.2, 1] };
+const shellTransition = { duration: 0.28, ease: [0.4, 0, 0.2, 1] };
+const revealTransition = { duration: 0.2, ease: [0.4, 0, 0.2, 1] };
 
-function NavItem({ to, icon: Icon, label, collapsed, isActive, badge, onNavigate }) {
+/**
+ * Navigation model.
+ *
+ * Grouped by what an operator is trying to do rather than by which backend
+ * owns the data — "Leads" sits under Customers even though it is served by the
+ * finance blueprint, because that is where someone looks for it.
+ *
+ * Groups collapse. Only the one containing the current page opens itself, so
+ * the resting sidebar is a short list instead of forty links.
+ *
+ * `admin` mirrors the AdminRoute guards on these pages: support users get the
+ * subscriber and billing surface, nothing that exposes router credentials.
+ */
+function buildSections(isAdmin) {
+  const adminOnly = (items) => (isAdmin ? items : []);
+
+  const sections = [
+    { items: [{ label: 'Overview', to: '/', icon: LayoutDashboard }] },
+    {
+      title: 'Customers',
+      items: [
+        {
+          id: 'subscribers',
+          label: 'Subscribers',
+          icon: Users,
+          children: [
+            { label: 'All subscribers', to: '/clients' },
+            { label: 'PPPoE', to: '/clients/pppoe' },
+            { label: 'Hotspot', to: '/clients/hotspot' },
+            { label: 'KYC review', to: '/clients/kyc' },
+          ],
+        },
+        { label: 'Live sessions', to: '/clients/online', icon: Radio },
+        ...adminOnly([{ label: 'Leads', to: '/finance/leads', icon: TrendingUp }]),
+        { label: 'Tickets', to: '/tickets', icon: LifeBuoy },
+      ],
+    },
+    {
+      title: 'Network',
+      items: [
+        { label: 'Plans', to: '/plans', icon: Package },
+        ...adminOnly([
+          {
+            id: 'devices',
+            label: 'Devices',
+            icon: Router,
+            children: [
+              { label: 'MikroTik', to: '/devices/mikrotik' },
+              { label: 'Equipment', to: '/devices/equipment' },
+              { label: 'Status', to: '/devices/status' },
+              { label: 'Backups', to: '/devices/backup' },
+              { label: 'Firmware', to: '/devices/firmware' },
+            ],
+          },
+          { label: 'TR-069 CPE', to: '/devices/cpe', icon: Cpu },
+          {
+            id: 'radius',
+            label: 'RADIUS',
+            icon: ShieldCheck,
+            children: [
+              { label: 'Server', to: '/network/radius' },
+              { label: 'Users', to: '/security/radius-users' },
+              { label: 'Groups', to: '/security/radius-groups' },
+              { label: 'Accounting', to: '/security/radius-accounting' },
+              { label: 'Access control', to: '/security/access-control' },
+            ],
+          },
+          {
+            id: 'infrastructure',
+            label: 'Infrastructure',
+            icon: Network,
+            children: [
+              { label: 'ISPs', to: '/network/isps' },
+              { label: 'VPN', to: '/network/vpn' },
+              { label: 'WireGuard', to: '/network/wireguard' },
+              { label: 'LDAP', to: '/network/ldap' },
+              { label: 'EAP', to: '/network/eap' },
+              { label: 'SNMP', to: '/network/snmp' },
+            ],
+          },
+        ]),
+        { label: 'FUP monitor', to: '/fup', icon: Gauge },
+      ],
+    },
+    {
+      title: 'Finance',
+      items: [
+        {
+          id: 'billing',
+          label: 'Billing',
+          icon: CreditCard,
+          children: [
+            { label: 'Payments', to: '/billing/payments' },
+            { label: 'Invoices', to: '/billing/invoices' },
+            { label: 'Transactions', to: '/billing/transactions' },
+            { label: 'Subscriptions', to: '/billing/subscriptions' },
+            { label: 'Reports', to: '/billing/reports' },
+          ],
+        },
+        { label: 'Vouchers', to: '/billing/vouchers', icon: Ticket },
+        ...adminOnly([{ label: 'Expenses', to: '/finance/expenses', icon: Wallet }]),
+      ],
+    },
+    {
+      title: 'Outreach',
+      items: adminOnly([
+        {
+          id: 'communications',
+          label: 'Communications',
+          icon: Megaphone,
+          children: [
+            { label: 'Overview', to: '/communication' },
+            { label: 'SMS', to: '/communication/sms' },
+            { label: 'Emails', to: '/communication/emails' },
+            { label: 'Campaigns', to: '/communication/campaigns' },
+          ],
+        },
+      ]),
+    },
+    {
+      title: 'Insights',
+      items: adminOnly([
+        {
+          id: 'reports',
+          label: 'Reports',
+          icon: BarChart3,
+          children: [
+            { label: 'Billing', to: '/reports/billing' },
+            { label: 'Network', to: '/reports/network' },
+            { label: 'Devices', to: '/reports/devices' },
+            { label: 'Subscribers', to: '/reports/customers' },
+            { label: 'Analytics', to: '/reports/analytics' },
+          ],
+        },
+        {
+          id: 'monitoring',
+          label: 'Monitoring',
+          icon: Activity,
+          children: [
+            { label: 'SNMP', to: '/monitoring/snmp' },
+            { label: 'Device stats', to: '/monitoring/device-stats' },
+            { label: 'Traffic', to: '/monitoring/traffic' },
+            { label: 'System logs', to: '/monitoring/logs' },
+            { label: 'Alerts', to: '/monitoring/alerts' },
+          ],
+        },
+      ]),
+    },
+    {
+      title: 'Data',
+      items: adminOnly([
+        {
+          id: 'import',
+          label: 'Import & migration',
+          icon: ArrowDownToLine,
+          children: [
+            { label: 'Overview', to: '/import' },
+            { label: 'From a router', to: '/import/router' },
+            { label: 'From a file', to: '/import/file' },
+            { label: 'Cutover', to: '/import/cutover' },
+            { label: 'History', to: '/import/runs' },
+          ],
+        },
+      ]),
+    },
+  ];
+
+  // A support user empties whole sections; don't leave their headings behind.
+  return sections.filter((s) => s.items.length > 0);
+}
+
+const FOOTER_LINKS = [
+  { label: 'Help & support', to: '/settings/contact-support', icon: HelpCircle },
+  { label: 'Send feedback', to: '/settings/bug-report', icon: MessageSquare },
+];
+
+/**
+ * Longest-prefix match, rather than a rule per link.
+ *
+ * `/clients/243` has to light "All subscribers" while `/clients/hotspot` lights
+ * Hotspot — both are prefixes of the path, so the longer one wins and the
+ * special-casing that used to live here disappears.
+ */
+function findActive(sections, pathname) {
+  let best = null;
+  let bestLen = -1;
+
+  const consider = (to) => {
+    if (!to) return;
+    if (to === '/') {
+      if (pathname === '/' && bestLen < 0) {
+        best = '/';
+        bestLen = 0;
+      }
+      return;
+    }
+    if ((pathname === to || pathname.startsWith(`${to}/`)) && to.length > bestLen) {
+      best = to;
+      bestLen = to.length;
+    }
+  };
+
+  for (const section of sections) {
+    for (const item of section.items) {
+      consider(item.to);
+      item.children?.forEach((child) => consider(child.to));
+    }
+  }
+  return best;
+}
+
+const rowBase =
+  'group relative flex w-full items-center rounded-lg text-[13.5px] transition-colors duration-150';
+
+function rowTone(active) {
+  return active
+    ? 'bg-white/[0.08] font-medium text-white'
+    : 'text-white/65 hover:bg-white/[0.04] hover:text-white';
+}
+
+function Tooltip({ label }) {
+  return (
+    <span className="pointer-events-none absolute left-full z-50 ml-3 hidden whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg ring-1 ring-slate-700 group-hover:block">
+      {label}
+    </span>
+  );
+}
+
+function LeafLink({ to, icon: Icon, label, active, collapsed, onNavigate }) {
   return (
     <Link
       to={to}
       onClick={onNavigate}
-      title={collapsed ? label : undefined}
-      className={cn(
-        'group relative flex items-center rounded-lg text-sm font-medium transition-colors duration-200',
-        collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5',
-        isActive
-          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-900/30'
-          : 'text-slate-400 hover:bg-slate-800/80 hover:text-white'
-      )}
+      aria-current={active ? 'page' : undefined}
+      className={cn(rowBase, rowTone(active), collapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-1.5')}
     >
-      <Icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-[18px] w-[18px]')} />
-      <AnimatePresence initial={false}>
-        {!collapsed && (
-          <motion.span
-            initial={{ opacity: 0, width: 0 }}
-            animate={{ opacity: 1, width: 'auto' }}
-            exit={{ opacity: 0, width: 0 }}
-            transition={sidebarTransition}
-            className="truncate overflow-hidden whitespace-nowrap"
-          >
-            {label}
-          </motion.span>
-        )}
-      </AnimatePresence>
-      {badge && !collapsed && (
-        <span className="ml-auto rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-semibold text-white">
-          {badge}
-        </span>
+      {Icon && (
+        <Icon
+          className={cn(
+            'h-[17px] w-[17px] shrink-0 transition-colors',
+            active ? 'text-amber-400' : 'text-white/40 group-hover:text-white/70'
+          )}
+        />
       )}
-      {collapsed && (
-        <span className="pointer-events-none absolute left-full z-50 ml-3 hidden whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg ring-1 ring-slate-700 group-hover:block">
-          {label}
-        </span>
-      )}
+      {!collapsed && <span className="truncate">{label}</span>}
+      {collapsed && <Tooltip label={label} />}
     </Link>
   );
 }
 
-function NavSection({ title, icon: Icon, section, items, collapsed, expandedSections, toggleSection, isActive, onNavigate }) {
-  const [flyoutOpen, setFlyoutOpen] = useState(false);
-  const isExpanded = expandedSections[section];
-  const hasActiveChild = items?.some((item) => isActive(item.url));
-
-  if (collapsed) {
-    return (
-      <div
-        className="relative"
-        onMouseEnter={() => setFlyoutOpen(true)}
-        onMouseLeave={() => setFlyoutOpen(false)}
-      >
-        <button
-          type="button"
-          title={title}
-          className={cn(
-            'flex w-full items-center justify-center rounded-lg p-2.5 transition-colors duration-200',
-            hasActiveChild
-              ? 'bg-blue-600/20 text-blue-400'
-              : 'text-slate-400 hover:bg-slate-800/80 hover:text-white'
-          )}
-        >
-          <Icon className="h-5 w-5" />
-        </button>
-
-        <AnimatePresence>
-          {flyoutOpen && (
-            <motion.div
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -8 }}
-              transition={submenuTransition}
-              className="absolute left-full top-0 z-50 ml-2 min-w-[220px] rounded-xl border border-slate-700/80 bg-slate-900 p-2 shadow-2xl shadow-black/40"
-            >
-              <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                {title}
-              </p>
-              <div className="space-y-0.5">
-                {items.map((subItem) => (
-                  <Link
-                    key={subItem.url}
-                    to={subItem.url}
-                    onClick={() => {
-                      setFlyoutOpen(false);
-                      onNavigate?.();
-                    }}
-                    className={cn(
-                      'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
-                      isActive(subItem.url)
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                    )}
-                  >
-                    <subItem.icon className="h-4 w-4 shrink-0" />
-                    <span className="truncate">{subItem.title}</span>
-                  </Link>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    );
-  }
+/** A collapsed rail can't nest, so groups become hover flyouts. */
+function GroupFlyout({ item, activeTo, onNavigate }) {
+  const [open, setOpen] = useState(false);
+  const Icon = item.icon;
+  const hasActive = item.children.some((c) => c.to === activeTo);
 
   return (
-    <div className="space-y-0.5">
+    <div className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
-        onClick={() => toggleSection(section)}
-        className={cn(
-          'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-200',
-          hasActiveChild
-            ? 'bg-slate-800/60 text-blue-400'
-            : 'text-slate-400 hover:bg-slate-800/80 hover:text-white'
-        )}
+        aria-label={item.label}
+        aria-expanded={open}
+        className={cn(rowBase, rowTone(hasActive), 'justify-center p-2.5')}
       >
-        <div className="flex min-w-0 items-center gap-3">
-          <Icon className="h-[18px] w-[18px] shrink-0" />
-          <span className="truncate">{title}</span>
-        </div>
+        <Icon
+          className={cn('h-[17px] w-[17px]', hasActive ? 'text-amber-400' : 'text-white/40')}
+        />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -6 }}
+            transition={revealTransition}
+            className="absolute left-full top-0 z-50 ml-2 min-w-[210px] rounded-xl border border-slate-800 bg-slate-900 p-1.5 shadow-2xl shadow-black/50"
+          >
+            <p className="px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/40">
+              {item.label}
+            </p>
+            {item.children.map((child) => (
+              <Link
+                key={child.to}
+                to={child.to}
+                onClick={() => {
+                  setOpen(false);
+                  onNavigate?.();
+                }}
+                className={cn(
+                  'flex items-center rounded-lg px-2.5 py-2 text-[13.5px] transition-colors',
+                  child.to === activeTo
+                    ? 'bg-white/[0.08] font-medium text-white'
+                    : 'text-white/65 hover:bg-white/[0.05] hover:text-white'
+                )}
+              >
+                {child.label}
+              </Link>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function GroupRow({ item, activeTo, open, onToggle, onNavigate }) {
+  const Icon = item.icon;
+  const hasActive = item.children.some((c) => c.to === activeTo);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className={cn(rowBase, rowTone(hasActive && !open), 'gap-3 px-3 py-1.5')}
+      >
+        <Icon
+          className={cn(
+            'h-[17px] w-[17px] shrink-0 transition-colors',
+            hasActive ? 'text-amber-400' : 'text-white/40 group-hover:text-white/70'
+          )}
+        />
+        <span className="truncate">{item.label}</span>
         <motion.span
-          animate={{ rotate: isExpanded ? 180 : 0 }}
-          transition={submenuTransition}
-          className="shrink-0"
+          animate={{ rotate: open ? 90 : 0 }}
+          transition={revealTransition}
+          className="ml-auto shrink-0 text-white/40"
         >
-          <ChevronDown className="h-4 w-4 text-slate-500" />
+          <ChevronRight className="h-3.5 w-3.5" />
         </motion.span>
       </button>
 
       <AnimatePresence initial={false}>
-        {isExpanded && (
+        {open && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={submenuTransition}
+            transition={revealTransition}
             className="overflow-hidden"
           >
-            <div className="ml-3 space-y-0.5 border-l border-slate-800 pl-3 pt-1">
-              {items.map((subItem) => (
-                <Link
-                  key={subItem.url}
-                  to={subItem.url}
-                  onClick={onNavigate}
-                  className={cn(
-                    'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors duration-200',
-                    isActive(subItem.url)
-                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-900/20'
-                      : 'text-slate-500 hover:bg-slate-800/80 hover:text-white'
-                  )}
-                >
-                  <subItem.icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{subItem.title}</span>
-                </Link>
-              ))}
+            <div className="my-0.5 ml-[26px] space-y-px border-l border-slate-800 pl-3">
+              {item.children.map((child) => {
+                const active = child.to === activeTo;
+                return (
+                  <Link
+                    key={child.to}
+                    to={child.to}
+                    onClick={onNavigate}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      'flex items-center rounded-md px-2.5 py-[5px] text-[13px] transition-colors',
+                      active
+                        ? 'bg-white/[0.07] font-medium text-white'
+                        : 'text-white/55 hover:bg-white/[0.04] hover:text-white'
+                    )}
+                  >
+                    {child.label}
+                  </Link>
+                );
+              })}
             </div>
           </motion.div>
         )}
@@ -217,184 +410,29 @@ function NavSection({ title, icon: Icon, section, items, collapsed, expandedSect
   );
 }
 
-const AppSidebar = () => {
+export default function AppSidebar() {
   const { collapsed, toggleCollapsed, isMobile, mobileOpen, closeMobile } = useSidebar();
-  const sidebarCollapsed = isMobile ? false : collapsed;
+  const { user } = useAuth();
+  const { pathname } = useLocation();
+
+  // The rail only exists on desktop; on mobile the drawer is always full width.
+  const isRail = isMobile ? false : collapsed;
   const handleNavigate = () => {
     if (isMobile) closeMobile();
   };
-  const [expandedSections, setExpandedSections] = useState({
-    billing: true,
-    import: false,
-    finance: false,
-    devices: false,
-    network: false,
-    security: false,
-    monitoring: false,
-    reports: false,
-  });
-  const location = useLocation();
-  const navigate = useNavigate();
-  const { user, logout } = useAuth();
 
-  const toggleSection = (section) => {
-    setExpandedSections((prev) => ({
-      ...prev,
-      [section]: !prev[section],
-    }));
-  };
+  const sections = useMemo(() => buildSections(Boolean(user?.is_admin)), [user?.is_admin]);
+  const activeTo = useMemo(() => findActive(sections, pathname), [sections, pathname]);
+  const [openGroups, setOpenGroups] = useState({});
 
-  const isActive = (url) => {
-    if (url === '/') return location.pathname === '/';
-    if (url === '/clients') {
-      return (
-        location.pathname === '/clients' ||
-        (location.pathname.startsWith('/clients/') && !location.pathname.startsWith('/clients/online'))
-      );
-    }
-    if (url === '/clients/online') {
-      return location.pathname.startsWith('/clients/online');
-    }
-    // Import Overview is the section root, so match it exactly — otherwise it
-    // stays lit alongside whichever sub-page is actually open.
-    if (url === '/import') {
-      return location.pathname === '/import';
-    }
-    // Network is a single link — active across all /network/* tabs.
-    if (url === '/network/isps') {
-      return location.pathname.startsWith('/network');
-    }
-    return location.pathname.startsWith(url);
-  };
-
-  const navigation = useMemo(
-    () => [
-      { type: 'link', title: 'Dashboard', url: '/', icon: Home },
-      { type: 'link', title: 'Clients', url: '/clients', icon: Users },
-      { type: 'link', title: 'Online Users', url: '/clients/online', icon: Activity },
-      { type: 'link', title: 'Packages', url: '/plans', icon: Package },
-      { type: 'link', title: 'FUP Monitor', url: '/fup', icon: Gauge },
-      {
-        type: 'section',
-        title: 'Billing',
-        icon: CreditCard,
-        section: 'billing',
-        items: [
-          { title: 'Payments', url: '/billing/payments', icon: CreditCard },
-          { title: 'Invoices', url: '/billing/invoices', icon: Receipt },
-          { title: 'Transactions', url: '/billing/transactions', icon: History },
-          { title: 'Vouchers', url: '/billing/vouchers', icon: Gift },
-          { title: 'Subscriptions', url: '/billing/subscriptions', icon: RefreshCw },
-          { title: 'Reports', url: '/billing/reports', icon: BarChart3 },
-        ],
-      },
-      ...(user?.is_admin
-        ? [
-            {
-              // Admin-only: a router scan reads every subscriber's cleartext
-              // password, which matches the AdminRoute guard on these pages.
-              type: 'section',
-              title: 'Import',
-              icon: ArrowDownToLine,
-              section: 'import',
-              items: [
-                { title: 'Overview', url: '/import', icon: ArrowDownToLine },
-                { title: 'From a router', url: '/import/router', icon: Router },
-                { title: 'From a file', url: '/import/file', icon: FileSpreadsheet },
-                { title: 'Migration & cutover', url: '/import/cutover', icon: ArrowLeftRight },
-                { title: 'Import history', url: '/import/runs', icon: History },
-              ],
-            },
-            {
-              type: 'section',
-              title: 'Finance',
-              icon: DollarSign,
-              section: 'finance',
-              items: [
-                { title: 'Leads', url: '/finance/leads', icon: TrendingUp },
-                { title: 'Expenses', url: '/finance/expenses', icon: DollarSign },
-              ],
-            },
-            { type: 'link', title: 'Communication', url: '/communication', icon: MessageSquare },
-            {
-              // Was a bare link to /devices/mikrotik, which left Status, Backup
-              // and Firmware routed but unreachable from the nav. Customer CPE
-              // (TR-069) joins them here.
-              type: 'section',
-              title: 'Devices',
-              icon: Server,
-              section: 'devices',
-              items: [
-                { title: 'Mikrotik', url: '/devices/mikrotik', icon: Router },
-                { title: 'Customer CPE', url: '/devices/cpe', icon: HardDrive },
-                { title: 'Equipment', url: '/devices/equipment', icon: Wrench },
-                { title: 'Status', url: '/devices/status', icon: Activity },
-                { title: 'Backup', url: '/devices/backup', icon: ArrowDownToLine },
-                { title: 'Firmware', url: '/devices/firmware', icon: Upload },
-              ],
-            },
-            {
-              type: 'section',
-              title: 'Network',
-              icon: Network,
-              section: 'network',
-              items: [
-                { title: 'ISPs', url: '/network/isps', icon: Globe },
-                { title: 'VPN', url: '/network/vpn', icon: Lock },
-                { title: 'WireGuard', url: '/network/wireguard', icon: Network },
-                { title: 'LDAP', url: '/network/ldap', icon: Database },
-                { title: 'EAP', url: '/network/eap', icon: Key },
-              ],
-            },
-            {
-              type: 'section',
-              title: 'Security',
-              icon: ShieldCheck,
-              section: 'security',
-              items: [
-                { title: 'RADIUS Users', url: '/security/radius-users', icon: Users },
-                { title: 'RADIUS Groups', url: '/security/radius-groups', icon: ShieldCheck },
-                { title: 'Accounting', url: '/security/radius-accounting', icon: Activity },
-                { title: 'Access Control', url: '/security/access-control', icon: Key },
-              ],
-            },
-            {
-              type: 'section',
-              title: 'Monitoring',
-              icon: Activity,
-              section: 'monitoring',
-              items: [
-                { title: 'SNMP', url: '/monitoring/snmp', icon: Monitor },
-                { title: 'Device Stats', url: '/monitoring/device-stats', icon: BarChart3 },
-                { title: 'Traffic', url: '/monitoring/traffic', icon: TrendingUp },
-                { title: 'System Logs', url: '/monitoring/logs', icon: FileText },
-                { title: 'Alerts', url: '/monitoring/alerts', icon: Bell },
-              ],
-            },
-            {
-              type: 'section',
-              title: 'Reports',
-              icon: BarChart3,
-              section: 'reports',
-              items: [
-                { title: 'Billing', url: '/reports/billing', icon: Receipt },
-                { title: 'Network', url: '/reports/network', icon: Network },
-                { title: 'Devices', url: '/reports/devices', icon: Server },
-                { title: 'Clients', url: '/reports/customers', icon: Users },
-                { title: 'Analytics', url: '/reports/analytics', icon: TrendingUp },
-              ],
-            },
-          ]
-        : []),
-      { type: 'link', title: 'Support', url: '/tickets', icon: HelpCircle },
-    ],
-    [user?.is_admin]
-  );
-
-  const displayName =
-    user?.first_name && user?.last_name
-      ? `${user.first_name} ${user.last_name}`
-      : user?.email?.split('@')[0] || 'User';
+  // Open the group holding the current page, but never close one the operator
+  // opened themselves — navigating shouldn't undo their choices.
+  useEffect(() => {
+    const owner = sections
+      .flatMap((s) => s.items)
+      .find((i) => i.children?.some((c) => c.to === activeTo));
+    if (owner) setOpenGroups((prev) => (prev[owner.id] ? prev : { ...prev, [owner.id]: true }));
+  }, [sections, activeTo]);
 
   return (
     <>
@@ -406,171 +444,145 @@ const AppSidebar = () => {
           onClick={closeMobile}
         />
       )}
-    <motion.aside
-      initial={false}
-      animate={
-        isMobile
-          ? undefined
-          : { width: collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED }
-      }
-      style={isMobile ? { width: SIDEBAR_WIDTH_EXPANDED } : undefined}
-      transition={sidebarTransition}
-      className={cn(
-        'fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-slate-800/80 bg-slate-950 text-white shadow-xl',
-        isMobile && 'transition-transform duration-300 ease-out',
-        isMobile && (mobileOpen ? 'translate-x-0' : '-translate-x-full'),
-        'lg:translate-x-0'
-      )}
-    >
-      {/* Brand header */}
-      <div className={cn('flex shrink-0 items-center border-b border-slate-800/80', sidebarCollapsed ? 'justify-center p-3' : 'gap-3 p-4')}>
-        {sidebarCollapsed ? (
-          <LumenLogo size="sm" />
-        ) : (
-          <LumenLogo size="md" showText theme="dark" subtitle={BRAND.tagline} className="min-w-0 flex-1" />
-        )}
-        {!sidebarCollapsed && (
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            className="hidden rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-white lg:inline-flex"
-            aria-label="Collapse sidebar"
-          >
-            <PanelLeftClose className="h-4 w-4" />
-          </button>
-        )}
-        {isMobile && (
-          <button
-            type="button"
-            onClick={closeMobile}
-            className="ml-auto rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white lg:hidden"
-            aria-label="Close menu"
-          >
-            <PanelLeftClose className="h-5 w-5" />
-          </button>
-        )}
-      </div>
 
-      {/* User strip */}
-      <div className={cn('shrink-0 border-b border-slate-800/80', sidebarCollapsed ? 'p-2' : 'p-3')}>
-        <div className={cn('flex items-center', sidebarCollapsed ? 'justify-center' : 'gap-3')}>
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-violet-600 ring-2 ring-slate-800">
-            <User className="h-4 w-4 text-white" />
-          </div>
-          <AnimatePresence initial={false}>
-            {!sidebarCollapsed && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={sidebarTransition}
-                className="min-w-0 flex-1"
-              >
-                <p className="truncate text-sm font-medium text-white">{displayName}</p>
-                <p className="truncate text-xs text-slate-500">{user?.email}</p>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-400">
-                  {user?.is_admin ? 'Administrator' : 'Support'}
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
-
-      {/* Navigation */}
-      <nav className="sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-3">
-        <div className={cn('space-y-1', sidebarCollapsed ? 'px-2' : 'px-3')}>
-          {!sidebarCollapsed && (
-            <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-600">
-              Main Menu
-            </p>
-          )}
-          {navigation.map((item) =>
-            item.type === 'link' ? (
-              <NavItem
-                key={item.url}
-                to={item.url}
-                icon={item.icon}
-                label={item.title}
-                collapsed={sidebarCollapsed}
-                isActive={isActive(item.url)}
-                badge={item.badge}
-                onNavigate={handleNavigate}
-              />
-            ) : (
-              <NavSection
-                key={item.section}
-                title={item.title}
-                icon={item.icon}
-                section={item.section}
-                items={item.items}
-                collapsed={sidebarCollapsed}
-                expandedSections={expandedSections}
-                toggleSection={toggleSection}
-                isActive={isActive}
-                onNavigate={handleNavigate}
-              />
-            )
-          )}
-        </div>
-      </nav>
-
-      {/* Footer actions */}
-      <div className={cn('shrink-0 space-y-1 border-t border-slate-800/80', sidebarCollapsed ? 'p-2' : 'p-3')}>
-        {sidebarCollapsed && !isMobile && (
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            title="Expand sidebar"
-            className="flex w-full items-center justify-center rounded-lg p-2.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
-            aria-label="Expand sidebar"
-          >
-            <PanelLeftOpen className="h-5 w-5" />
-          </button>
+      <motion.aside
+        initial={false}
+        animate={
+          isMobile ? undefined : { width: collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED }
+        }
+        style={isMobile ? { width: SIDEBAR_WIDTH_EXPANDED } : undefined}
+        transition={shellTransition}
+        className={cn(
+          'fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-slate-800/70 bg-slate-950',
+          isMobile && 'transition-transform duration-300 ease-out',
+          isMobile && (mobileOpen ? 'translate-x-0' : '-translate-x-full'),
+          'lg:translate-x-0'
         )}
-        <NavItem
-          to="/settings"
-          icon={Settings}
-          label="Settings"
-          collapsed={sidebarCollapsed}
-          isActive={isActive('/settings')}
-          onNavigate={handleNavigate}
-        />
-        <button
-          type="button"
-          onClick={async () => {
-            await logout();
-            navigate('/login');
-          }}
-          title={sidebarCollapsed ? 'Logout' : undefined}
+      >
+        {/* Brand */}
+        <div
           className={cn(
-            'group relative flex w-full items-center rounded-lg text-sm font-medium text-slate-400 transition-colors duration-200 hover:bg-rose-950/40 hover:text-rose-400',
-            sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5'
+            'flex h-14 shrink-0 items-center',
+            isRail ? 'justify-center px-2' : 'gap-2 pl-4 pr-2.5'
           )}
         >
-          <LogOut className={cn('shrink-0', sidebarCollapsed ? 'h-5 w-5' : 'h-[18px] w-[18px]')} />
-          <AnimatePresence initial={false}>
-            {!sidebarCollapsed && (
-              <motion.span
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={sidebarTransition}
-              >
-                Logout
-              </motion.span>
-            )}
-          </AnimatePresence>
-          {sidebarCollapsed && !isMobile && (
-            <span className="pointer-events-none absolute left-full z-50 ml-3 hidden whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg ring-1 ring-slate-700 group-hover:block">
-              Logout
-            </span>
+          {isRail ? (
+            <LumenLogo size="sm" />
+          ) : (
+            <LumenLogo size="sm" showText theme="dark" className="min-w-0 flex-1" />
           )}
-        </button>
-      </div>
-    </motion.aside>
+          {!isRail && !isMobile && (
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Collapse sidebar"
+              className="hidden rounded-md p-1.5 text-white/45 transition-colors hover:bg-white/[0.06] hover:text-white/70 lg:inline-flex"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          )}
+          {isMobile && (
+            <button
+              type="button"
+              onClick={closeMobile}
+              aria-label="Close menu"
+              className="ml-auto rounded-md p-1.5 text-white/65 hover:bg-white/[0.06] hover:text-white"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+
+        {/* Navigation */}
+        <nav
+          aria-label="Main"
+          className={cn(
+            'sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-3',
+            isRail ? 'px-2' : 'px-2.5'
+          )}
+        >
+          {sections.map((section, index) => (
+            <div key={section.title || 'primary'} className={index === 0 ? '' : 'mt-4'}>
+              {section.title && !isRail && (
+                <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-[0.09em] text-white/50">
+                  {section.title}
+                </p>
+              )}
+              {section.title && isRail && index > 0 && (
+                <div className="mx-auto mb-2 h-px w-6 bg-slate-800" aria-hidden="true" />
+              )}
+              <div className="space-y-px">
+                {section.items.map((item) => {
+                  if (item.children) {
+                    return isRail ? (
+                      <GroupFlyout
+                        key={item.id}
+                        item={item}
+                        activeTo={activeTo}
+                        onNavigate={handleNavigate}
+                      />
+                    ) : (
+                      <GroupRow
+                        key={item.id}
+                        item={item}
+                        activeTo={activeTo}
+                        open={Boolean(openGroups[item.id])}
+                        onToggle={() =>
+                          setOpenGroups((prev) => ({ ...prev, [item.id]: !prev[item.id] }))
+                        }
+                        onNavigate={handleNavigate}
+                      />
+                    );
+                  }
+                  return (
+                    <LeafLink
+                      key={item.to}
+                      to={item.to}
+                      icon={item.icon}
+                      label={item.label}
+                      active={item.to === activeTo}
+                      collapsed={isRail}
+                      onNavigate={handleNavigate}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        {/* Pinned utilities. Settings, account and sign-out live in the header's
+            profile menu — this used to duplicate them. */}
+        <div
+          className={cn(
+            'shrink-0 space-y-px border-t border-slate-800/70 py-2',
+            isRail ? 'px-2' : 'px-2.5'
+          )}
+        >
+          {isRail && !isMobile && (
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Expand sidebar"
+              className={cn(rowBase, rowTone(false), 'justify-center p-2.5')}
+            >
+              <PanelLeftOpen className="h-[17px] w-[17px] text-white/40" />
+              <Tooltip label="Expand sidebar" />
+            </button>
+          )}
+          {FOOTER_LINKS.map((link) => (
+            <LeafLink
+              key={link.to}
+              to={link.to}
+              icon={link.icon}
+              label={link.label}
+              active={link.to === activeTo}
+              collapsed={isRail}
+              onNavigate={handleNavigate}
+            />
+          ))}
+        </div>
+      </motion.aside>
     </>
   );
-};
-
-export default AppSidebar;
+}
