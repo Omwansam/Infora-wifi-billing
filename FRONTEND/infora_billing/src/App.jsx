@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConfirmProvider } from './contexts/ConfirmContext';
+import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import { AdminRoute, AdminOrSupportRoute } from './components/auth/RoleBasedRoute';
 import MainLayout from './components/layout/MainLayout';
@@ -36,8 +37,9 @@ import FupMonitorPage from './components/monitoring/FupMonitorPage';
 import MikrotikPage from './components/devices/MikrotikPage';
 import DeviceDetailPage from './components/devices/DeviceDetailPage';
 import EquipmentPage from './components/devices/EquipmentPage';
-import CpePage from './components/devices/CpePage';
-import CpeDetailPage from './components/devices/CpeDetailPage';
+import PlatformSubscriptionPage from './components/billing/PlatformSubscriptionPage';
+import Tr069FleetPage from './components/tr069/Tr069FleetPage';
+import Tr069DevicePage from './components/tr069/Tr069DevicePage';
 import DeviceStatusPage from './components/devices/DeviceStatusPage';
 import DeviceBackupPage from './components/devices/DeviceBackupPage';
 import DeviceFirmwarePage from './components/devices/DeviceFirmwarePage';
@@ -91,6 +93,12 @@ function LegacyClientRedirect({ suffix = '' }) {
   const { customerId } = React.useParams();
   const target = customerId ? `/clients/${customerId}${suffix}` : '/clients';
   return <Navigate to={target} replace />;
+}
+
+// The CPE fleet moved out of Devices into its own ACS console at /tr069.
+function CpeRedirect() {
+  const { id } = React.useParams();
+  return <Navigate to={id ? `/tr069/${id}` : '/tr069'} replace />;
 }
 
 // Demo build: signed-out visitors see the fictional ISP landing page at "/";
@@ -189,12 +197,25 @@ function AppRoutes() {
       <Route path="/devices/mikrotik" element={<AdminRoute><MainLayout><MikrotikPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/mikrotik/:id" element={<AdminRoute><MainLayout><DeviceDetailPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/equipment" element={<AdminRoute><MainLayout><EquipmentPage /></MainLayout></AdminRoute>} />
-      <Route path="/devices/cpe" element={<AdminRoute><MainLayout><CpePage /></MainLayout></AdminRoute>} />
-      <Route path="/devices/cpe/:id" element={<AdminRoute><MainLayout><CpeDetailPage /></MainLayout></AdminRoute>} />
+      {/* TR-069 CPE used to live under Devices; keep the old paths pointing at its own area. */}
+      <Route path="/devices/cpe" element={<Navigate to="/tr069" replace />} />
+      <Route path="/devices/cpe/:id" element={<CpeRedirect />} />
       <Route path="/devices/status" element={<AdminRoute><MainLayout><DeviceStatusPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/backup" element={<AdminRoute><MainLayout><DeviceBackupPage /></MainLayout></AdminRoute>} />
       <Route path="/devices/firmware" element={<AdminRoute><MainLayout><DeviceFirmwarePage /></MainLayout></AdminRoute>} />
       
+      {/* Platform subscription — the tenant's own bill for using this system.
+          Reachable while locked out; SubscriptionGate allowlists it. */}
+      <Route path="/subscription" element={<ProtectedRoute><MainLayout><PlatformSubscriptionPage /></MainLayout></ProtectedRoute>} />
+
+      {/* TR-069 ACS Routes.
+
+          The device-facing ACS endpoint is also called /tr069, but it is served
+          by Flask on port 7547 and nginx only proxies /api/ — so this browser
+          route never shadows it. Don't add a /tr069 proxy_pass to the web vhost. */}
+      <Route path="/tr069" element={<AdminRoute><MainLayout><Tr069FleetPage /></MainLayout></AdminRoute>} />
+      <Route path="/tr069/:id" element={<AdminRoute><MainLayout><Tr069DevicePage /></MainLayout></AdminRoute>} />
+
       {/* Network Management Routes */}
       <Route path="/network" element={<Navigate to="/network/isps" replace />} />
       <Route path="/network/isps" element={<AdminRoute><MainLayout><IspsPage /></MainLayout></AdminRoute>} />
@@ -247,6 +268,7 @@ function App() {
     <ThemeProvider>
       <AuthProvider>
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <SubscriptionProvider>
         <ConfirmProvider>
         <AppRoutes />
         <Toaster
@@ -274,6 +296,7 @@ function App() {
           }}
         />
         </ConfirmProvider>
+        </SubscriptionProvider>
       </Router>
       </AuthProvider>
     </ThemeProvider>

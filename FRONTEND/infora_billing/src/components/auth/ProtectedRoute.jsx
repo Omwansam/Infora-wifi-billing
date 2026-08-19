@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import SubscriptionGate from './SubscriptionGate';
 
 export default function ProtectedRoute({ children, requireAdmin = false }) {
   const { user, loading, isAdmin } = useAuth();
@@ -25,5 +26,5 @@ export default function ProtectedRoute({ children, requireAdmin = false }) {
     return <Navigate to="/" replace />;
   }
 
-  return children;
+  return <SubscriptionGate>{children}</SubscriptionGate>;
 }

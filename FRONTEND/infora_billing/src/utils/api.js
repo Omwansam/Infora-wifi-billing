@@ -42,6 +42,7 @@ export const apiCall = async (endpoint, options = {}) => {
     }
 
     if (!response.ok) {
+      handleSubscriptionLock(response.status, data);
       throw new Error(data?.message || data?.error || `HTTP error! status: ${response.status}`);
     }
 
@@ -77,6 +78,22 @@ const handleAuthRejection = (status) => {
   if (!window.location.pathname.startsWith('/login')) {
     window.location.assign('/login');
   }
+};
+
+/** Fired when the API reports the tenant's platform subscription has lapsed. */
+export const SUBSCRIPTION_LOCK_EVENT = 'lumen:subscription-locked';
+
+/**
+ * The backend answers 402 on every console route once the tenant's own bill is
+ * unpaid. Broadcast it so SubscriptionProvider can flip the UI to its locked
+ * state — the router then keeps them on the subscription page. Announced rather
+ * than redirected here, so an in-flight page can still finish rendering.
+ */
+const handleSubscriptionLock = (status, data) => {
+  if (status !== 402 || data?.code !== 'subscription_expired') return;
+  window.dispatchEvent(new CustomEvent(SUBSCRIPTION_LOCK_EVENT, {
+    detail: { subscription: data?.subscription || null },
+  }));
 };
 
 /**

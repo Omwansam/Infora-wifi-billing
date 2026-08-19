@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSubscription } from '../../contexts/SubscriptionContext';
 import {
   useSidebar,
   SIDEBAR_WIDTH_EXPANDED,
@@ -11,6 +12,7 @@ import { cn } from '../../lib/utils';
 import LumenLogo from '../brand/LumenLogo';
 import {
   Activity,
+  AlertCircle,
   ArrowDownToLine,
   BarChart3,
   ChevronLeft,
@@ -21,6 +23,7 @@ import {
   HelpCircle,
   LayoutDashboard,
   LifeBuoy,
+  Lock,
   Megaphone,
   MessageSquare,
   Network,
@@ -93,7 +96,7 @@ function buildSections(isAdmin) {
               { label: 'Firmware', to: '/devices/firmware' },
             ],
           },
-          { label: 'TR-069 CPE', to: '/devices/cpe', icon: Cpu },
+          { label: 'TR-069 CPE', to: '/tr069', icon: Cpu },
           {
             id: 'radius',
             label: 'RADIUS',
@@ -267,6 +270,32 @@ function Tooltip({ label }) {
   );
 }
 
+/**
+ * What every nav row becomes while the platform subscription is unpaid.
+ *
+ * Rendered as a disabled button rather than a Link so it cannot be clicked,
+ * middle-clicked, dragged out as a URL, or reached by keyboard — a greyed-out
+ * anchor would still navigate.
+ */
+function LockedRow({ icon: Icon, label, collapsed }) {
+  return (
+    <div
+      aria-disabled="true"
+      title="Renew your subscription to use this"
+      className={cn(
+        rowBase,
+        'cursor-not-allowed text-white/25 select-none',
+        collapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-1.5'
+      )}
+    >
+      {Icon && <Icon className="h-[17px] w-[17px] shrink-0 text-white/20" />}
+      {!collapsed && <span className="truncate">{label}</span>}
+      {!collapsed && <Lock className="ml-auto h-3 w-3 shrink-0 text-white/20" />}
+      {collapsed && <Tooltip label={`${label} — locked`} />}
+    </div>
+  );
+}
+
 function LeafLink({ to, icon: Icon, label, active, collapsed, onNavigate }) {
   return (
     <Link
@@ -410,9 +439,68 @@ function GroupRow({ item, activeTo, open, onToggle, onNavigate }) {
   );
 }
 
+/** Sidebar paywall card — the one action a locked tenant still has. */
+function SubscriptionNotice({ collapsed, onNavigate }) {
+  const { subscription, locked, expired, daysLeft, currency, amountDue } = useSubscription();
+  const { pathname } = useLocation();
+
+  // Show it once the clock actually matters: locked out, already expired, or
+  // inside the last week. Silent the rest of the time.
+  const warn = !locked && !expired && typeof daysLeft === 'number' && daysLeft >= 0 && daysLeft <= 7;
+  if (!subscription || (!locked && !expired && !warn)) return null;
+
+  const onSubscriptionPage = pathname.startsWith('/subscription');
+
+  const title = locked || expired ? 'Subscription expired' : 'Subscription ending';
+  const detail = locked || expired
+    ? `${expiredAgo(subscription.expires_at)} Renew to restore access.`
+    : `${daysLeft === 0 ? 'Expires today' : `${daysLeft} day${daysLeft === 1 ? '' : 's'} left`}. Renew to stay online.`;
+
+  if (collapsed) {
+    return (
+      <Link
+        to="/subscription"
+        onClick={onNavigate}
+        title={`${title} — ${detail}`}
+        className={cn(rowBase, 'justify-center p-2.5 text-amber-300 hover:bg-amber-500/10')}
+      >
+        <AlertCircle className="h-[17px] w-[17px]" />
+        <Tooltip label={title} />
+      </Link>
+    );
+  }
+
+  return (
+    <div className="mx-1 mb-2 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3">
+      <div className="flex items-center gap-2">
+        <AlertCircle className="h-4 w-4 shrink-0 text-amber-400" />
+        <p className="text-[13px] font-semibold text-amber-100">{title}</p>
+      </div>
+      <p className="mt-1.5 text-[12px] leading-snug text-amber-200/70">{detail}</p>
+      {!onSubscriptionPage && (
+        <Link
+          to="/subscription"
+          onClick={onNavigate}
+          className="mt-3 flex items-center justify-center rounded-lg bg-orange-500 px-3 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-orange-400"
+        >
+          {amountDue > 0 ? `Pay ${currency} ${Number(amountDue).toLocaleString()}` : 'Renew now'}
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function expiredAgo(iso) {
+  if (!iso) return 'Expired.';
+  const days = Math.round((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return 'Expired today.';
+  return `Expired ${days} day${days === 1 ? '' : 's'} ago.`;
+}
+
 export default function AppSidebar() {
   const { collapsed, toggleCollapsed, isMobile, mobileOpen, closeMobile } = useSidebar();
   const { user } = useAuth();
+  const { locked } = useSubscription();
   const { pathname } = useLocation();
 
   // The rail only exists on desktop; on mobile the drawer is always full width.
@@ -513,6 +601,19 @@ export default function AppSidebar() {
               )}
               <div className="space-y-px">
                 {section.items.map((item) => {
+                  // An unpaid tenant keeps the map of the product but none of
+                  // the doors — groups collapse to a single locked row rather
+                  // than expanding into children that also cannot be opened.
+                  if (locked) {
+                    return (
+                      <LockedRow
+                        key={item.id || item.to}
+                        icon={item.icon}
+                        label={item.label}
+                        collapsed={isRail}
+                      />
+                    );
+                  }
                   if (item.children) {
                     return isRail ? (
                       <GroupFlyout
@@ -559,6 +660,7 @@ export default function AppSidebar() {
             isRail ? 'px-2' : 'px-2.5'
           )}
         >
+          <SubscriptionNotice collapsed={isRail} onNavigate={handleNavigate} />
           {isRail && !isMobile && (
             <button
               type="button"

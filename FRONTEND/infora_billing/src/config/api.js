@@ -129,6 +129,12 @@ export const API_ENDPOINTS = {
   SETTINGS_NOTIFICATIONS: `${API_BASE_URL}/api/settings/notifications`,
   SETTINGS_PORTAL: `${API_BASE_URL}/api/settings/portal`,
   SETTINGS_ANNOUNCEMENTS: `${API_BASE_URL}/api/settings/announcements`,
+  // Platform subscription — what this tenant pays to use the system itself.
+  // Distinct from SETTINGS_SUBSCRIPTION above, which is only the plan tier.
+  PLATFORM_SUBSCRIPTION: `${API_BASE_URL}/api/platform/subscription`,
+  platformInvoicePay: (id) => `${API_BASE_URL}/api/platform/subscription/invoices/${id}/pay`,
+  platformInvoiceStatus: (id) => `${API_BASE_URL}/api/platform/subscription/invoices/${id}/status`,
+  platformInvoicePdf: (id) => `${API_BASE_URL}/api/platform/subscription/invoices/${id}/pdf`,
   SETTINGS_SUBSCRIPTION: `${API_BASE_URL}/api/settings/subscription`,
   SETTINGS_SUBSCRIPTION_PLANS: `${API_BASE_URL}/api/settings/plans`,
   SETTINGS_LOGS: `${API_BASE_URL}/api/settings/logs`,

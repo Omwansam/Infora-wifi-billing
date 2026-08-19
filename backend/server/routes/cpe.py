@@ -206,6 +206,9 @@ def cpe_stats():
         'pending': sum(1 for d in devices if d.status == 'pending'),
         'online': sum(1 for d in devices if _is_online(d)),
         'optical_degraded': len(degraded),
+        # The console shows the endpoint operators must point a CPE at. Blank
+        # when TR069_ACS_URL is unset, so the UI can say so rather than invent one.
+        'acs_url': current_app.config.get('TR069_ACS_URL') or None,
     }), 200
 
 

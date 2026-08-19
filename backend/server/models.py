@@ -1926,6 +1926,14 @@ class ISP(db.Model):
     logo_url = db.Column(db.String(500), nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     subscription_plan = db.Column(db.String(50), default='basic')  # basic, pro, enterprise
+    # --- Platform subscription (what this tenant pays *us*, not what their
+    # subscribers pay them). Access to the operator console lapses at
+    # subscription_expires_at + the configured grace; see
+    # services/platform_subscription.py.
+    subscription_expires_at = db.Column(db.DateTime, nullable=True)
+    subscription_is_trial = db.Column(db.Boolean, default=True, nullable=True)
+    # Overrides the plan's list price when a tenant is on a negotiated rate.
+    subscription_amount = db.Column(db.Numeric(12, 2), nullable=True)
     max_devices = db.Column(db.Integer, default=10)
     max_customers = db.Column(db.Integer, default=100)
     api_key = db.Column(db.String(100), unique=True, nullable=False)
@@ -2434,3 +2442,45 @@ class CpeFirmware(db.Model):
 
     def __repr__(self):
         return f'<CpeFirmware {self.name} {self.version}>'
+
+
+class PlatformInvoice(db.Model):
+    """A bill the platform issues to a tenant ISP for using this system.
+
+    Deliberately separate from ``Invoice``, which is what an ISP bills *its*
+    subscribers. The two never mix: this one is denominated in the platform's
+    terms, is never visible to end customers, and is the only thing that can
+    lift a tenant's console lockout.
+    """
+    __tablename__ = 'platform_invoices'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+
+    # Human reference, also the M-Pesa account number: INV-<slug>-<YYYYMMDD>.
+    number = db.Column(db.String(60), unique=True, nullable=False, index=True)
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    currency = db.Column(db.String(10), default='KES')
+    status = db.Column(db.String(20), default='pending', index=True)  # pending|paid|void
+
+    period_start = db.Column(db.DateTime, nullable=True)
+    period_end = db.Column(db.DateTime, nullable=True)
+    issued_at = db.Column(db.DateTime, default=datetime.utcnow)
+    due_at = db.Column(db.DateTime, nullable=True)
+    paid_at = db.Column(db.DateTime, nullable=True)
+
+    payment_method = db.Column(db.String(30), nullable=True)
+    payment_reference = db.Column(db.String(80), nullable=True)  # M-Pesa receipt
+    payer_phone = db.Column(db.String(30), nullable=True)
+    # Set while an STK push is in flight; the Safaricom callback finds the
+    # invoice by this, exactly as subscriber payments are matched.
+    checkout_request_id = db.Column(db.String(80), nullable=True, index=True)
+    merchant_request_id = db.Column(db.String(80), nullable=True)
+
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    isp = db.relationship('ISP')
+
+    def __repr__(self):
+        return f'<PlatformInvoice {self.number} {self.status}>'

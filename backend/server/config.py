@@ -83,6 +83,17 @@ class Config:
     DEVICE_RADIUS_EVIDENCE_SECONDS = int(os.getenv('DEVICE_RADIUS_EVIDENCE_SECONDS', '900'))
     DEVICE_PROVISION_EVIDENCE_SECONDS = int(os.getenv('DEVICE_PROVISION_EVIDENCE_SECONDS', '600'))
 
+    # --- Platform subscription (what a tenant ISP pays us) -----------------
+    # The console locks when subscription_expires_at + grace passes. Existing
+    # tenants have no expiry set and are therefore never locked until one is.
+    PLATFORM_VENDOR_NAME = os.getenv('PLATFORM_VENDOR_NAME', 'Lumen')
+    PLATFORM_TRIAL_DAYS = int(os.getenv('PLATFORM_TRIAL_DAYS', '14'))
+    PLATFORM_BILLING_PERIOD_DAYS = int(os.getenv('PLATFORM_BILLING_PERIOD_DAYS', '30'))
+    # Days after expiry before the console actually closes. 0 = lock on expiry.
+    PLATFORM_GRACE_DAYS = int(os.getenv('PLATFORM_GRACE_DAYS', '0'))
+    # How early the next invoice is raised, so a tenant can pay before lockout.
+    PLATFORM_ISSUE_LEAD_DAYS = int(os.getenv('PLATFORM_ISSUE_LEAD_DAYS', '7'))
+
     # --- TR-069 / CWMP ACS ------------------------------------------------
     # URL the CPE is configured to call home to. Must be reachable from the
     # subscriber network and, in production, served on its own vhost/port

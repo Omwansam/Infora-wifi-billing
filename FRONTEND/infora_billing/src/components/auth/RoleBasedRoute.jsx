@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import SubscriptionGate from './SubscriptionGate';
 
 export default function RoleBasedRoute({ 
   children, 
@@ -31,7 +32,7 @@ export default function RoleBasedRoute({
     return <Navigate to={fallbackRoute} replace />;
   }
 
-  return children;
+  return <SubscriptionGate>{children}</SubscriptionGate>;
 }
 
 // Convenience components for specific roles

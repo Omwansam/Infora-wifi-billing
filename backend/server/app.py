@@ -37,6 +37,7 @@ from routes.imports import imports_bp
 from routes.onboarding import onboarding_bp
 from routes.tr069 import tr069_bp
 from routes.cpe import cpe_bp
+from routes.platform import platform_bp
 from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
@@ -112,6 +113,7 @@ app.register_blueprint(onboarding_bp)
 # Device-facing CWMP endpoint (no JWT — CPE authenticate with HTTP Basic).
 app.register_blueprint(tr069_bp)
 app.register_blueprint(cpe_bp)
+app.register_blueprint(platform_bp)
 
 
 def ensure_schema_upgrades():
@@ -147,6 +149,11 @@ def ensure_schema_upgrades():
             'timezone': 'VARCHAR(64)',
             'referral_source': 'VARCHAR(60)',
             'onboarded_at': 'TIMESTAMP',
+            # Platform subscription: what this tenant owes us, and when the
+            # console locks if they do not pay it.
+            'subscription_expires_at': 'TIMESTAMP',
+            'subscription_is_trial': 'BOOLEAN DEFAULT TRUE',
+            'subscription_amount': 'NUMERIC(12, 2)',
         },
         'users': {
             'two_factor_enabled': 'BOOLEAN DEFAULT FALSE NOT NULL',
@@ -207,11 +214,11 @@ def ensure_schema_upgrades():
         # boot. checkfirst=True makes this a no-op once they exist.
         from models import (
             CpeDevice, CpeFirmware, CpeSession, CpeTask, ImportCandidate, ImportRun,
-            OnboardingSignup,
+            OnboardingSignup, PlatformInvoice,
         )
         for model in (ImportRun, ImportCandidate,
                       CpeDevice, CpeTask, CpeSession, CpeFirmware,
-                      OnboardingSignup):
+                      OnboardingSignup, PlatformInvoice):
             model.__table__.create(bind=db.engine, checkfirst=True)
     except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
         app.logger.warning('Schema upgrade check skipped: %s', exc)
@@ -336,6 +343,75 @@ def handle_api_preflight():
     """Return 200 for CORS preflight on all API routes."""
     if request.method == 'OPTIONS' and request.path.startswith('/api/'):
         return '', 200
+
+
+# Console routes a tenant keeps even while locked out. Everything here is
+# reachable with an expired subscription, so add to it deliberately:
+#   - auth, or they could not sign in to see the paywall at all
+#   - /api/platform, which *is* the paywall (state, invoices, payment)
+#   - support/health/test, so a locked tenant can still ask for help
+_PAYWALL_EXEMPT_PREFIXES = (
+    '/api/auth',
+    '/api/platform',
+    '/api/support',
+    '/api/health',
+    '/api/test',
+    '/api/onboarding',
+)
+
+
+@app.before_request
+def enforce_platform_subscription():
+    """Return 402 on the operator API when the tenant's own bill is unpaid.
+
+    Only the *console* is gated. Unauthenticated traffic — RADIUS, the captive
+    portal, provisioning, the TR-069 ACS, the M-Pesa callback — passes straight
+    through, because an ISP being late on their platform bill must never knock
+    their paying subscribers offline. The lockout is a business lever, not an
+    outage.
+
+    Paired with the frontend gate, which redirects to the subscription page;
+    this half is what makes it more than a cosmetic block.
+    """
+    if request.method == 'OPTIONS' or not request.path.startswith('/api/'):
+        return None
+    if request.path.startswith(_PAYWALL_EXEMPT_PREFIXES):
+        return None
+
+    from flask_jwt_extended import verify_jwt_in_request
+
+    try:
+        # optional=True: no token means this is not a console request, and the
+        # route's own auth (or lack of it) decides. We never turn anonymous
+        # traffic away here.
+        verified = verify_jwt_in_request(optional=True)
+    except Exception:
+        return None
+    if not verified:
+        return None
+
+    try:
+        from auth_utils import get_current_user
+        from models import ISP
+        from services import platform_subscription as sub
+
+        user = get_current_user()
+        # An admin with no tenant (platform operator) has no bill to be late on.
+        if not user or not getattr(user, 'isp_id', None):
+            return None
+        isp = ISP.query.get(user.isp_id)
+        if isp is None or not sub.is_locked(isp):
+            return None
+
+        return jsonify({
+            'error': 'Your subscription has expired. Renew to restore access.',
+            'code': 'subscription_expired',
+            'subscription': sub.subscription_state(isp),
+        }), 402
+    except Exception as exc:
+        # A broken paywall must never take the whole API down with it.
+        app.logger.warning('Subscription gate skipped: %s', exc)
+        return None
 
 # Test route
 @app.route('/api/test')
@@ -467,6 +543,24 @@ def enforce_expiry_command(grace_hours):
     with app.app_context():
         count = enforce_expired_subscriptions(grace_hours=grace_hours)
         click.echo(f'Expired subscriptions enforced: {count} customer(s) suspended.')
+
+
+@app.cli.command('issue-subscription-invoices')
+@click.option('--lead-days', default=None, type=int,
+              help='Raise the invoice this many days before expiry (default PLATFORM_ISSUE_LEAD_DAYS)')
+def issue_subscription_invoices_command(lead_days):
+    """Raise the next platform invoice for tenants nearing expiry (cron: daily).
+
+    Idempotent — a tenant with a pending invoice is skipped, so running it
+    twice in a day bills nobody twice.
+    """
+    with app.app_context():
+        from services import platform_subscription as sub
+        issued = sub.issue_due_invoices(lead_days=lead_days)
+        for invoice in issued:
+            click.echo(f'{invoice.number}  {invoice.currency} {float(invoice.amount):,.2f}'
+                       f'  due {invoice.due_at:%Y-%m-%d}')
+        click.echo(f'Platform invoices issued: {len(issued)}.')
 
 
 @app.cli.command('enforce-fup')

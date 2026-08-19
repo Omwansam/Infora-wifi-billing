@@ -24,7 +24,7 @@ from werkzeug.security import generate_password_hash
 
 from extensions import db
 from models import ISP, OnboardingSignup, User
-from services import tenant_slug
+from services import platform_subscription, tenant_slug
 from services.brand_constants import BRAND_FULL_NAME, BRAND_NAME, BRAND_SUPPORT_EMAIL
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,9 @@ def _create_isp(signup):
     )
     isp.generate_api_key()
     isp.generate_radius_secret()
+    # Start the platform-subscription clock. Until this expires the tenant has
+    # the full console; after it, they get the subscription page and nothing else.
+    platform_subscription.start_trial(isp)
     db.session.add(isp)
     db.session.flush()
 

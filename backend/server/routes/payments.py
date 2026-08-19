@@ -90,6 +90,35 @@ def mpesa_stk_push():
         return jsonify({'ok': False, 'message': str(e)}), 500
 
 
+def _settle_platform_invoice(result):
+    """Match an STK callback to a platform invoice and, if paid, extend access.
+
+    Returns True when the callback belonged to a platform invoice, whatever the
+    outcome, so the caller stops looking.
+    """
+    from models import PlatformInvoice
+    from services import platform_subscription as sub
+
+    invoice = PlatformInvoice.query.filter_by(
+        checkout_request_id=result['checkout_request_id']
+    ).first()
+    if invoice is None:
+        return False
+
+    if result['success']:
+        sub.mark_invoice_paid(
+            invoice,
+            reference=result.get('mpesa_receipt'),
+            method='mpesa',
+            phone=invoice.payer_phone,
+        )
+    else:
+        # Leave it pending: a declined prompt is a retry, not a dead invoice.
+        invoice.checkout_request_id = None
+        db.session.commit()
+    return True
+
+
 @payments_bp.route('/mpesa/callback', methods=['POST'])
 def mpesa_callback():
     """Safaricom STK callback webhook (no JWT — called by Safaricom)."""
@@ -102,6 +131,10 @@ def mpesa_callback():
         ).first()
 
         if not payment:
+            # Not a subscriber payment — it may be a tenant settling their own
+            # platform subscription, which is matched the same way.
+            if _settle_platform_invoice(result):
+                return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
             return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
 
         if result['success']:
