@@ -80,6 +80,15 @@ services:
       MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
       MPESA_PASSKEY: ${MPESA_PASSKEY:-}
       MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
+      # Platform subscription — what a tenant ISP pays us. All have working
+      # defaults in config.py, but they must be passed through here or .env
+      # cannot tune them (the PORTAL_BASE_URL trap). Grace 0 = console locks
+      # the moment the subscription expires. See SUBSCRIPTION.md.
+      PLATFORM_VENDOR_NAME: ${PLATFORM_VENDOR_NAME:-Lumen}
+      PLATFORM_TRIAL_DAYS: ${PLATFORM_TRIAL_DAYS:-14}
+      PLATFORM_BILLING_PERIOD_DAYS: ${PLATFORM_BILLING_PERIOD_DAYS:-30}
+      PLATFORM_GRACE_DAYS: ${PLATFORM_GRACE_DAYS:-0}
+      PLATFORM_ISSUE_LEAD_DAYS: ${PLATFORM_ISSUE_LEAD_DAYS:-7}
       # TR-069 ACS. The URL must be reachable from the *subscriber* network and
       # served DNS-only (grey cloud) — a CDN/WAF in front of CWMP mangles SOAP
       # POSTs, and budget ONTs fail on modern TLS chains. See TR069.md.
