@@ -38,6 +38,10 @@ import MikrotikPage from './components/devices/MikrotikPage';
 import DeviceDetailPage from './components/devices/DeviceDetailPage';
 import EquipmentPage from './components/devices/EquipmentPage';
 import PlatformSubscriptionPage from './components/billing/PlatformSubscriptionPage';
+import FiberMapPage from './components/fiber/FiberMapPage';
+import FiberNodesPage from './components/fiber/FiberNodesPage';
+import FiberCablesPage from './components/fiber/FiberCablesPage';
+import FiberSplicePage from './components/fiber/FiberSplicePage';
 import Tr069FleetPage from './components/tr069/Tr069FleetPage';
 import Tr069DevicePage from './components/tr069/Tr069DevicePage';
 import DeviceStatusPage from './components/devices/DeviceStatusPage';
@@ -207,6 +211,14 @@ function AppRoutes() {
       {/* Platform subscription — the tenant's own bill for using this system.
           Reachable while locked out; SubscriptionGate allowlists it. */}
       <Route path="/subscription" element={<ProtectedRoute><MainLayout><PlatformSubscriptionPage /></MainLayout></ProtectedRoute>} />
+
+      {/* Fiber plant (OSP) — the map is the primary surface; the tables answer
+          the questions a map is bad at, like "which splitter has a free port". */}
+      <Route path="/fiber" element={<Navigate to="/fiber/map" replace />} />
+      <Route path="/fiber/map" element={<AdminRoute><MainLayout><FiberMapPage /></MainLayout></AdminRoute>} />
+      <Route path="/fiber/nodes" element={<AdminRoute><MainLayout><FiberNodesPage /></MainLayout></AdminRoute>} />
+      <Route path="/fiber/cables" element={<AdminRoute><MainLayout><FiberCablesPage /></MainLayout></AdminRoute>} />
+      <Route path="/fiber/splices" element={<AdminRoute><MainLayout><FiberSplicePage /></MainLayout></AdminRoute>} />
 
       {/* TR-069 ACS Routes.
 

@@ -67,6 +67,11 @@ export const ENDPOINTS = {
 
   // devices / network
   devices: '/api/devices',
+
+  // Fiber plant — field GPS capture pins nodes the office could not place
+  fiberNodes: '/api/fiber/nodes',
+  fiberPlace: '/api/fiber/place',
+  fiberStats: '/api/fiber/stats',
   deviceStats: '/api/devices/stats',
   isps: '/api/isps',
 

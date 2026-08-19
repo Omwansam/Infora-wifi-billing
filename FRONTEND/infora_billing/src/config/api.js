@@ -129,6 +129,22 @@ export const API_ENDPOINTS = {
   SETTINGS_NOTIFICATIONS: `${API_BASE_URL}/api/settings/notifications`,
   SETTINGS_PORTAL: `${API_BASE_URL}/api/settings/portal`,
   SETTINGS_ANNOUNCEMENTS: `${API_BASE_URL}/api/settings/announcements`,
+  // Fiber plant (OSP) — nodes, cable routes, splice plan and the map payload
+  FIBER_MAP: `${API_BASE_URL}/api/fiber/map`,
+  FIBER_FAULTS: `${API_BASE_URL}/api/fiber/faults`,
+  FIBER_NODES: `${API_BASE_URL}/api/fiber/nodes`,
+  FIBER_CABLES: `${API_BASE_URL}/api/fiber/cables`,
+  FIBER_SPLICES: `${API_BASE_URL}/api/fiber/splices`,
+  FIBER_STATS: `${API_BASE_URL}/api/fiber/stats`,
+  FIBER_PLACE: `${API_BASE_URL}/api/fiber/place`,
+  FIBER_GEOCODE: `${API_BASE_URL}/api/fiber/geocode`,
+  FIBER_IMPORT: `${API_BASE_URL}/api/fiber/import`,
+  fiberNode: (id) => `${API_BASE_URL}/api/fiber/nodes/${id}`,
+  fiberNodeTrace: (id) => `${API_BASE_URL}/api/fiber/nodes/${id}/trace`,
+  fiberNodeSplices: (id) => `${API_BASE_URL}/api/fiber/nodes/${id}/splices`,
+  fiberCable: (id) => `${API_BASE_URL}/api/fiber/cables/${id}`,
+  fiberSplice: (id) => `${API_BASE_URL}/api/fiber/splices/${id}`,
+
   // Platform subscription — what this tenant pays to use the system itself.
   // Distinct from SETTINGS_SUBSCRIPTION above, which is only the plan tier.
   PLATFORM_SUBSCRIPTION: `${API_BASE_URL}/api/platform/subscription`,

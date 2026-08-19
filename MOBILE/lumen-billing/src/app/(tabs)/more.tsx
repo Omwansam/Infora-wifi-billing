@@ -40,6 +40,7 @@ function buildGroups(opts: {
       items: [
         { icon: 'hardware-chip', label: 'Devices', sub: `${opts.onlineDevices}/${opts.totalDevices} routers online`, color: palette.violet, bg: 'bg-violet/10', href: '/devices' },
         { icon: 'git-network', label: 'Network & RADIUS', sub: 'ISPs, RADIUS, VPN', color: palette.info, bg: 'bg-info/10', href: '/network' },
+        { icon: 'git-network', label: 'Field survey', sub: 'Pin fiber plant by GPS', color: palette.brand[600], bg: 'bg-brand-600/10', href: '/fiber' },
       ],
     },
     {

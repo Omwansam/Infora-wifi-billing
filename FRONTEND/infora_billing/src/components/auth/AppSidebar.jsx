@@ -20,6 +20,7 @@ import {
   Cpu,
   CreditCard,
   Gauge,
+  GitBranch,
   HelpCircle,
   LayoutDashboard,
   LifeBuoy,
@@ -97,6 +98,17 @@ function buildSections(isAdmin) {
             ],
           },
           { label: 'TR-069 CPE', to: '/tr069', icon: Cpu },
+          {
+            id: 'fiber',
+            label: 'Fiber',
+            icon: GitBranch,
+            children: [
+              { label: 'Map', to: '/fiber/map' },
+              { label: 'Nodes', to: '/fiber/nodes' },
+              { label: 'Cables', to: '/fiber/cables' },
+              { label: 'Splice plan', to: '/fiber/splices' },
+            ],
+          },
           {
             id: 'radius',
             label: 'RADIUS',

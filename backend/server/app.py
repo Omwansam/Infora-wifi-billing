@@ -38,6 +38,7 @@ from routes.onboarding import onboarding_bp
 from routes.tr069 import tr069_bp
 from routes.cpe import cpe_bp
 from routes.platform import platform_bp
+from routes.fiber import fiber_bp
 from services.subscription_expiry import enforce_expired_subscriptions
 import click
 import logging
@@ -114,6 +115,7 @@ app.register_blueprint(onboarding_bp)
 app.register_blueprint(tr069_bp)
 app.register_blueprint(cpe_bp)
 app.register_blueprint(platform_bp)
+app.register_blueprint(fiber_bp)
 
 
 def ensure_schema_upgrades():
@@ -135,6 +137,11 @@ def ensure_schema_upgrades():
         },
         'customers': {
             'fup_throttled': 'BOOLEAN DEFAULT FALSE NOT NULL',
+            # Premises pin for the fiber map. NULL = not placed yet.
+            'latitude': 'DOUBLE PRECISION',
+            'longitude': 'DOUBLE PRECISION',
+            'geo_source': 'VARCHAR(20)',
+            'geo_updated_at': 'TIMESTAMP',
             # Migration/identity: operator login decoupled from email + stable
             # customer-facing account number (see radius_provisioning).
             'radius_login': 'VARCHAR(120)',
@@ -154,6 +161,14 @@ def ensure_schema_upgrades():
             'subscription_expires_at': 'TIMESTAMP',
             'subscription_is_trial': 'BOOLEAN DEFAULT TRUE',
             'subscription_amount': 'NUMERIC(12, 2)',
+        },
+        'cpe_devices': {
+            # ONT position + which ODB/splitter port it hangs off, so a dimming
+            # branch localises to a segment instead of looking like unrelated
+            # slow customers.
+            'latitude': 'DOUBLE PRECISION',
+            'longitude': 'DOUBLE PRECISION',
+            'fiber_node_id': 'INTEGER',
         },
         'users': {
             'two_factor_enabled': 'BOOLEAN DEFAULT FALSE NOT NULL',
@@ -214,11 +229,14 @@ def ensure_schema_upgrades():
         # boot. checkfirst=True makes this a no-op once they exist.
         from models import (
             CpeDevice, CpeFirmware, CpeSession, CpeTask, ImportCandidate, ImportRun,
+            FiberCable, FiberNode, FiberSplice,
             OnboardingSignup, PlatformInvoice,
         )
         for model in (ImportRun, ImportCandidate,
                       CpeDevice, CpeTask, CpeSession, CpeFirmware,
-                      OnboardingSignup, PlatformInvoice):
+                      OnboardingSignup, PlatformInvoice,
+                      # Nodes first: cables and splices reference them.
+                      FiberNode, FiberCable, FiberSplice):
             model.__table__.create(bind=db.engine, checkfirst=True)
     except Exception as exc:  # DB may not be ready yet (first boot runs initdb)
         app.logger.warning('Schema upgrade check skipped: %s', exc)

@@ -8,5 +8,6 @@ export * as planService from './plans';
 export * as billingService from './billing';
 export * as ticketService from './tickets';
 export * as deviceService from './devices';
+export * as fiberService from './fiber';
 export * as financeService from './finance';
 export * as dashboardService from './dashboard';

@@ -137,6 +137,14 @@ class Customer(db.Model):
     account_number = db.Column(db.String(40), nullable=True)
     phone = db.Column(db.String(20), nullable=False)
     address = db.Column(db.String(255), nullable=True)
+    # Premises pin (WGS84). Nullable — most subscribers predate the fiber map and
+    # are placed later by hand, by geocoding `address`, or from the field app.
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
+    # How the pin was obtained, so a rough geocode is never mistaken for a
+    # surveyed position: manual|geocode|import|gps
+    geo_source = db.Column(db.String(20), nullable=True)
+    geo_updated_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.Enum(CustomerStatus, name="customer_status"), default=CustomerStatus.ACTIVE, nullable=False)
     connection_type = db.Column(db.String(20), default='pppoe', nullable=False)  # hotspot | pppoe | wireguard
     join_date = db.Column(db.DateTime, server_default=db.func.current_timestamp())
@@ -2326,6 +2334,14 @@ class CpeDevice(db.Model):
     rx_power_dbm = db.Column(db.Float, nullable=True)
     tx_power_dbm = db.Column(db.Float, nullable=True)
 
+    # ONT position — the leaf of the fiber tree, and what makes an optical
+    # reading a point on the map rather than a row in a table.
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
+    # The ODB/splitter port this ONT hangs off. Set this and a dimming branch
+    # localises to a segment instead of looking like unrelated slow customers.
+    fiber_node_id = db.Column(db.Integer, db.ForeignKey('fiber_nodes.id', ondelete='SET NULL'),
+                              nullable=True, index=True)
     tags = db.Column(db.String(255), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
@@ -2484,3 +2500,171 @@ class PlatformInvoice(db.Model):
 
     def __repr__(self):
         return f'<PlatformInvoice {self.number} {self.status}>'
+
+
+# =========================
+#   Fiber plant (OSP)
+# =========================
+
+class FiberNode(db.Model):
+    """A physical point in the outside fiber plant.
+
+    One table for every node kind rather than a table per kind: OLTs, splitters
+    and ODBs differ in what they *contain*, not in what a map or a trace needs
+    from them (a position, a parent, a port count). Keeping them in one tree
+    means "walk upstream from this ONT" is a single recursive query instead of
+    a union across four tables.
+    """
+    __tablename__ = 'fiber_nodes'
+
+    # Ordered head-end → premises. `level` is derived from this and drives the
+    # map's z-order and icon size, so a new kind slots in without touching the UI.
+    KINDS = ('olt', 'cabinet', 'splitter', 'odb', 'joint', 'pole', 'handhole', 'customer')
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+
+    name = db.Column(db.String(120), nullable=False)
+    code = db.Column(db.String(60), nullable=True, index=True)  # operator's own label
+    kind = db.Column(db.String(20), nullable=False, default='odb', index=True)
+
+    # WGS84. Nullable so a node can be created from a table and placed later —
+    # an unplaced node is listed but not drawn.
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
+
+    # The upstream node. NULL for an OLT (the root of a tree).
+    parent_id = db.Column(db.Integer, db.ForeignKey('fiber_nodes.id', ondelete='SET NULL'),
+                          nullable=True, index=True)
+
+    # Capacity. For a splitter, split_ratio is the '1:8'/'1:16' label and
+    # port_count its output count; for an ODB, port_count is its tray size.
+    port_count = db.Column(db.Integer, nullable=True)
+    split_ratio = db.Column(db.String(10), nullable=True)
+    # Manufacturer's insertion loss for this split, dB. Used by the loss budget.
+    splitter_loss_db = db.Column(db.Float, nullable=True)
+
+    status = db.Column(db.String(20), default='active')  # planned|active|fault|retired
+    address = db.Column(db.String(255), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    zone_id = db.Column(db.Integer, db.ForeignKey('network_zones.id', ondelete='SET NULL'),
+                        nullable=True)
+    # An OLT is often a managed router/switch we already poll.
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id', ondelete='SET NULL'),
+                          nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    isp = db.relationship('ISP')
+    parent = db.relationship('FiberNode', remote_side=[id], backref='children')
+    zone = db.relationship('NetworkZone')
+    device = db.relationship('MikrotikDevice')
+
+    def __repr__(self):
+        return f'<FiberNode {self.kind}:{self.name}>'
+
+
+class FiberCable(db.Model):
+    """A cable segment between two nodes, with its drawn route.
+
+    ``path`` is a JSON array of [lat, lng] pairs — the geometry as surveyed or
+    drawn, not a straight line between endpoints. That distinction is the whole
+    point: cable is ordered and buried by route length, and a straight line
+    underestimates it badly.
+    """
+    __tablename__ = 'fiber_cables'
+
+    TYPES = ('feeder', 'distribution', 'drop', 'backbone')
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+
+    name = db.Column(db.String(120), nullable=True)
+    cable_type = db.Column(db.String(20), default='distribution', index=True)
+
+    from_node_id = db.Column(db.Integer, db.ForeignKey('fiber_nodes.id', ondelete='CASCADE'),
+                             nullable=False, index=True)
+    to_node_id = db.Column(db.Integer, db.ForeignKey('fiber_nodes.id', ondelete='CASCADE'),
+                           nullable=True, index=True)
+
+    fiber_count = db.Column(db.Integer, nullable=True)   # strands in the sheath
+    # Metres along `path`, computed server-side on save (see services/fiber_geo).
+    length_m = db.Column(db.Float, nullable=True)
+    # Operator's slack/coil allowance on top of the drawn route, metres.
+    slack_m = db.Column(db.Float, nullable=True)
+
+    path = db.Column(db.Text, nullable=True)  # JSON [[lat, lng], ...]
+
+    installation = db.Column(db.String(20), default='aerial')  # aerial|buried|duct
+    status = db.Column(db.String(20), default='active')        # planned|active|fault|retired
+    notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    isp = db.relationship('ISP')
+    from_node = db.relationship('FiberNode', foreign_keys=[from_node_id])
+    to_node = db.relationship('FiberNode', foreign_keys=[to_node_id])
+
+    def __repr__(self):
+        return f'<FiberCable {self.name or self.id} {self.cable_type}>'
+
+
+class FiberSplice(db.Model):
+    """One strand's termination: which fibre lands on which port, and what is on it.
+
+    This is the record that answers "port 6 of ODB-14 — what is it, and is it
+    free?". Occupancy is derived from the presence of a row, never from a
+    counter, so it cannot drift out of step with reality.
+    """
+    __tablename__ = 'fiber_splices'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+
+    node_id = db.Column(db.Integer, db.ForeignKey('fiber_nodes.id', ondelete='CASCADE'),
+                        nullable=False, index=True)
+    port_number = db.Column(db.Integer, nullable=False)
+
+    # The cable and strand arriving at this port.
+    cable_id = db.Column(db.Integer, db.ForeignKey('fiber_cables.id', ondelete='SET NULL'),
+                         nullable=True)
+    # Strand identity as the tech reads it off the sheath.
+    fiber_number = db.Column(db.Integer, nullable=True)
+    tube_color = db.Column(db.String(20), nullable=True)
+    fiber_color = db.Column(db.String(20), nullable=True)
+
+    # What the port serves — a downstream node, or a subscriber's ONT.
+    downstream_node_id = db.Column(db.Integer, db.ForeignKey('fiber_nodes.id', ondelete='SET NULL'),
+                                   nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id', ondelete='SET NULL'),
+                            nullable=True, index=True)
+    cpe_device_id = db.Column(db.Integer, db.ForeignKey('cpe_devices.id', ondelete='SET NULL'),
+                              nullable=True)
+
+    status = db.Column(db.String(20), default='in_use')  # in_use|reserved|faulty|spare
+    # Measured loss across this splice, dB (OTDR/power-meter reading).
+    loss_db = db.Column(db.Float, nullable=True)
+    spliced_at = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    isp = db.relationship('ISP')
+    node = db.relationship('FiberNode', foreign_keys=[node_id], backref='splices')
+    downstream_node = db.relationship('FiberNode', foreign_keys=[downstream_node_id])
+    cable = db.relationship('FiberCable')
+    customer = db.relationship('Customer')
+    cpe_device = db.relationship('CpeDevice')
+
+    __table_args__ = (
+        # One thing per port. This is the constraint that makes "is port 6
+        # free?" answerable from the table alone.
+        db.UniqueConstraint('node_id', 'port_number', name='uq_fiber_splice_node_port'),
+    )
+
+    def __repr__(self):
+        return f'<FiberSplice node={self.node_id} port={self.port_number}>'
