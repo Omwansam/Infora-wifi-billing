@@ -33,7 +33,6 @@ import { formatBytes } from '../../lib/networkUtils';
 import {
   ChartFilterBar,
   DashboardError,
-  DashboardHeader,
   DashboardPage,
   DashboardSkeleton,
   DataMetric,
@@ -51,6 +50,8 @@ import {
   SectionHeading,
   SubscriberStatusCard,
 } from './DashboardWidgets';
+import OverviewHero from './OverviewHero';
+import SetupChecklist from './SetupChecklist';
 
 const CHART_TOOLTIP = {
   contentStyle: {
@@ -80,7 +81,7 @@ const PERIOD_KEY_MAP = {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -194,13 +195,18 @@ export default function Dashboard() {
 
   return (
     <DashboardPage>
-      <DashboardHeader
+      <OverviewHero
         user={user}
+        data={data}
         generatedAt={data?.generated_at}
         onRefresh={() => load(true)}
         refreshing={refreshing}
         onNavigate={go}
       />
+
+      {/* Admins only: every step lands on an admin-gated page, so a support
+          user would only get a checklist of doors they cannot open. */}
+      {isAdmin?.() && <SetupChecklist setup={data?.setup} onNavigate={go} />}
 
       <RevenuePeriodStrip periods={data?.revenue_periods} />
 

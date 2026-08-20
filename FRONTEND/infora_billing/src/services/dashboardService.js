@@ -101,6 +101,14 @@ export function normalizeDashboardStats(raw) {
     top_data_users_by_period: raw.top_data_users_by_period || {},
     roadmap: raw.roadmap || [],
     alerts: raw.alerts || [],
+    // Absent on older backends — the Overview hides both blocks rather than
+    // guessing at a checklist it cannot verify.
+    setup: raw.setup || null,
+    pulse: raw.pulse || {
+      online_now: raw.active_sessions ?? raw.session_counts?.all ?? 0,
+      events: [],
+      activity: { window_hours: 12, series: [], sessions: 0, bytes_today: 0 },
+    },
     generated_at: raw.generated_at || new Date().toISOString(),
   };
 }

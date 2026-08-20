@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
-import { formatCurrency, formatDateTime } from '../../lib/utils';
+import { formatCurrency } from '../../lib/utils';
 import { formatBytes } from '../../lib/networkUtils';
 import { BRAND } from '../../lib/brand';
 import {
@@ -152,7 +152,10 @@ export function DashboardSkeleton() {
   return (
     <DashboardPage>
       <div className="space-y-6 animate-pulse">
-        <div className="h-28 rounded-2xl bg-slate-200 dark:bg-slate-800" />
+        {/* hero */}
+        <div className="h-60 rounded-3xl bg-slate-200 dark:bg-slate-800 sm:h-56" />
+        {/* setup checklist */}
+        <div className="h-44 rounded-3xl bg-slate-200 dark:bg-slate-800" />
         <div className="flex flex-wrap gap-2">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <div key={i} className="h-9 w-24 rounded-full bg-slate-200 dark:bg-slate-800" />
@@ -187,69 +190,6 @@ export function DashboardError({ message, onRetry }) {
       >
         Try again
       </button>
-    </div>
-  );
-}
-
-export function DashboardHeader({ user, generatedAt, onRefresh, refreshing, onNavigate }) {
-  const name = user?.first_name || user?.email?.split('@')[0] || 'there';
-  const longDate = new Intl.DateTimeFormat('en-KE', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(new Date());
-
-  return (
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-      <div>
-        <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">{BRAND.fullName}</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-          Welcome back, {name}
-        </h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          {longDate} · Network, billing, and subscribers at a glance
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {generatedAt && (
-          <p className="hidden text-xs text-slate-400 sm:block">
-            Updated {formatDateTime(generatedAt)}
-          </p>
-        )}
-        <button
-          type="button"
-          onClick={() => onNavigate?.('/clients/pppoe/new')}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
-        >
-          <Plus className="h-4 w-4" />
-          New PPPoE
-        </button>
-        <button
-          type="button"
-          onClick={() => onNavigate?.('/clients/new')}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
-        >
-          <Plus className="h-4 w-4" />
-          New Hotspot
-        </button>
-        <button
-          type="button"
-          onClick={() => onNavigate?.('/devices/mikrotik')}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-        >
-          <Router className="h-4 w-4" />
-          Add Router
-        </button>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-        >
-          {refreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
-      </div>
     </div>
   );
 }

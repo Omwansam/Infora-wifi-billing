@@ -1,3 +1,5 @@
+import json
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 from sqlalchemy import func, and_, or_
@@ -11,12 +13,14 @@ from models import (
     CustomerStatus,
     DeviceStatus,
     ISP,
+    IntegrationSetting,
     Invoice,
     InvoiceStatus,
     KycStatus,
     MikrotikDevice,
     Notification,
     Payment,
+    PaymentSettings,
     PaymentStatus,
     RadAcct,
     ServicePlan,
@@ -284,6 +288,247 @@ def _subscriber_stats(connection_type, now, month_start, router_id=None, isp_id=
         'new_month': new_month,
         'live_sessions': live_sessions,
     }
+
+
+# ---------------------------------------------------------------------------
+# Account setup checklist  (Overview > "Set up your account")
+# ---------------------------------------------------------------------------
+#
+# Six things a new tenant has to do before the product does anything useful.
+# Every one is derived from real state — there is no "I marked it done" flag —
+# so the card cannot drift out of sync with the account, and it disappears on
+# its own once the last box ticks. Order is cheapest-config-first, hardware
+# last, which is also the order the operator meets these screens in.
+
+SETUP_STEP_META = (
+    {
+        'key': 'branding',
+        'title': 'Set network name & logo',
+        'description': 'Your name and logo brand the captive portal, invoices and SMS.',
+        'cta': 'Open branding',
+        'path': '/settings?tab=general',
+    },
+    {
+        'key': 'payments',
+        'title': 'Choose payment gateway',
+        'description': 'Point collections at a paybill, till or bank account so subscribers can pay.',
+        'cta': 'Set up payments',
+        'path': '/settings?tab=payments',
+    },
+    {
+        'key': 'sms',
+        'title': 'Configure SMS provider',
+        'description': 'Connect a sender so expiry reminders and receipts actually leave the building.',
+        'cta': 'Connect provider',
+        'path': '/settings?tab=integrations',
+    },
+    {
+        'key': 'plan',
+        'title': 'Create your first plan',
+        'description': 'A speed, a price and a validity period — everything else bills off this.',
+        'cta': 'Create a plan',
+        'path': '/plans/new',
+    },
+    {
+        'key': 'subscriber',
+        'title': 'Add a subscriber',
+        'description': 'Add one by hand, or import an existing customer list in bulk.',
+        'cta': 'Add subscriber',
+        'path': '/clients/new',
+    },
+    {
+        'key': 'router',
+        'title': 'Register a router',
+        'description': 'Register a MikroTik so sessions, usage and disconnects flow in live.',
+        'cta': 'Register router',
+        'path': '/devices/mikrotik',
+    },
+)
+
+# Names the seeders and older installs leave behind — present, but not a choice
+# anybody made, so they must not tick the branding box.
+_PLACEHOLDER_NAMES = {'', 'default company', 'lumen', 'infora', 'isp', 'my isp', 'test'}
+
+# Integration keys that can send an SMS. Only Africa's Talking ships today; the
+# set keeps the check from needing an edit when a second provider lands.
+_SMS_INTEGRATION_KEYS = ('africastalking',)
+
+
+def _setup_isp(user):
+    """The tenant whose setup we are reporting on.
+
+    Prefers the caller's own ISP and falls back to the default active one for
+    platform admins with no tenant of their own — same resolution the Settings
+    API uses, so the checklist and the pages it links to agree.
+    """
+    isp = None
+    if getattr(user, 'isp_id', None):
+        isp = ISP.query.get(user.isp_id)
+    if isp is None:
+        isp = ISP.query.filter_by(is_active=True).order_by(ISP.id.asc()).first()
+    return isp
+
+
+def _scoped_count(model, isp):
+    q = model.query
+    if isp is not None:
+        q = q.filter(model.isp_id == isp.id)
+    return q.count()
+
+
+def _branding_done(isp):
+    if isp is None:
+        return False
+    name = (isp.company_name or '').strip().lower()
+    return bool(isp.logo_url) and name not in _PLACEHOLDER_NAMES
+
+
+def _payment_gateway_done(isp):
+    """A gateway counts as chosen only when money has somewhere to land."""
+    if isp is None:
+        return False
+    ps = PaymentSettings.query.filter_by(isp_id=isp.id).first()
+    if ps is None:
+        return False
+    route = (ps.collection_route or 'paybill').strip().lower()
+    if route == 'buygoods':
+        return bool(ps.buygoods_till)
+    if route == 'bank':
+        return bool(ps.bank_paybill or ps.bank_account)
+    return bool(ps.paybill_shortcode)
+
+
+def _sms_provider_done(isp):
+    """Enabled *and* carrying credentials — an empty toggle sends nothing.
+
+    Secret fields are stored as ciphertext, so truthiness is enough here and
+    nothing has to be decrypted to answer the question.
+    """
+    if isp is None:
+        return False
+    rows = IntegrationSetting.query.filter(
+        IntegrationSetting.isp_id == isp.id,
+        IntegrationSetting.key.in_(_SMS_INTEGRATION_KEYS),
+    ).all()
+    for row in rows:
+        if not row.enabled:
+            continue
+        try:
+            cfg = json.loads(row.config) if row.config else {}
+        except (TypeError, ValueError):
+            cfg = {}
+        if cfg.get('api_key') and cfg.get('username'):
+            return True
+    return False
+
+
+def _setup_state(user):
+    isp = _setup_isp(user)
+    done_map = {
+        'branding': _branding_done(isp),
+        'payments': _payment_gateway_done(isp),
+        'sms': _sms_provider_done(isp),
+        'plan': _scoped_count(ServicePlan, isp) > 0,
+        'subscriber': _scoped_count(Customer, isp) > 0,
+        'router': _scoped_count(MikrotikDevice, isp) > 0,
+    }
+    steps = [dict(meta, done=bool(done_map.get(meta['key']))) for meta in SETUP_STEP_META]
+    done = sum(1 for s in steps if s['done'])
+    total = len(steps)
+    remaining = [s for s in steps if not s['done']]
+    return {
+        'steps': steps,
+        'done': done,
+        'total': total,
+        'percent': int(round(done * 100 / total)) if total else 100,
+        'complete': done == total,
+        'next': remaining[0] if remaining else None,
+    }
+
+
+def _safe_setup_state(user):
+    try:
+        return _setup_state(user)
+    except Exception:
+        db.session.rollback()
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Pulse  (Overview hero — live strip + connection sparkline)
+# ---------------------------------------------------------------------------
+
+def _activity_series(now, hours=12, router_id=None, isp_id=None):
+    """Sessions started per hour over the trailing window.
+
+    Session *starts* rather than bytes: RADIUS counters are cumulative per
+    session, so bucketing them by hour would attribute a whole evening's
+    traffic to the minute the dial came up. Starts are exact.
+    """
+    start = (now - timedelta(hours=hours - 1)).replace(minute=0, second=0, microsecond=0)
+    q = db.session.query(RadAcct.acctstarttime)
+    q = _apply_radacct_scope(q, router_id, isp_id)
+    rows = q.filter(RadAcct.acctstarttime >= start).all()
+
+    buckets = [0] * hours
+    for (started,) in rows:
+        if not started:
+            continue
+        index = int((started - start).total_seconds() // 3600)
+        if 0 <= index < hours:
+            buckets[index] += 1
+
+    return [
+        {
+            'label': (start + timedelta(hours=i)).strftime('%H:%M'),
+            'sessions': buckets[i],
+        }
+        for i in range(hours)
+    ]
+
+
+def _safe_activity_series(now, hours=12, router_id=None, isp_id=None):
+    try:
+        return _activity_series(now, hours, router_id, isp_id)
+    except Exception:
+        db.session.rollback()
+        return []
+
+
+def _pulse_events(recent_customers, recent_payments, offline_device_list, limit=6):
+    """Newest few things worth a one-line mention on the hero."""
+    events = []
+    for c in recent_customers[:4]:
+        events.append({
+            'type': 'subscriber',
+            'title': 'New subscriber',
+            'subject': c.full_name or c.radius_login or c.account_number or 'Subscriber',
+            'detail': 'joined',
+            'path': f'/clients/{c.id}',
+            'timestamp': c.created_at.isoformat() if c.created_at else None,
+        })
+    for p in recent_payments[:4]:
+        events.append({
+            'type': 'payment',
+            'title': 'Payment received',
+            'subject': p.customer.full_name if p.customer else 'Subscriber',
+            'detail': 'paid',
+            'amount': float(p.amount or 0),
+            'path': '/billing/payments',
+            'timestamp': p.payment_date.isoformat() if p.payment_date else None,
+        })
+    for d in offline_device_list[:2]:
+        events.append({
+            'type': 'router',
+            'title': 'Router offline',
+            'subject': d.device_name,
+            'detail': 'stopped responding',
+            'path': f'/devices/mikrotik/{d.id}',
+            'timestamp': d.last_synced.isoformat() if d.last_synced else None,
+        })
+    events = [e for e in events if e['timestamp']]
+    events.sort(key=lambda e: e['timestamp'], reverse=True)
+    return events[:limit]
 
 
 @dashboard_bp.route('/stats', methods=['OPTIONS'])
@@ -603,6 +848,23 @@ def dashboard_stats():
 
     active_sessions = session_counts['all']
 
+    setup_state = _safe_setup_state(user)
+
+    today_radius = radius_periods.get('today') or {}
+    offline_routers = [d for d in all_routers if d.device_status == DeviceStatus.OFFLINE]
+    activity_series = _safe_activity_series(now, 12, router_id, isp_id)
+    pulse = {
+        'online_now': active_sessions,
+        'events': _pulse_events(recent_customers, recent_payments, offline_routers),
+        'activity': {
+            'window_hours': 12,
+            'series': activity_series,
+            'sessions': sum(point['sessions'] for point in activity_series),
+            'bytes_today': int(today_radius.get('download_bytes') or 0)
+            + int(today_radius.get('upload_bytes') or 0),
+        },
+    }
+
     month_expenses = float(
         db.session.query(func.coalesce(func.sum(Transaction.transaction_amount), 0))
         .filter(
@@ -790,6 +1052,8 @@ def dashboard_stats():
             'balance': max(0, 100 - sms_sent_month),
         },
         'organization': organization,
+        'setup': setup_state,
+        'pulse': pulse,
         'active_sessions': active_sessions,
         'operations': {
             'expenses': month_expenses,

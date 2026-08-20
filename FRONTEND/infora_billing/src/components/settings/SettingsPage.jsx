@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Pencil, Boxes, Plug, Bell, CreditCard, Radio, Globe, FileText, KeyRound, UserCog } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import GeneralSettings from './tabs/GeneralSettings';
@@ -26,7 +27,18 @@ const TABS = [
 ];
 
 export default function SettingsPage() {
-  const [active, setActive] = useState('general');
+  // The tab lives in the URL so the Overview setup checklist (and any other
+  // deep link) can land the operator on the exact panel a step refers to.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('tab');
+  const active = useMemo(
+    () => (TABS.some((t) => t.id === requested) ? requested : 'general'),
+    [requested],
+  );
+  const setActive = useCallback(
+    (id) => setSearchParams(id === 'general' ? {} : { tab: id }, { replace: true }),
+    [setSearchParams],
+  );
   const { isAdmin } = useAuth();
   const admin = typeof isAdmin === 'function' ? isAdmin() : false;
 

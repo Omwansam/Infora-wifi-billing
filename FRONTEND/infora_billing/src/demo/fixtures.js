@@ -643,6 +643,40 @@ export const DASHBOARD_STATS = {
     { id: 1, type: 'warning', title: `${ROUTERS[3]} is offline`, message: 'Last seen 4 hours ago — site power reported down.', created_at: iso(hoursAgo(4)) },
     { id: 2, type: 'info', title: `${INVOICE_STATS.overdue_invoices} overdue invoices`, message: 'Automated SMS reminders were sent this morning.', created_at: iso(hoursAgo(9)) },
   ],
+  // The demo tenant is deliberately one step short so the Overview shows the
+  // setup card in its normal state rather than its (invisible) finished one.
+  setup: {
+    done: 5,
+    total: 6,
+    percent: 83,
+    complete: false,
+    steps: [
+      { key: 'branding', title: 'Set network name & logo', description: 'Your name and logo brand the captive portal, invoices and SMS.', cta: 'Open branding', path: '/settings?tab=general', done: true },
+      { key: 'payments', title: 'Choose payment gateway', description: 'Point collections at a paybill, till or bank account so subscribers can pay.', cta: 'Set up payments', path: '/settings?tab=payments', done: true },
+      { key: 'sms', title: 'Configure SMS provider', description: 'Connect a sender so expiry reminders and receipts actually leave the building.', cta: 'Connect provider', path: '/settings?tab=integrations', done: true },
+      { key: 'plan', title: 'Create your first plan', description: 'A speed, a price and a validity period — everything else bills off this.', cta: 'Create a plan', path: '/plans/new', done: true },
+      { key: 'subscriber', title: 'Add a subscriber', description: 'Add one by hand, or import an existing customer list in bulk.', cta: 'Add subscriber', path: '/clients/new', done: true },
+      { key: 'router', title: 'Register a router', description: 'Register a MikroTik so sessions, usage and disconnects flow in live.', cta: 'Register router', path: '/devices/mikrotik', done: false },
+    ],
+    next: { key: 'router', title: 'Register a router', description: 'Register a MikroTik so sessions, usage and disconnects flow in live.', cta: 'Register router', path: '/devices/mikrotik', done: false },
+  },
+  pulse: {
+    online_now: SESSIONS.length,
+    events: [
+      { type: 'subscriber', title: 'New subscriber', subject: CUSTOMERS[0].full_name, detail: 'joined', path: `/clients/${CUSTOMERS[0].id}`, timestamp: iso(hoursAgo(2)) },
+      { type: 'payment', title: 'Payment received', subject: CUSTOMERS[1].full_name, detail: 'paid', amount: PAYMENTS[0].amount, path: '/billing/payments', timestamp: iso(hoursAgo(3)) },
+      { type: 'router', title: 'Router offline', subject: ROUTERS[3], detail: 'stopped responding', path: '/devices/mikrotik', timestamp: iso(hoursAgo(4)) },
+    ],
+    activity: {
+      window_hours: 12,
+      series: Array.from({ length: 12 }, (_, i) => ({
+        label: `${String(hoursAgo(11 - i).getHours()).padStart(2, '0')}:00`,
+        sessions: between(2, 26),
+      })),
+      sessions: between(90, 160),
+      bytes_today: between(40, 90) * 1024 * 1024 * 1024,
+    },
+  },
   generated_at: iso(NOW),
 };
 
