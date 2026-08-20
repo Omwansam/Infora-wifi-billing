@@ -4,6 +4,8 @@ import { motion } from 'framer-motion';
 import { ChevronDown, Search, SearchX, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { SETTINGS_GROUPS, findItem, resolveTab, searchItems } from './nav';
+import { DetailHeader } from './ui';
+import { ChromeContext } from './chrome';
 
 import GeneralSettings from './tabs/GeneralSettings';
 import DomainSettings from './tabs/DomainSettings';
@@ -14,6 +16,7 @@ import RadiusSettings from './tabs/RadiusSettings';
 import PaymentsSettings from './tabs/PaymentsSettings';
 import IntegrationsSettings from './tabs/IntegrationsSettings';
 import WhatsAppSettings from './tabs/WhatsAppSettings';
+import EmailSettings from './tabs/EmailSettings';
 import NotificationsSettings from './tabs/NotificationsSettings';
 import LoyaltySettings from './tabs/LoyaltySettings';
 import OperatorAlertsSettings from './tabs/OperatorAlertsSettings';
@@ -52,14 +55,7 @@ function panelFor(id, { admin, go }) {
           description="The sender that carries receipts, reminders and vouchers to your subscribers"
         />
       );
-    case 'email':
-      return (
-        <IntegrationsSettings
-          only={['smtp']}
-          title="Email gateway"
-          description="Deliver invoices and account email through your own mail server"
-        />
-      );
+    case 'email': return <EmailSettings />;
     case 'whatsapp': return <WhatsAppSettings />;
     case 'templates': return <NotificationsSettings exclude={['router_health']} />;
     case 'loyalty': return <LoyaltySettings />;
@@ -215,6 +211,7 @@ export default function SettingsPage() {
 
   const [query, setQuery] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [chrome, setChromeState] = useState(null);
   const searchRef = useRef(null);
   const mainRef = useRef(null);
 
@@ -238,6 +235,21 @@ export default function SettingsPage() {
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 });
   }, [active]);
+
+  /* Chrome is tagged with the tab that set it, and only rendered while that tab
+     is still the active one.
+     Clearing it from an effect here does not work: child effects run before
+     parent effects, so a panel that claims the header during its own mount
+     would have the claim wiped immediately afterwards — which is exactly what
+     happened to a deep link straight into a WhatsApp provider. Tagging is
+     ordering-independent, so stale chrome is ignored rather than raced. */
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const setChrome = useCallback(
+    (next) => setChromeState(next ? { ...next, tab: activeRef.current } : null),
+    [],
+  );
+  const chromeValue = useMemo(() => ({ setChrome }), [setChrome]);
 
   // ⌘K / Ctrl-K focuses the rail search, which is where anyone who cannot find
   // a setting is going to reach first.
@@ -309,8 +321,14 @@ export default function SettingsPage() {
             )}
           </div>
 
-          <PageHeading item={item} />
-          {panelFor(active, { admin, go })}
+          <ChromeContext.Provider value={chromeValue}>
+            {chrome && chrome.tab === active ? (
+              <DetailHeader {...chrome} />
+            ) : (
+              <PageHeading item={item} />
+            )}
+            {panelFor(active, { admin, go })}
+          </ChromeContext.Provider>
         </div>
       </main>
     </div>

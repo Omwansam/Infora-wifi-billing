@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, ChevronLeft, Loader2 } from 'lucide-react';
 
 /* -------------------------------------------------------------------------
  * Settings primitives.
@@ -347,4 +347,118 @@ export function insertAtCursor(el, current, token) {
   const start = el.selectionStart ?? value.length;
   const end = el.selectionEnd ?? value.length;
   return { next: value.slice(0, start) + token + value.slice(end), caret: start + token.length };
+}
+
+/* -------------------------------------------------------------------------
+ * Connection chrome — headers for panels that represent a live integration.
+ * ---------------------------------------------------------------------- */
+
+const PILL_TONES = {
+  connected:
+    'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30',
+  idle: 'bg-slate-100 text-slate-500 ring-slate-500/20 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-600/40',
+  warn: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30',
+};
+
+export function StatusPill({ tone = 'idle', children }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${
+        PILL_TONES[tone] || PILL_TONES.idle
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Compact header for a panel whose headline is a connection rather than a
+ * topic: a gateway, or one provider inside a gateway. Replaces the display
+ * heading, because "Not connected" is the first thing worth knowing and a
+ * 36px title pushes it below the fold.
+ */
+export function DetailHeader({
+  icon: Icon, iconClass, eyebrow, title, subtitle, status, action, onBack, backLabel = 'Back',
+}) {
+  return (
+    <header className="mb-8">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="-ml-1 mb-3 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          {backLabel}
+        </button>
+      )}
+      <div className="flex flex-wrap items-start gap-4">
+        {Icon && (
+          <span
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+              iconClass || 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+            }`}
+          >
+            {typeof Icon === 'string' ? (
+              <span className="text-sm font-bold">{Icon}</span>
+            ) : (
+              <Icon className="h-5 w-5" />
+            )}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          {eyebrow && (
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
+              {eyebrow}
+            </p>
+          )}
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{title}</h1>
+          {subtitle && (
+            <p className="mt-0.5 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+              {subtitle}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {status}
+          {action}
+        </div>
+      </div>
+      <div className="mt-6 border-t border-slate-200 dark:border-slate-800" />
+    </header>
+  );
+}
+
+/** One selectable service in a provider grid. */
+export function ProviderTile({ mark, markClass, name, category, onSelect, active, actionLabel = 'Configure' }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`flex w-full flex-col rounded-2xl border p-5 text-left transition ${
+        active
+          ? 'border-emerald-500 bg-emerald-50/60 ring-1 ring-emerald-500/30 dark:border-emerald-500/60 dark:bg-emerald-950/30'
+          : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700'
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold ${markClass}`}
+        >
+          {mark}
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {name}
+          </span>
+          <span className="block truncate text-xs text-slate-400 dark:text-slate-500">{category}</span>
+        </span>
+      </div>
+      <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+        {actionLabel}
+        <span aria-hidden="true">›</span>
+      </span>
+    </button>
+  );
 }

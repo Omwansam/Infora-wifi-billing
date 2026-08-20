@@ -1,132 +1,206 @@
-import React, { useState } from 'react';
-import { MessageCircle, ShieldCheck } from 'lucide-react';
-import { Card, Field, TextInput, Select, Toggle, Note, NotWired, UnavailableSave } from '../ui';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { useSettingsChrome } from '../chrome';
+import {
+  Card, Field, TextInput, Note, NotWired, ProviderTile, StatusPill,
+  UnavailableSave,
+} from '../ui';
 
 /* -------------------------------------------------------------------------
  * Settings > WhatsApp — design only.
  *
  * WhatsApp already exists in this codebase, but only one way: the platform
- * sends a signup OTP through it (services/whatsapp_otp.py). That is our number
- * and our account. A tenant sending *their own* receipts and reminders over
- * WhatsApp is a different integration that does not exist — no provider row,
- * no send path, no template approval flow. The note below says so rather than
- * letting the OTP feature imply this one works.
+ * sends *your signup OTP* through *our* number (services/whatsapp_otp.py).
+ * A tenant sending their own receipts over WhatsApp is a different feature
+ * with nothing behind it — no provider row, no send path, no template
+ * approval. The list and the drill-down are real navigation; only the saving
+ * is absent, and each provider page says so.
+ *
+ * The credential fields per provider are the ones each vendor actually issues,
+ * so if this is built the shape does not have to be renegotiated.
  * ---------------------------------------------------------------------- */
 
 const PROVIDERS = [
-  ['meta', 'Meta WhatsApp Cloud API'],
-  ['twilio', 'Twilio'],
-  ['360dialog', '360dialog'],
+  {
+    id: 'notiva',
+    name: 'Notiva',
+    category: 'WhatsApp Business',
+    mark: 'N',
+    markClass: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300',
+    fields: [
+      { name: 'api_key', label: 'API key', secret: true },
+      { name: 'sender_number', label: 'Sender number', hint: 'e.g. +254700000000' },
+    ],
+  },
+  {
+    id: 'apiwap',
+    name: 'Apiwap',
+    category: 'WhatsApp Business',
+    mark: 'A',
+    markClass: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300',
+    fields: [{ name: 'api_key', label: 'API key', secret: true }],
+  },
+  {
+    id: 'infobip',
+    name: 'Infobip',
+    category: 'Global',
+    mark: 'I',
+    markClass: 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300',
+    fields: [
+      { name: 'api_key', label: 'API key', secret: true },
+      { name: 'base_url', label: 'Base URL', hint: 'e.g. https://xxxxx.api.infobip.com' },
+      { name: 'sender_number', label: 'Sender number', hint: 'The number registered with Infobip.' },
+    ],
+  },
+  {
+    id: 'twilio',
+    name: 'Twilio',
+    category: 'Global',
+    mark: 'T',
+    markClass: 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-300',
+    fields: [
+      { name: 'account_sid', label: 'Account SID' },
+      { name: 'auth_token', label: 'Auth token', secret: true },
+      { name: 'from', label: 'WhatsApp from', hint: 'e.g. +14155551234' },
+    ],
+  },
 ];
 
-const TEMPLATES = [
-  ['payment_received', 'Payment received', 'Receipt with the amount, plan and new expiry date.'],
-  ['expiry_reminder', 'Expiry reminder', 'Sent a configurable number of days before a subscription lapses.'],
-  ['voucher_issued', 'Voucher issued', 'The code itself, plus how long it lasts.'],
-];
+function SecretInput({ value, onChange, placeholder }) {
+  const [reveal, setReveal] = useState(false);
+  return (
+    <div className="relative">
+      <TextInput
+        type={reveal ? 'text' : 'password'}
+        value={value}
+        placeholder={placeholder}
+        autoComplete="off"
+        className="pr-10"
+        onChange={onChange}
+      />
+      <button
+        type="button"
+        onClick={() => setReveal((r) => !r)}
+        tabIndex={-1}
+        aria-label={reveal ? 'Hide value' : 'Show value'}
+        className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 transition hover:text-slate-600 dark:hover:text-slate-300"
+      >
+        {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
+  );
+}
+
+function ProviderDetail({ provider, values, onChange }) {
+  return (
+    <div className="space-y-6">
+      <NotWired>
+        Nothing here saves. There is no WhatsApp provider row, no send path and no Meta template
+        approval flow — the only WhatsApp in this system today is the signup OTP the platform
+        sends from its own number. Until this is built, receipts and reminders go out over SMS.
+      </NotWired>
+
+      <Card title="Credentials" description="Would be stored encrypted; edit a field and save to update it.">
+        <div className="space-y-5">
+          {provider.fields.map((f) => (
+            <Field key={f.name} label={f.label} hint={f.hint}>
+              {f.secret ? (
+                <SecretInput
+                  value={values[f.name] || ''}
+                  placeholder="••••••••"
+                  onChange={(e) => onChange(f.name, e.target.value)}
+                />
+              ) : (
+                <TextInput
+                  value={values[f.name] || ''}
+                  spellCheck={false}
+                  onChange={(e) => onChange(f.name, e.target.value)}
+                />
+              )}
+            </Field>
+          ))}
+        </div>
+
+        <div className="mt-6">
+          <Note icon={ShieldCheck} title="Templates are approved on the provider's side" tone="warn">
+            <p className="mt-1">
+              WhatsApp only delivers pre-registered templates outside a 24-hour reply window, so
+              each receipt and reminder would have to be submitted for approval and then matched
+              word for word. That approval step is the reason this is a bigger job than an SMS
+              gateway.
+            </p>
+          </Note>
+        </div>
+
+        <div className="mt-6">
+          <UnavailableSave />
+        </div>
+      </Card>
+    </div>
+  );
+}
 
 export default function WhatsAppSettings() {
-  const [sending, setSending] = useState(false);
-  const [provider, setProvider] = useState('meta');
-  const [enabled, setEnabled] = useState({
-    payment_received: true,
-    expiry_reminder: true,
-    voucher_issued: false,
-  });
+  const { setChrome } = useSettingsChrome();
+  const [selectedId, setSelectedId] = useState(null);
+  const [drafts, setDrafts] = useState({});
+
+  const provider = useMemo(
+    () => PROVIDERS.find((p) => p.id === selectedId) || null,
+    [selectedId],
+  );
+
+  // Drilling into a provider takes over the header; backing out hands it back.
+  useEffect(() => {
+    if (!provider) {
+      setChrome(null);
+      return undefined;
+    }
+    setChrome({
+      icon: provider.mark,
+      iconClass: provider.markClass,
+      eyebrow: 'WhatsApp provider',
+      title: provider.name,
+      subtitle: provider.category,
+      status: <StatusPill tone="idle">Not connected</StatusPill>,
+      onBack: () => setSelectedId(null),
+      backLabel: 'All providers',
+    });
+    return () => setChrome(null);
+  }, [provider, setChrome]);
+
+  const setField = (name, value) =>
+    setDrafts((d) => ({ ...d, [selectedId]: { ...(d[selectedId] || {}), [name]: value } }));
+
+  if (provider) {
+    return (
+      <ProviderDetail
+        provider={provider}
+        values={drafts[provider.id] || {}}
+        onChange={setField}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
       <NotWired>
-        Nothing on this panel saves. WhatsApp is currently used one way only — the platform sends
-        your signup OTP through its own number. Sending <em>your</em> receipts and reminders over
-        WhatsApp needs a provider row, a send path and Meta template approval, none of which exist
-        yet. Until then, receipts and reminders go out over SMS and email.
+        Nothing on this panel saves. Pick a provider to see exactly which credentials it would
+        ask for — that is what this is for. WhatsApp sending is not built; the only WhatsApp here
+        today is the signup OTP the platform sends from its own number.
       </NotWired>
 
-      <div className="space-y-6">
-          <Card
-            title="Gateway"
-            description="The business number subscribers would receive messages from"
-          >
-            <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 dark:border-slate-800 dark:bg-slate-950/40">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
-                  <MessageCircle className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    Send over WhatsApp
-                  </p>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    Falls back to SMS whenever a number has no WhatsApp account.
-                  </p>
-                </div>
-              </div>
-              <Toggle checked={sending} onChange={setSending} />
-            </div>
-
-            <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-              <Field label="Provider">
-                <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
-                  {PROVIDERS.map(([id, label]) => (
-                    <option key={id} value={id}>
-                      {label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Business phone number" hint="In full international form.">
-                <TextInput placeholder="+254700000000" />
-              </Field>
-              <Field label="Phone number ID">
-                <TextInput placeholder="From your provider's dashboard" />
-              </Field>
-              <Field label="Business account ID">
-                <TextInput placeholder="WABA ID" />
-              </Field>
-              <Field
-                label="Access token"
-                hint="Would be encrypted at rest and returned masked."
-                className="md:col-span-2"
-              >
-                <TextInput type="password" placeholder="Permanent access token" />
-              </Field>
-            </div>
-          </Card>
-
-          <Card
-            title="Approved templates"
-            description="WhatsApp only delivers pre-approved templates outside a 24-hour reply window"
-          >
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {TEMPLATES.map(([key, name, detail]) => (
-                <div key={key} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{name}</p>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">{detail}</p>
-                  </div>
-                  <Toggle
-                    checked={!!enabled[key]}
-                    onChange={(v) => setEnabled((e) => ({ ...e, [key]: v }))}
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-5">
-              <Note icon={ShieldCheck} title="Template approval is on Meta's side" tone="warn">
-                <p className="mt-1">
-                  Each template has to be submitted and approved in your WhatsApp Business account
-                  before it can be sent. Approval usually takes minutes but can be rejected — the
-                  wording would need to match what you registered, exactly.
-                </p>
-              </Note>
-            </div>
-
-            <div className="mt-6">
-              <UnavailableSave />
-            </div>
-          </Card>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {PROVIDERS.map((p) => (
+          <ProviderTile
+            key={p.id}
+            mark={p.mark}
+            markClass={p.markClass}
+            name={p.name}
+            category={p.category}
+            onSelect={() => setSelectedId(p.id)}
+          />
+        ))}
       </div>
     </div>
   );

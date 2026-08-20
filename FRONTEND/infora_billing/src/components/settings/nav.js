@@ -126,9 +126,9 @@ export const SETTINGS_GROUPS = [
         name: 'WhatsApp',
         sub: 'WhatsApp gateway',
         icon: MessageCircle,
-        title: 'Your WhatsApp gateway',
-        accent: 'WhatsApp',
-        lead: 'Receipts and reminders over WhatsApp instead of SMS, from your own business number. Not built yet — this panel is the shape it would take.',
+        title: 'WhatsApp providers',
+        accent: 'providers',
+        lead: 'A richer channel for receipts and reminders. Pick a provider to see the credentials it would need — only one can be active at a time. Not built yet.',
         keywords: ['whatsapp', 'meta', 'twilio', 'waba', 'template', 'business'],
       },
       {
