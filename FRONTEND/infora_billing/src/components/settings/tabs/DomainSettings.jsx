@@ -126,14 +126,30 @@ export default function DomainSettings() {
   const baseDomain = general?.tenant_base_domain || '';
   const currentSlug = general?.slug || '';
 
-  // The address subscribers actually reach today: a custom domain wins, then
-  // the account address, then whatever the portal resolver last handed back.
+  // The host subscribers actually reach today. A custom domain wins; otherwise
+  // it is whatever the portal resolver reports, reduced to its host.
+  //
+  // Deliberately NOT the account address. That label is permanent but only
+  // becomes routable once wildcard DNS lands, and on a deployment where
+  // TENANT_BASE_DOMAIN is unset it falls back to the brand website — so
+  // trusting it here would print a hostname that resolves nowhere and call it
+  // "Active". It is shown below instead, as the label it currently is.
   const activeUrl = useMemo(() => {
     if (!general) return '';
     if (general.custom_domain) return general.custom_domain;
-    if (general.account_address) return general.account_address;
-    return (general.current_portal_url || '').replace(/^https?:\/\//, '');
+    const raw = general.current_portal_url || '';
+    try {
+      return new URL(raw).host;
+    } catch {
+      return raw.replace(/^https?:\/\//, '').split('/')[0];
+    }
   }, [general]);
+
+  // Only worth showing when it is not already the address above.
+  const accountAddress =
+    general?.account_address && general.account_address !== activeUrl
+      ? general.account_address
+      : null;
 
   /* --- live availability for the account address ------------------------ */
   const seq = useRef(0);
@@ -203,13 +219,15 @@ export default function DomainSettings() {
             description="Used for captive-portal redirects, admin URLs and subscriber self-serve."
           >
             <AddressRow url={activeUrl} status="Active" />
-            {general.custom_domain && general.account_address && (
-              <p className="mt-3 text-xs text-slate-400 dark:text-slate-500">
-                Your account address{' '}
+            {accountAddress && (
+              <p className="mt-3 text-xs leading-relaxed text-slate-400 dark:text-slate-500">
+                This workspace also holds the permanent account address{' '}
                 <span className="font-mono text-slate-500 dark:text-slate-400">
-                  {general.account_address}
-                </span>{' '}
-                keeps working as a fallback.
+                  {accountAddress}
+                </span>
+                {general.custom_domain
+                  ? ' — it keeps working alongside your own domain.'
+                  : ' — it is reserved for you, and becomes reachable once wildcard DNS is in place.'}
               </p>
             )}
           </Section>
