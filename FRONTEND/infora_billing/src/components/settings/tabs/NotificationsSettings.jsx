@@ -10,7 +10,7 @@ function ChannelBadge({ channel }) {
   return (
     <span
       className={`inline-flex items-center justify-center w-12 shrink-0 text-[10px] font-bold uppercase tracking-wide ${
-        isSms ? 'text-blue-600' : 'text-fuchsia-600'
+        isSms ? 'text-sky-600 dark:text-sky-400' : 'text-fuchsia-600 dark:text-fuchsia-400'
       }`}
     >
       {isSms ? 'SMS' : 'Email'}
@@ -25,20 +25,20 @@ function EventRow({ ev, onChange }) {
       <div className="flex items-center gap-3">
         <ChannelBadge channel={ev.channel} />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-gray-900">{ev.label}</p>
-          <p className="text-xs text-gray-500">{ev.description}</p>
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{ev.label}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{ev.description}</p>
         </div>
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800"
+          className="flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
         >
           Edit message <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
         <Toggle checked={ev.enabled} onChange={(v) => onChange({ ...ev, enabled: v })} />
       </div>
       {open && (
-        <div className="mt-3 ml-12 rounded-lg bg-gray-50 border border-gray-100 p-3">
+        <div className="ml-12 mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/60">
           <Textarea
             rows={3}
             value={ev.template}
@@ -51,20 +51,26 @@ function EventRow({ ev, onChange }) {
                 key={v}
                 type="button"
                 onClick={() => onChange({ ...ev, template: `${ev.template || ''}${v}` })}
-                className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-600 hover:border-emerald-400 hover:text-emerald-600"
+                className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[11px] text-slate-600 transition hover:border-emerald-400 hover:text-emerald-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
               >
                 {v}
               </button>
             ))}
           </div>
-          <p className="mt-1.5 text-[11px] text-gray-400">Leave blank to use the system default.</p>
+          <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">Leave blank to use the system default.</p>
         </div>
       )}
     </div>
   );
 }
 
-export default function NotificationsSettings() {
+/**
+ * `only` / `exclude` split the same endpoint across two panels: subscriber-facing
+ * message templates, and the router-health digests that go to your own team.
+ * Saving posts just the rows on screen — the backend upserts by event key, so
+ * the other panel's preferences are untouched.
+ */
+export default function NotificationsSettings({ only, exclude, intro = true }) {
   const [groups, setGroups] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -73,7 +79,10 @@ export default function NotificationsSettings() {
     (async () => {
       try {
         const data = await settingsService.getNotifications(getAccessToken());
-        setGroups(data.groups || []);
+        let list = data.groups || [];
+        if (only) list = list.filter((g) => only.includes(g.key));
+        if (exclude) list = list.filter((g) => !exclude.includes(g.key));
+        setGroups(list);
       } catch (e) {
         toast.error(e.message || 'Failed to load notifications');
       } finally {
@@ -114,20 +123,22 @@ export default function NotificationsSettings() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-        <Info className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
+      {intro && (
+      <div className="flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 dark:border-sky-900/60 dark:bg-sky-950/40">
+        <Info className="mt-0.5 h-5 w-5 shrink-0 text-sky-500" />
         <div>
-          <p className="text-sm font-semibold text-blue-900">Customisable Messages</p>
-          <p className="text-sm text-blue-700">
+          <p className="text-sm font-semibold text-sky-900 dark:text-sky-100">Customisable messages</p>
+          <p className="text-sm text-sky-700 dark:text-sky-200">
             Toggle each notification on or off, and optionally customise the message text. Use{' '}
             <span className="font-mono">{'{variable}'}</span> placeholders shown below each template. Leave blank to use the system default.
           </p>
         </div>
       </div>
+      )}
 
       {groups.map((group, gi) => (
         <Card key={group.key} title={group.label} description={group.description}>
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {group.events.map((ev, ei) => (
               <EventRow key={`${ev.event_key}-${ev.channel}`} ev={ev} onChange={(next) => updateEvent(gi, ei, next)} />
             ))}
@@ -136,7 +147,7 @@ export default function NotificationsSettings() {
       ))}
 
       <div className="sticky bottom-4 z-10">
-        <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-5 py-3">
+        <div className="rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-lg dark:border-slate-800 dark:bg-slate-900">
           <SaveBar onSave={save} saving={saving} label="Save Preferences" />
         </div>
       </div>

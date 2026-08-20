@@ -14,7 +14,7 @@ const INTEGRATIONS = [
     name: "Africa's Talking",
     category: 'SMS Gateway',
     icon: MessageSquare,
-    iconClass: 'bg-orange-50 text-orange-600',
+    iconClass: 'bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300',
     desc: 'Send transactional SMS — payment receipts, expiry reminders and vouchers.',
   },
   {
@@ -22,7 +22,7 @@ const INTEGRATIONS = [
     name: 'Email (SMTP)',
     category: 'Email',
     icon: Mail,
-    iconClass: 'bg-sky-50 text-sky-600',
+    iconClass: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300',
     desc: 'Deliver invoices and account emails through your own mail server.',
   },
   {
@@ -30,7 +30,7 @@ const INTEGRATIONS = [
     name: 'M-Pesa Daraja',
     category: 'Payments',
     icon: Smartphone,
-    iconClass: 'bg-emerald-50 text-emerald-600',
+    iconClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
     desc: 'STK push and C2B collections. Credentials are managed under the Payments tab.',
   },
   {
@@ -38,7 +38,7 @@ const INTEGRATIONS = [
     name: 'Telegram Bot',
     category: 'Alerts',
     icon: Send,
-    iconClass: 'bg-cyan-50 text-cyan-600',
+    iconClass: 'bg-cyan-50 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-300',
     desc: 'Push router and payment alerts to a Telegram group or channel.',
   },
   {
@@ -46,7 +46,7 @@ const INTEGRATIONS = [
     name: 'Webhooks',
     category: 'Developer',
     icon: Webhook,
-    iconClass: 'bg-violet-50 text-violet-600',
+    iconClass: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
     desc: 'POST real-time events (payments, sessions, tickets) to your own endpoint.',
   },
   {
@@ -54,7 +54,7 @@ const INTEGRATIONS = [
     name: 'Google Analytics',
     category: 'Analytics',
     icon: BarChart3,
-    iconClass: 'bg-amber-50 text-amber-600',
+    iconClass: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300',
     desc: 'Track captive-portal visits and conversions with your GA4 property.',
   },
   {
@@ -62,7 +62,7 @@ const INTEGRATIONS = [
     name: 'Zapier',
     category: 'Automation',
     icon: Zap,
-    iconClass: 'bg-rose-50 text-rose-600',
+    iconClass: 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300',
     desc: 'Connect Lumen to 6,000+ apps without writing any code.',
   },
 ];
@@ -248,7 +248,12 @@ function ConfigModal({ item, initialConfig, connected, saving, onClose, onSave, 
   );
 }
 
-export default function IntegrationsSettings({ onNavigate }) {
+/**
+ * `only` renders a single provider as its own panel — Settings > Communications
+ * and Settings > Email are this component narrowed to one card, so the gateway
+ * config lives in one place rather than being duplicated per surface.
+ */
+export default function IntegrationsSettings({ onNavigate, only, title, description }) {
   const [loading, setLoading] = useState(true);
   const [stateMap, setStateMap] = useState({}); // key -> { enabled, config }
   const [savingKey, setSavingKey] = useState(null);
@@ -331,16 +336,21 @@ export default function IntegrationsSettings({ onNavigate }) {
     }
   };
 
+  const shown = only ? INTEGRATIONS.filter((i) => only.includes(i.key)) : INTEGRATIONS;
+
   if (loading) return <LoadingBlock />;
 
   return (
     <div className="space-y-6">
       <Card
-        title="Integrations"
-        description="Connect Lumen to the external services that power notifications, payments and automation"
+        title={title || 'Integrations'}
+        description={
+          description ||
+          'Connect Lumen to the external services that power notifications, payments and automation'
+        }
       >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {INTEGRATIONS.map((it) => {
+        <div className={`grid grid-cols-1 gap-4 ${shown.length > 1 ? 'md:grid-cols-2' : ''}`}>
+          {shown.map((it) => {
             const Icon = it.icon;
             const active = isActive(it.key);
             const isMpesa = it.key === 'mpesa';
@@ -348,7 +358,7 @@ export default function IntegrationsSettings({ onNavigate }) {
             return (
               <div
                 key={it.key}
-                className="flex flex-col rounded-xl border border-gray-200 p-4 transition hover:border-gray-300 hover:shadow-sm"
+                className="flex flex-col rounded-xl border border-slate-200 p-4 transition hover:border-slate-300 hover:shadow-sm dark:border-slate-800 dark:hover:border-slate-700"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
@@ -356,16 +366,16 @@ export default function IntegrationsSettings({ onNavigate }) {
                       <Icon className="h-5 w-5" />
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-900">{it.name}</p>
-                      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{it.category}</p>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{it.name}</p>
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">{it.category}</p>
                     </div>
                   </div>
                   <StatusPill status={status} />
                 </div>
 
-                <p className="mt-3 flex-1 text-sm leading-relaxed text-gray-500">{it.desc}</p>
+                <p className="mt-3 flex-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">{it.desc}</p>
 
-                <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
+                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
                   <button
                     type="button"
                     onClick={() => openConfig(it)}

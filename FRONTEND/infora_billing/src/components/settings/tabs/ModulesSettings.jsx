@@ -10,26 +10,30 @@ const MODULES = [
     key: 'pppoe_enabled',
     name: 'PPPoE',
     icon: Network,
-    iconClass: 'bg-violet-50 text-violet-600',
+    iconClass: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
     description: 'Enable PPPoE client management for broadband subscriptions with username/password authentication.',
   },
   {
     key: 'hotspot_enabled',
     name: 'Hotspot',
     icon: Wifi,
-    iconClass: 'bg-emerald-50 text-emerald-600',
+    iconClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
     description: 'Enable hotspot user management for time-based vouchers and WIFI access codes.',
   },
   {
     key: 'reseller_enabled',
     name: 'Reseller',
     icon: Users,
-    iconClass: 'bg-amber-50 text-amber-600',
+    iconClass: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300',
     description: 'Enable reseller management to create sub-accounts that can sell your packages.',
   },
 ];
 
-export default function ModulesSettings({ isAdmin }) {
+/**
+ * `only` narrows the list to one module, so the PPPoE and Hotspot panels can
+ * own their own on/off switch instead of sending an operator back here for it.
+ */
+export default function ModulesSettings({ isAdmin, only, title, description }) {
   const [modules, setModules] = useState(null);
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState(null);
@@ -63,10 +67,15 @@ export default function ModulesSettings({ isAdmin }) {
 
   if (loading || !modules) return <LoadingBlock />;
 
+  const shown = only ? MODULES.filter((m) => only.includes(m.key)) : MODULES;
+
   return (
-    <Card title="Modules" description="Features enabled for your ISP portal by your administrator">
-      <div className="divide-y divide-gray-100">
-        {MODULES.map((mod) => {
+    <Card
+      title={title || 'Modules'}
+      description={description || 'Features enabled for your ISP portal by your administrator'}
+    >
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {shown.map((mod) => {
           const Icon = mod.icon;
           const enabled = !!modules[mod.key];
           return (
@@ -75,15 +84,15 @@ export default function ModulesSettings({ isAdmin }) {
                 <Icon className="h-5 w-5" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-900">{mod.name}</p>
-                <p className="text-sm text-gray-500">{mod.description}</p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{mod.name}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">{mod.description}</p>
               </div>
               {isAdmin ? (
                 <Toggle checked={enabled} onChange={(v) => toggle(mod.key, v)} disabled={savingKey === mod.key} />
               ) : (
                 <span
                   className={`inline-flex items-center gap-1.5 text-sm font-medium ${
-                    enabled ? 'text-emerald-600' : 'text-gray-400'
+                    enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'
                   }`}
                 >
                   <CheckCircle2 className="h-4 w-4" />
@@ -94,7 +103,7 @@ export default function ModulesSettings({ isAdmin }) {
           );
         })}
       </div>
-      <div className="mt-4 flex items-center gap-2 text-xs text-gray-400">
+      <div className="mt-4 flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
         <Info className="h-3.5 w-3.5" />
         {isAdmin
           ? 'Toggling a module shows or hides its features across the portal.'

@@ -1,14 +1,34 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
 
+/* -------------------------------------------------------------------------
+ * Settings primitives.
+ *
+ * These carry the whole Settings surface, so they are written in the console's
+ * current language rather than the light-only gray one they started in: slate
+ * neutrals, rounded-2xl panels, and explicit `dark:` variants.
+ *
+ * The explicit variants matter. index.css remaps light utilities to dark
+ * surfaces for the console at large, but that remap is a blanket default —
+ * anything stating its own dark intent (specificity 0,2,0, emitted after the
+ * remap block) wins. Settings states its own, so the panels here are designed
+ * in both themes rather than inheriting an approximation of one.
+ * ---------------------------------------------------------------------- */
+
 export function Card({ title, description, children, action, className = '' }) {
   return (
-    <div className={`bg-white border border-gray-200 rounded-xl shadow-sm ${className}`}>
+    <div
+      className={`rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 ${className}`}
+    >
       {(title || action) && (
-        <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-100">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 pb-4 pt-5 dark:border-slate-800">
           <div>
-            {title && <h3 className="text-base font-semibold text-gray-900">{title}</h3>}
-            {description && <p className="mt-0.5 text-sm text-gray-500">{description}</p>}
+            {title && (
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
+            )}
+            {description && (
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{description}</p>
+            )}
           </div>
           {action}
         </div>
@@ -18,35 +38,56 @@ export function Card({ title, description, children, action, className = '' }) {
   );
 }
 
-export function Field({ label, hint, children, className = '' }) {
+/** A titled block *inside* a Card — the mock's "Active domain" / "Change domain". */
+export function Section({ title, description, children, className = '' }) {
   return (
-    <div className={className}>
-      {label && (
-        <label className="block text-[11px] font-semibold tracking-wide text-gray-500 uppercase mb-1.5">
-          {label}
-        </label>
+    <div
+      className={`rounded-xl border border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800 dark:bg-slate-950/40 ${className}`}
+    >
+      {title && (
+        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</h4>
       )}
-      {children}
-      {hint && <p className="mt-1.5 text-xs text-gray-400 leading-relaxed">{hint}</p>}
+      {description && (
+        <p className="mt-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">{description}</p>
+      )}
+      <div className={title || description ? 'mt-4' : ''}>{children}</div>
     </div>
   );
 }
 
-export function TextInput({ className = '', ...props }) {
+export function Field({ label, hint, required, children, className = '' }) {
   return (
-    <input
-      {...props}
-      className={`block w-full px-3.5 py-2.5 text-sm border border-gray-300 rounded-lg bg-white text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 outline-none transition ${className}`}
-    />
+    <div className={className}>
+      {label && (
+        <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          {label}
+          {required && <span className="ml-0.5 text-rose-500">*</span>}
+        </label>
+      )}
+      {children}
+      {hint && (
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-400 dark:text-slate-500">{hint}</p>
+      )}
+    </div>
   );
 }
 
+const CONTROL =
+  'block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-emerald-500';
+
+export function TextInput({ className = '', ...props }) {
+  return <input {...props} className={`${CONTROL} ${className}`} />;
+}
+
 export function Textarea({ className = '', ...props }) {
+  return <textarea {...props} className={`${CONTROL} ${className}`} />;
+}
+
+export function Select({ className = '', children, ...props }) {
   return (
-    <textarea
-      {...props}
-      className={`block w-full px-3.5 py-2.5 text-sm border border-gray-300 rounded-lg bg-white text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 outline-none transition ${className}`}
-    />
+    <select {...props} className={`${CONTROL} ${className}`}>
+      {children}
+    </select>
   );
 }
 
@@ -58,9 +99,9 @@ export function Toggle({ checked, onChange, disabled }) {
       aria-checked={checked}
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 ${
-        checked ? 'bg-emerald-500' : 'bg-gray-300'
-      } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 ${
+        checked ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
+      } ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
     >
       <span
         className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
@@ -76,7 +117,7 @@ export function PrimaryButton({ children, loading, className = '', ...props }) {
     <button
       {...props}
       disabled={loading || props.disabled}
-      className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed transition ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
       {loading && <Loader2 className="h-4 w-4 animate-spin" />}
       {children}
@@ -84,7 +125,48 @@ export function PrimaryButton({ children, loading, className = '', ...props }) {
   );
 }
 
-export function SaveBar({ onSave, saving, disabled, label = 'Save Changes', children }) {
+export function GhostButton({ children, loading, className = '', ...props }) {
+  return (
+    <button
+      {...props}
+      disabled={loading || props.disabled}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${className}`}
+    >
+      {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+      {children}
+    </button>
+  );
+}
+
+/** Two-or-more mutually exclusive choices, as in the mock's subdomain switch. */
+export function Segmented({ value, onChange, options, className = '' }) {
+  return (
+    <div
+      className={`inline-flex rounded-full border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-950 ${className}`}
+    >
+      {options.map((option) => {
+        const on = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            aria-pressed={on}
+            className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+              on
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-slate-100'
+                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function SaveBar({ onSave, saving, disabled, label = 'Save changes', children }) {
   return (
     <div className="flex items-center justify-end gap-3 pt-1">
       {children}
@@ -97,8 +179,68 @@ export function SaveBar({ onSave, saving, disabled, label = 'Save Changes', chil
 
 export function LoadingBlock() {
   return (
-    <div className="flex items-center justify-center py-20 text-gray-400">
+    <div className="flex items-center justify-center py-20 text-slate-400 dark:text-slate-500">
       <Loader2 className="h-6 w-6 animate-spin" />
+    </div>
+  );
+}
+
+const NOTE_TONES = {
+  info: 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-100',
+  warn: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100',
+  success:
+    'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-100',
+};
+
+export function Note({ icon: Icon, title, tone = 'info', children }) {
+  return (
+    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${NOTE_TONES[tone] || NOTE_TONES.info}`}>
+      {Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 opacity-80" />}
+      <div className="min-w-0">
+        {title && <p className="text-sm font-semibold">{title}</p>}
+        {children && <div className="text-sm leading-relaxed opacity-90">{children}</div>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Panels whose UI is designed but whose backend does not exist yet.
+ *
+ * Deliberately loud, and deliberately paired with inert controls rather than
+ * hidden ones: an operator should be able to see what the feature will ask for
+ * without a save button that quietly does nothing.
+ */
+export function NotWired({ children }) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-dashed border-amber-300 bg-amber-50/60 px-4 py-3 dark:border-amber-800 dark:bg-amber-950/30">
+      <span className="mt-0.5 flex h-5 shrink-0 items-center rounded-full bg-amber-500/15 px-2 text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+        Preview
+      </span>
+      <p className="text-sm leading-relaxed text-amber-900 dark:text-amber-100">{children}</p>
+    </div>
+  );
+}
+
+/**
+ * Stands in for the save button on a preview panel.
+ *
+ * The controls themselves stay live — being able to click through a form is
+ * most of what makes it reviewable — so the honesty has to live on the one
+ * button that would otherwise imply persistence.
+ */
+export function UnavailableSave({ children = 'Nothing here saves yet.' }) {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
+      <p className="text-xs text-slate-400 dark:text-slate-500">{children}</p>
+      <button
+        type="button"
+        disabled
+        title="Not available yet"
+        className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+      >
+        Save changes
+      </button>
     </div>
   );
 }

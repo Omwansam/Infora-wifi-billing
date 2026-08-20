@@ -21,6 +21,7 @@ from models import (
 from services.rate_limit import rate_limit
 from services import notification_events as nev
 from services.portal_urls import portal_entry_url, portal_frontend_base_url
+from services import tenant_slug
 from services.encryption import encrypt_value, decrypt_value
 from datetime import datetime
 
@@ -109,6 +110,12 @@ def serialize_general(isp):
         'hotspot_password_length': isp.hotspot_password_length,
         'custom_domain': isp.custom_domain,
         'current_portal_url': portal_entry_url(isp.id, isp=isp) or portal_frontend_base_url() or _public_base_url(),
+        # Account address, for Settings > Domain. The slug itself is issued once
+        # at signup and never changes (services/tenant_slug.py), so this is
+        # read-only here — the panel shows it, the custom domain is what moves.
+        'slug': isp.slug,
+        'tenant_base_domain': tenant_slug.base_domain(),
+        'account_address': tenant_slug.account_address(isp.slug) if isp.slug else None,
     }
 
 

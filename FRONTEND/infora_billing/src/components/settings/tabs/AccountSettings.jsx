@@ -55,7 +55,7 @@ function PasswordInput({ value, onChange, placeholder, autoComplete, invalid, id
         onClick={() => setShow((s) => !s)}
         tabIndex={-1}
         aria-label={show ? 'Hide password' : 'Show password'}
-        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 transition"
+        className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 transition hover:text-slate-600 dark:hover:text-slate-300"
       >
         {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </button>
@@ -73,7 +73,7 @@ function StrengthMeter({ password }) {
         {Array.from({ length: strength.max }, (_, i) => (
           <span
             key={i}
-            className="h-1 flex-1 rounded-full bg-gray-200 transition-colors"
+            className="h-1 flex-1 rounded-full bg-slate-200 transition-colors dark:bg-slate-700"
             style={i < strength.score ? { backgroundColor: strength.color } : undefined}
           />
         ))}
@@ -89,7 +89,7 @@ function StrengthMeter({ password }) {
               className={`rounded px-1.5 py-0.5 font-mono text-[10px] ring-1 transition ${
                 strength.met[requirement.key]
                   ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20'
-                  : 'text-gray-400 ring-gray-200'
+                  : 'text-slate-400 ring-slate-200 dark:text-slate-500 dark:ring-slate-700'
               }`}
             >
               {requirement.label}
@@ -101,7 +101,12 @@ function StrengthMeter({ password }) {
   );
 }
 
-export default function AccountSettings() {
+/**
+ * `section` splits this across the mock's two account panels: Profile (who you
+ * are) and Password & 2FA (how you get in). Both still load the one /profile
+ * record, so neither can drift from the other.
+ */
+export default function AccountSettings({ section = 'profile' }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -208,7 +213,7 @@ export default function AccountSettings() {
   };
 
   const roleClass = useMemo(
-    () => ROLE_STYLES[(profile?.role || '').toLowerCase()] || 'bg-gray-100 text-gray-600 ring-gray-500/20',
+    () => ROLE_STYLES[(profile?.role || '').toLowerCase()] || 'bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-800 dark:text-slate-300',
     [profile?.role],
   );
 
@@ -216,15 +221,17 @@ export default function AccountSettings() {
 
   return (
     <div className="space-y-6">
+      {section === 'profile' && (
+        <>
       {/* Identity header — who you are signed in as, at a glance. */}
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 text-xl font-bold text-white shadow-sm">
             {initials(profile.first_name, profile.last_name, profile.email)}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-lg font-semibold text-gray-900">
+              <h2 className="truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
                 {[profile.first_name, profile.last_name].filter(Boolean).join(' ') || 'Your account'}
               </h2>
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset ${roleClass}`}>
@@ -236,16 +243,16 @@ export default function AccountSettings() {
                 </span>
               )}
             </div>
-            <p className="mt-1 flex items-center gap-1.5 truncate text-sm text-gray-500">
+            <p className="mt-1 flex items-center gap-1.5 truncate text-sm text-slate-500 dark:text-slate-400">
               <Mail className="h-3.5 w-3.5 shrink-0" />
               {profile.email}
             </p>
           </div>
           <dl className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-1 text-xs sm:text-right">
-            <dt className="text-gray-400">Last sign-in</dt>
-            <dd className="font-medium text-gray-700">{formatDate(profile.last_login)}</dd>
-            <dt className="text-gray-400">Member since</dt>
-            <dd className="font-medium text-gray-700">{formatDate(profile.created_at)}</dd>
+            <dt className="text-slate-400 dark:text-slate-500">Last sign-in</dt>
+            <dd className="font-medium text-slate-700 dark:text-slate-300">{formatDate(profile.last_login)}</dd>
+            <dt className="text-slate-400 dark:text-slate-500">Member since</dt>
+            <dd className="font-medium text-slate-700 dark:text-slate-300">{formatDate(profile.created_at)}</dd>
           </dl>
         </div>
       </div>
@@ -292,7 +299,11 @@ export default function AccountSettings() {
           <SaveBar onSave={saveProfile} saving={savingProfile} />
         </div>
       </Card>
+        </>
+      )}
 
+      {section === 'security' && (
+        <>
       <Card
         title="Change password"
         description="Use a strong password you don't use anywhere else"
@@ -393,31 +404,31 @@ export default function AccountSettings() {
             </div>
             <div>
               {twoFactor.loading ? (
-                <p className="text-sm text-gray-500">Checking status…</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Checking status…</p>
               ) : twoFactor.unknown ? (
                 <>
-                  <p className="text-sm font-semibold text-gray-900">Status unavailable</p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Status unavailable</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     Could not reach the server. Open the security page to check.
                   </p>
                 </>
               ) : twoFactor.enabled ? (
                 <>
-                  <p className="text-sm font-semibold text-gray-900">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                     Enabled
                     <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
                       Protected
                     </span>
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     {twoFactor.remaining} backup code{twoFactor.remaining === 1 ? '' : 's'} remaining.
                     {twoFactor.remaining <= 2 && ' Generate new ones soon.'}
                   </p>
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-semibold text-gray-900">Not enabled</p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Not enabled</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     Your account is protected by a password alone.
                   </p>
                 </>
@@ -429,7 +440,7 @@ export default function AccountSettings() {
             <PrimaryButton
               className={
                 twoFactor.enabled
-                  ? 'bg-white text-gray-700 ring-1 ring-inset ring-gray-300 shadow-sm hover:bg-gray-50'
+                  ? 'bg-white text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-slate-800'
                   : ''
               }
             >
@@ -440,6 +451,8 @@ export default function AccountSettings() {
           </Link>
         </div>
       </Card>
+        </>
+      )}
     </div>
   );
 }
