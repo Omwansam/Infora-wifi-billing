@@ -232,16 +232,11 @@ export default function SettingsPage() {
     [setSearchParams],
   );
 
-  // Switching panels from the bottom of a long one would otherwise leave you
-  // scrolled past the new panel's header. Skipped on first paint so a deep
-  // link does not open with a scroll animation.
-  const mounted = useRef(false);
+  // The panel pane is its own scroll container now, so switching panels resets
+  // *it* rather than the window — otherwise you land halfway down a new panel
+  // after scrolling to the bottom of the last one.
   useEffect(() => {
-    if (!mounted.current) {
-      mounted.current = true;
-      return;
-    }
-    mainRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    mainRef.current?.scrollTo({ top: 0 });
   }, [active]);
 
   // ⌘K / Ctrl-K focuses the rail search, which is where anyone who cannot find
@@ -259,19 +254,25 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="min-h-full bg-slate-50 dark:bg-slate-950">
-      <div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
-        <div className="lg:flex lg:gap-8 xl:gap-10">
-          {/* --- Rail (desktop) --- */}
-          <aside className="hidden lg:block lg:w-[19rem] lg:shrink-0">
-            <div className="sticky top-6 flex max-h-[calc(100vh-3rem)] flex-col">
-              <SearchBox value={query} onChange={setQuery} inputRef={searchRef} />
-              <nav className="-mr-2 mt-5 flex-1 overflow-y-auto pb-6 pr-2">
-                <NavBody query={query} active={active} onSelect={go} railId="rail-desktop" />
-              </nav>
-            </div>
-          </aside>
+    /* Locked to the viewport: the header above is sticky and 60px + 1px of
+       border tall, so this fills exactly what is left. `overflow-hidden` stops
+       the window scrolling at all — the rail and the panel each own their own
+       scrollbar, which is what keeps the rail in place while a long panel like
+       Message templates runs past the fold. */
+    <div className="flex h-[calc(100dvh-61px)] overflow-hidden bg-slate-50 dark:bg-slate-950">
+      {/* --- Rail (desktop) --- */}
+      <aside className="hidden w-[19rem] shrink-0 flex-col border-r border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/40 lg:flex">
+        <div className="shrink-0 px-4 pb-3 pt-4">
+          <SearchBox value={query} onChange={setQuery} inputRef={searchRef} />
+        </div>
+        <nav className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+          <NavBody query={query} active={active} onSelect={go} railId="rail-desktop" />
+        </nav>
+      </aside>
 
+      {/* --- Panel pane: the only part that scrolls --- */}
+      <main ref={mainRef} className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
           {/* --- Rail (mobile): a disclosure above the panel --- */}
           <div className="mb-6 lg:hidden">
             <button
@@ -301,20 +302,17 @@ export default function SettingsPage() {
             {mobileNavOpen && (
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
                 <SearchBox value={query} onChange={setQuery} />
-                <nav className="mt-4 max-h-[60vh] overflow-y-auto">
+                <nav className="mt-4 max-h-[55vh] overflow-y-auto">
                   <NavBody query={query} active={active} onSelect={go} railId="rail-mobile" />
                 </nav>
               </div>
             )}
           </div>
 
-          {/* --- Panel --- */}
-          <main ref={mainRef} className="min-w-0 flex-1 scroll-mt-6 pb-16">
-            <PageHeading item={item} />
-            {panelFor(active, { admin, go })}
-          </main>
+          <PageHeading item={item} />
+          {panelFor(active, { admin, go })}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 
 /* -------------------------------------------------------------------------
  * Settings primitives.
@@ -75,13 +75,15 @@ export function Field({ label, hint, required, children, className = '' }) {
 const CONTROL =
   'block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-emerald-500';
 
-export function TextInput({ className = '', ...props }) {
-  return <input {...props} className={`${CONTROL} ${className}`} />;
-}
+/* Refs are forwarded so callers can insert a variable at the cursor rather
+   than only appending to the end of the field. */
+export const TextInput = React.forwardRef(function TextInput({ className = '', ...props }, ref) {
+  return <input ref={ref} {...props} className={`${CONTROL} ${className}`} />;
+});
 
-export function Textarea({ className = '', ...props }) {
-  return <textarea {...props} className={`${CONTROL} ${className}`} />;
-}
+export const Textarea = React.forwardRef(function Textarea({ className = '', ...props }, ref) {
+  return <textarea ref={ref} {...props} className={`${CONTROL} ${className}`} />;
+});
 
 export function Select({ className = '', children, ...props }) {
   return (
@@ -243,4 +245,106 @@ export function UnavailableSave({ children = 'Nothing here saves yet.' }) {
       </button>
     </div>
   );
+}
+
+/* -------------------------------------------------------------------------
+ * Row-level controls.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * A switch in its own inset well, with the state spelled out beside it.
+ *
+ * The word matters: a lone toggle makes a reader work out which end is on from
+ * its colour, and half of these settings are ones you check rather than change.
+ */
+export function ToggleRow({
+  label, description, checked, onChange, disabled,
+  onLabel = 'On', offLabel = 'Off', children,
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{label}</p>
+      {description && (
+        <p className="mt-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">{description}</p>
+      )}
+      <div className="mt-3 flex items-center gap-3">
+        <Toggle checked={checked} onChange={onChange} disabled={disabled} />
+        <span
+          className={`text-sm font-medium ${
+            checked
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : 'text-slate-400 dark:text-slate-500'
+          }`}
+        >
+          {checked ? onLabel : offLabel}
+        </span>
+      </div>
+      {children && <div className="mt-4">{children}</div>}
+    </div>
+  );
+}
+
+/** Clickable tokens that append into the field above them. */
+export function VariableChips({ variables, onInsert }) {
+  if (!variables?.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {variables.map((v) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onInsert(v)}
+          title={`Insert ${v}`}
+          className="rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[11px] text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+        >
+          {v}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Save affordance that only appears once something is actually different.
+ *
+ * It sticks to the bottom of the scrolling panel rather than sitting at the end
+ * of the form, because these panels are long enough that a save button below
+ * the fold reads as "there is nothing to save".
+ */
+export function StickySaveBar({ dirty, saving, onSave, onReset, label = 'Save' }) {
+  if (!dirty) return null;
+  return (
+    <div className="sticky bottom-4 z-20 mt-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/95 px-5 py-3 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+        <p className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+          <AlertCircle className="h-4 w-4 text-amber-500" />
+          Unsaved changes
+        </p>
+        <div className="flex items-center gap-2">
+          <GhostButton onClick={onReset} disabled={saving} className="px-3.5 py-2">
+            Reset
+          </GhostButton>
+          <PrimaryButton onClick={onSave} loading={saving} className="px-5 py-2">
+            {label}
+          </PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * Splice a token into a field at the caret rather than appending to the end.
+ *
+ * Appending is wrong often enough to matter: these templates put the variable
+ * mid-sentence ("Hi {first_name}, your…"), so a chip that always lands at the
+ * end means retyping the tail every time.
+ */
+export function insertAtCursor(el, current, token) {
+  const value = current || '';
+  if (!el) return { next: value + token, caret: (value + token).length };
+  const start = el.selectionStart ?? value.length;
+  const end = el.selectionEnd ?? value.length;
+  return { next: value.slice(0, start) + token + value.slice(end), caret: start + token.length };
 }

@@ -59,7 +59,7 @@ export const SETTINGS_GROUPS = [
       {
         id: 'pppoe',
         name: 'PPPoE',
-        sub: 'Fixed-line subscribers, FUP, reminders',
+        sub: 'Fixed-line subscribers & FUP',
         icon: Network,
         title: 'Fixed-line over PPPoE',
         accent: 'PPPoE',
@@ -69,7 +69,7 @@ export const SETTINGS_GROUPS = [
       {
         id: 'hotspot',
         name: 'Hotspot',
-        sub: 'Captive portal, vouchers, instructions',
+        sub: 'Captive portal & vouchers',
         icon: Wifi,
         title: 'Your hotspot',
         accent: 'hotspot',

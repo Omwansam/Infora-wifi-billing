@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Gift } from 'lucide-react';
-import { Card, Field, TextInput, Select, Toggle, NotWired, UnavailableSave } from '../ui';
+import { Card, Field, TextInput, Select, ToggleRow, NotWired, UnavailableSave } from '../ui';
 
 /* -------------------------------------------------------------------------
  * Settings > Loyalty points — design only.
@@ -46,24 +46,26 @@ export default function LoyaltySettings() {
       </NotWired>
 
       <div className="space-y-6">
-          <Card title="Earning" description="What a subscriber gets back for paying you">
-            <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 dark:border-slate-800 dark:bg-slate-950/40">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300">
-                  <Gift className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    Reward subscribers for payments
-                  </p>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    Points accrue on every successful payment, not on invoices raised.
-                  </p>
-                </div>
-              </div>
-              <Toggle checked={scheme} onChange={setScheme} />
-            </div>
+          <Card
+            title="Programme"
+            description="Enable or disable the loyalty programme for all subscribers on this workspace."
+            action={
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300">
+                <Gift className="h-[18px] w-[18px]" />
+              </span>
+            }
+          >
+            <ToggleRow
+              label="Enable loyalty points"
+              description="Points accrue on every successful payment, not on invoices raised."
+              checked={scheme}
+              onChange={setScheme}
+              onLabel="Enabled"
+              offLabel="Disabled"
+            />
+          </Card>
 
+          <Card title="Earning" description="What a subscriber gets back for paying you">
             <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
               <Field label="Points earned" hint="How many points one qualifying chunk of spend is worth.">
                 <TextInput
