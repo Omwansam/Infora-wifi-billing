@@ -161,6 +161,11 @@ def ensure_schema_upgrades():
             'subscription_expires_at': 'TIMESTAMP',
             'subscription_is_trial': 'BOOLEAN DEFAULT TRUE',
             'subscription_amount': 'NUMERIC(12, 2)',
+            # Which messaging gateway this tenant sends on. NULL = fall back to
+            # the platform's own env-configured route. Credentials live in
+            # integration_settings keyed by the same provider id.
+            'sms_provider': 'VARCHAR(40)',
+            'whatsapp_provider': 'VARCHAR(40)',
         },
         'cpe_devices': {
             # ONT position + which ODB/splitter port it hangs off, so a dimming

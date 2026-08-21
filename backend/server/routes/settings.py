@@ -955,6 +955,14 @@ def _integration_config(row):
         return {}
 
 
+def _decrypted_integration_config(row):
+    """Usable config for an outbound call — secrets decrypted, not masked."""
+    return {
+        name: (decrypt_value(value) if _is_secret_field(name) and value else value)
+        for name, value in (_integration_config(row) or {}).items()
+    }
+
+
 def _public_integration_config(raw):
     """Config safe to return to the client — secrets masked, never decrypted."""
     out = {}
@@ -978,6 +986,159 @@ def get_integrations():
         for r in rows
     ]
     return jsonify({'integrations': integrations}), 200
+
+
+# ---------------------------------------------------------------------------
+# Messaging gateways (Settings > Communications, Settings > WhatsApp)
+#
+# Selection and credentials are stored separately: the chosen provider id sits
+# on the ISP row, each provider's secrets sit in their own integration_settings
+# row keyed by that same id. Switching provider therefore never destroys the
+# credentials of the one you switched away from.
+# ---------------------------------------------------------------------------
+
+def _messaging_channel(channel):
+    from services import messaging_providers as mp
+
+    return mp.SMS if channel == 'sms' else mp.WHATSAPP
+
+
+@settings_bp.route('/messaging/<channel>', methods=['GET'])
+@jwt_required()
+def list_messaging_providers(channel):
+    """Catalogue + saved state for one channel, in one call."""
+    from services import messaging_providers as mp
+
+    if channel not in ('sms', 'whatsapp'):
+        return jsonify({'error': 'Unknown channel'}), 404
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+
+    rows = {r.key: r for r in IntegrationSetting.query.filter_by(isp_id=isp.id).all()}
+    active = isp.sms_provider if channel == 'sms' else isp.whatsapp_provider
+
+    providers = []
+    for spec in mp.for_channel(_messaging_channel(channel)):
+        row = rows.get(spec['id'])
+        raw = _integration_config(row) if row else {}
+        config = _public_integration_config(raw)
+        providers.append({
+            **mp.public_spec(spec['id']),
+            'configured': bool(row and row.enabled and not mp.missing_fields(spec['id'], raw)),
+            'enabled': bool(row and row.enabled),
+            'active': spec['id'] == active,
+            'config': config,
+        })
+
+    return jsonify({
+        'channel': channel,
+        'active': active or '',
+        # SMS falls back to the deployment's own gateway; WhatsApp cannot, since
+        # a shared number cannot carry another business's branding.
+        'platform_fallback': channel == 'sms',
+        'providers': providers,
+    }), 200
+
+
+@settings_bp.route('/messaging/<channel>/active', methods=['PUT'])
+@jwt_required()
+def set_active_messaging_provider(channel):
+    from services import messaging_providers as mp
+
+    if channel not in ('sms', 'whatsapp'):
+        return jsonify({'error': 'Unknown channel'}), 404
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+
+    provider_id = ((request.get_json() or {}).get('provider') or '').strip().lower()
+
+    if not provider_id:
+        # Empty means "go back to the platform default" (SMS) or "off"
+        # (WhatsApp). Credentials are deliberately left in place.
+        if channel == 'sms':
+            isp.sms_provider = None
+        else:
+            isp.whatsapp_provider = None
+        db.session.commit()
+        return jsonify({'message': 'Reverted to the default route', 'active': ''}), 200
+
+    spec = mp.get(provider_id)
+    if not spec or spec['channel'] != _messaging_channel(channel):
+        return jsonify({'error': 'Unknown provider for this channel'}), 400
+
+    row = IntegrationSetting.query.filter_by(isp_id=isp.id, key=provider_id).first()
+    raw = _integration_config(row) if row else {}
+    missing = mp.missing_fields(provider_id, raw)
+    if missing:
+        labels = {f['name']: f['label'] for f in spec['fields']}
+        return jsonify({
+            'error': f"Add {spec['name']}'s credentials first — missing "
+                     f"{', '.join(labels.get(m, m) for m in missing)}.",
+        }), 400
+
+    if row is not None and not row.enabled:
+        row.enabled = True
+    if channel == 'sms':
+        isp.sms_provider = provider_id
+    else:
+        isp.whatsapp_provider = provider_id
+    db.session.commit()
+    return jsonify({'message': f"Now sending through {spec['name']}", 'active': provider_id}), 200
+
+
+@settings_bp.route('/messaging/<channel>/<provider_id>/test', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=5, window=300, scope='settings-messaging-test')
+def test_messaging_provider(channel, provider_id):
+    """Send a real message through one provider's saved credentials.
+
+    Deliberately tests the *saved* row for the named provider rather than the
+    active one, so credentials can be proven before being switched to.
+    """
+    from services import messaging_providers as mp
+
+    if channel not in ('sms', 'whatsapp'):
+        return jsonify({'error': 'Unknown channel'}), 404
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+
+    spec = mp.get(provider_id)
+    if not spec or spec['channel'] != _messaging_channel(channel):
+        return jsonify({'error': 'Unknown provider for this channel'}), 404
+
+    phone = ((request.get_json() or {}).get('phone') or '').strip()
+    if not phone:
+        return jsonify({'error': 'Enter a phone number to send the test to'}), 400
+
+    row = IntegrationSetting.query.filter_by(isp_id=isp.id, key=provider_id).first()
+    config = _decrypted_integration_config(row) if row else {}
+    missing = mp.missing_fields(provider_id, config)
+    if missing:
+        labels = {f['name']: f['label'] for f in spec['fields']}
+        return jsonify({
+            'error': f"Save {spec['name']}'s credentials first — missing "
+                     f"{', '.join(labels.get(m, m) for m in missing)}.",
+        }), 400
+
+    brand = isp.name or isp.company_name or 'your network'
+    try:
+        message_id = mp.send(
+            provider_id, config, phone,
+            f'{brand}: test message from your billing dashboard. '
+            f'Your {channel.upper()} gateway is working.',
+        )
+    except Exception as exc:
+        return jsonify({'error': f'{type(exc).__name__}: {exc}', 'provider': provider_id}), 502
+
+    return jsonify({
+        'message': f'Test message sent to {phone}.',
+        'provider': provider_id,
+        'provider_name': spec['name'],
+        'message_id': message_id or '',
+    }), 200
 
 
 # ---------------------------------------------------------------------------

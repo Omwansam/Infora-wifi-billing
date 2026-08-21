@@ -1962,6 +1962,13 @@ class ISP(db.Model):
     account_number_prefix = db.Column(db.String(12), nullable=True)
     account_number_seq = db.Column(db.Integer, default=100000, nullable=True)
 
+    # --- Messaging gateways (Settings > Communications / WhatsApp) ---
+    # The provider id this tenant sends on; NULL means "use the platform's own
+    # gateway". Credentials sit in integration_settings under the same id, so
+    # switching provider keeps every other provider's saved credentials.
+    sms_provider = db.Column(db.String(40), nullable=True)
+    whatsapp_provider = db.Column(db.String(40), nullable=True)
+
     # --- Modules (Settings > Modules) ---
     pppoe_enabled = db.Column(db.Boolean, default=True)
     hotspot_enabled = db.Column(db.Boolean, default=True)

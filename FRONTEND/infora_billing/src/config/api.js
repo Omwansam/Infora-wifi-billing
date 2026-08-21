@@ -168,6 +168,13 @@ export const API_ENDPOINTS = {
   // here means the next receipt leaves the same way.
   settingsIntegrationTest: (key) =>
     `${API_BASE_URL}/api/settings/integrations/${encodeURIComponent(key)}/test`,
+  // Messaging gateways: one catalogue call per channel, plus activate + test.
+  settingsMessaging: (channel) =>
+    `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}`,
+  settingsMessagingActive: (channel) =>
+    `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}/active`,
+  settingsMessagingTest: (channel, provider) =>
+    `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}/${encodeURIComponent(provider)}/test`,
   SETTINGS_API_KEYS: `${API_BASE_URL}/api/settings/api-keys`,
   SETTINGS_WEBHOOK_SECRET: `${API_BASE_URL}/api/settings/api-keys/webhook-secret`,
   settingsRouterTheme: (deviceId) => `${API_BASE_URL}/api/settings/portal/router/${deviceId}`,

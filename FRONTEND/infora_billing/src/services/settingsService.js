@@ -129,6 +129,21 @@ const settingsService = {
   async getIntegrations(token) {
     return handle(await fetch(API_ENDPOINTS.SETTINGS_INTEGRATIONS, { headers: json(token) }));
   },
+  // ---- Messaging gateways ----
+  async getMessaging(token, channel) {
+    return handle(await fetch(API_ENDPOINTS.settingsMessaging(channel), { headers: json(token) }));
+  },
+  async setActiveProvider(token, channel, provider) {
+    return handle(await fetch(API_ENDPOINTS.settingsMessagingActive(channel), {
+      method: 'PUT', headers: json(token), body: JSON.stringify({ provider }),
+    }));
+  },
+  async testMessagingProvider(token, channel, provider, payload) {
+    return handle(await fetch(API_ENDPOINTS.settingsMessagingTest(channel, provider), {
+      method: 'POST', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+
   /** Fire a real test send. Rejects with the gateway's own words on failure. */
   async testIntegration(token, key, payload) {
     return handle(await fetch(API_ENDPOINTS.settingsIntegrationTest(key), {
