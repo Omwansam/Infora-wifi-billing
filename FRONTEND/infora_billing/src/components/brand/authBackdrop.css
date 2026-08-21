@@ -1,0 +1,79 @@
+/* Backdrop for sign-in and sign-up. Colours come from whichever surface hosts
+   it — the wizard sets --onb-*, the login page sets --auth-* — so one file
+   serves both without either owning the palette. */
+
+.authbg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+/* Dot matrix, not a ruled grid. Faded out at the edges so the card sits in a
+   pool of texture instead of on a visible rectangle of it. */
+.authbg__dots {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    var(--authbg-dot, rgba(148, 163, 184, 0.28)) 1px,
+    transparent 1px
+  );
+  background-size: 26px 26px;
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, #000 15%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, #000 15%, transparent 78%);
+  opacity: 0.55;
+}
+
+.authbg__signal {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Arcs are drawn as full circles and clipped by the viewport — cheaper than
+   arc paths, and identical on screen. */
+.authbg__arc {
+  fill: none;
+  stroke: var(--authbg-arc, rgba(16, 185, 129, 0.5));
+  stroke-width: 0.14;
+  opacity: 0.22;
+}
+
+.authbg__run {
+  stroke: var(--authbg-run, rgba(16, 185, 129, 0.5));
+  stroke-width: 1;
+  opacity: 0.08;
+}
+
+.authbg__node {
+  fill: var(--authbg-node, rgba(16, 185, 129, 0.9));
+  opacity: 0.4;
+}
+
+/* A single warm lift behind the card so the middle of the page is not flat. */
+.authbg__glow {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: min(46rem, 90vw);
+  height: min(46rem, 90vw);
+  transform: translate(-50%, -50%);
+  background: radial-gradient(
+    circle,
+    var(--authbg-glow, rgba(16, 185, 129, 0.09)) 0%,
+    transparent 62%
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* A slow drift outward — one cycle is long enough to read as "alive" rather
+     than as something demanding attention while you type a password. */
+  .authbg__signal { animation: authbg-breathe 22s ease-in-out infinite; }
+}
+
+@keyframes authbg-breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.035); opacity: 0.82; }
+}

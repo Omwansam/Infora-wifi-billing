@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { API_ENDPOINTS } from '../config/api';
 import { apiCall, authenticatedApiCall } from '../utils/api';
 import { STORAGE_KEYS, LEGACY_STORAGE_KEYS } from '../lib/brand';
+import { readStoredUser, writeStoredUser } from '../utils/authToken';
 
 const AuthContext = createContext();
 
@@ -11,13 +12,17 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     // Check for stored user data
-    const storedUser =
-      localStorage.getItem(STORAGE_KEYS.user) || localStorage.getItem(LEGACY_STORAGE_KEYS.user);
+    const storedUser = readStoredUser();
     if (storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
-        if (!localStorage.getItem(STORAGE_KEYS.user)) {
+        // Migrate the legacy key forward, but only when the session is already
+        // a remembered one — copying a sessionStorage login into localStorage
+        // would quietly undo "keep me signed in: off".
+        if (localStorage.getItem(LEGACY_STORAGE_KEYS.user)
+            && !localStorage.getItem(STORAGE_KEYS.user)
+            && !sessionStorage.getItem(STORAGE_KEYS.user)) {
           localStorage.setItem(STORAGE_KEYS.user, storedUser);
         }
 
@@ -61,14 +66,23 @@ export const AuthProvider = ({ children }) => {
 
       if (updatedUser) {
         setUser(updatedUser);
-        localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(updatedUser));
+        // Keep the session in the store it was created in; a refresh must not
+        // move an opted-out login into permanent storage.
+        let remembered = true;
+        try {
+          remembered = !sessionStorage.getItem(STORAGE_KEYS.user);
+        } catch { /* storage unavailable — treat as remembered */ }
+        writeStoredUser(JSON.stringify(updatedUser), remembered);
       }
       return true;
     }
     return false;
   };
 
-  const login = async (email, password, otpCode) => {
+  // `remember` picks the storage the session lands in: localStorage survives
+  // the browser closing, sessionStorage does not. Defaults to true so the
+  // existing behaviour is unchanged unless someone opts out.
+  const login = async (email, password, otpCode, remember = true) => {
     setLoading(true);
 
     const body = { email, password };
@@ -98,7 +112,7 @@ export const AuthProvider = ({ children }) => {
       };
 
       setUser(userData);
-      localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(userData));
+      writeStoredUser(JSON.stringify(userData), remember);
       // Backward compatibility for modules reading from 'token'
       localStorage.setItem('token', result.data.access_token);
       if (userData.is_admin) {

@@ -1,29 +1,54 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Mail, Lock, ShieldCheck } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { Eye, EyeOff, Loader2, Moon, ShieldCheck, Sun, UserPlus } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../contexts/AuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import LumenLogo from '../brand/LumenLogo';
+import AuthBackdrop from '../brand/AuthBackdrop';
 import { BRAND } from '../../lib/brand';
 import { DEMO_MODE, DEMO_CREDENTIALS } from '../../demo/config';
+import './login.css';
+
+/* -------------------------------------------------------------------------
+ * Sign in.
+ *
+ * The login logic is unchanged: one `login(email, password, otp)` call, and a
+ * `requires_2fa` response flips the card to the code step. What changed is the
+ * shape around it.
+ *
+ * The second factor now gets the whole card rather than an extra field bolted
+ * under the password. Once the backend has asked for a code, nothing else on
+ * screen is actionable, so leaving the email and password inputs sitting there
+ * only invites someone to edit them and wonder why nothing happened.
+ *
+ * There is no "continue with passkey" here, even though the design it came
+ * from has one. We have no WebAuthn credential store, and the authenticator we
+ * do have is a *second* factor — it identifies nobody on its own, so it cannot
+ * be an alternative to signing in. Presenting it as one would be a button that
+ * looks like a shortcut and behaves like a dead end.
+ * ---------------------------------------------------------------------- */
 
 export default function LoginPage() {
-  // Demo build: pre-fill the demo account so visitors just click "Sign In".
+  // Demo build: pre-fill the demo account so visitors just click "Sign in".
   const [email, setEmail] = useState(DEMO_MODE ? DEMO_CREDENTIALS.email : '');
   const [password, setPassword] = useState(DEMO_MODE ? DEMO_CREDENTIALS.password : '');
   const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [needsOtp, setNeedsOtp] = useState(false);
   const [otp, setOtp] = useState('');
+  const [usingBackup, setUsingBackup] = useState(false);
+
   const { login } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
 
-    // Basic validation
     if (!email || !password) {
       toast.error('Please enter both email and password');
       setLoading(false);
@@ -36,24 +61,19 @@ export default function LoginPage() {
     }
 
     try {
-      const result = await login(email, password, needsOtp ? otp.trim() : undefined);
+      const result = await login(email, password, needsOtp ? otp.trim() : undefined, remember);
 
       if (result.requires_2fa) {
         setNeedsOtp(true);
-        toast('Enter the 6-digit code from your authenticator app', { icon: '🔐' });
         setLoading(false);
         return;
       }
 
       if (result.success) {
-        toast.success('Login successful!');
-        if (result.user.is_admin) {
-          navigate('/', { replace: true });
-        } else {
-          navigate('/clients', { replace: true });
-        }
+        toast.success('Signed in');
+        navigate(result.user.is_admin ? '/' : '/clients', { replace: true });
       } else {
-        toast.error(result.error || (needsOtp ? 'Invalid verification code' : 'Login failed'));
+        toast.error(result.error || (needsOtp ? 'That code was not accepted' : 'Login failed'));
       }
     } catch (error) {
       toast.error('Network error. Please check your connection.');
@@ -62,208 +82,187 @@ export default function LoginPage() {
     }
   };
 
-  return (
-    <div className="app-theme min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 -left-24 h-96 w-96 rounded-full bg-amber-500/20 blur-3xl" />
-        <div className="absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-violet-600/25 blur-3xl" />
-        <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
-      </div>
-      <div className="max-w-md w-full relative z-10">
-        {/* Logo and Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="text-center mb-8"
-        >
-          <div className="flex justify-center mb-5">
-            <LumenLogo size="xl" showText subtitle={BRAND.tagline} orientation="vertical" />
-          </div>
-          <h1 className="text-3xl font-bold text-white mb-2">Welcome back</h1>
-          <p className="text-slate-400">Sign in to your {BRAND.fullName} account</p>
-        </motion.div>
+  const backToPassword = () => {
+    setNeedsOtp(false);
+    setOtp('');
+    setUsingBackup(false);
+  };
 
-        {/* Login Form */}
+  return (
+    <div className="auth">
+      <AuthBackdrop />
+
+      <button
+        type="button"
+        className="auth__theme"
+        onClick={toggleTheme}
+        aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+        title={isDark ? 'Light theme' : 'Dark theme'}
+      >
+        {isDark ? <Sun size={16} /> : <Moon size={16} />}
+      </button>
+
+      <div className="auth__shell">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8"
+          transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+          className="auth__card"
         >
-          {/* Demo account banner — demo build only, never rendered in production */}
-          {DEMO_MODE && (
-            <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-3">
-              <p className="text-sm font-semibold text-blue-700">
-                Demo Account — credentials pre-filled
+          <div className="auth__brand">
+            <LumenLogo size="lg" showText subtitle={BRAND.tagline} orientation="vertical" />
+          </div>
+
+          {needsOtp ? (
+            <>
+              <span className="auth__badge">
+                <ShieldCheck size={15} />
+                Two-factor
+              </span>
+              <h1 className="auth__title">Confirm it&apos;s you</h1>
+              <p className="auth__subtitle">
+                {usingBackup
+                  ? 'Enter one of the backup codes you saved when you turned on two-factor.'
+                  : `Enter the 6-digit code from your authenticator app for ${email}.`}
               </p>
-              <p className="mt-1 text-xs text-blue-600">
-                Email: {DEMO_CREDENTIALS.email} · Password: {DEMO_CREDENTIALS.password}
+            </>
+          ) : (
+            <>
+              <h1 className="auth__title">Sign in</h1>
+              <p className="auth__subtitle">Welcome back. Access your operator console.</p>
+            </>
+          )}
+
+          {DEMO_MODE && !needsOtp && (
+            <div className="auth__demo">
+              <p className="auth__demo-title">Demo account — credentials pre-filled</p>
+              <p className="auth__demo-body">
+                {DEMO_CREDENTIALS.email} · {DEMO_CREDENTIALS.password}
               </p>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Email Field */}
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                Email Address
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="username"
-                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  placeholder="Enter your email"
-                  disabled={loading}
-                />
-              </div>
-            </div>
-
-            {/* Password Field */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="current-password"
-                  className="block w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  placeholder="Enter your password"
-                  disabled={loading}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                  disabled={loading}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Two-factor code — shown after password when 2FA is enabled */}
-            {needsOtp && (
-              <div>
-                <label htmlFor="otp" className="block text-sm font-medium text-gray-700 mb-2">
-                  Verification code
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <ShieldCheck className="h-5 w-5 text-gray-400" />
-                  </div>
+          <form onSubmit={handleSubmit} className="auth__form">
+            {needsOtp ? (
+              <>
+                <div className="auth__field">
+                  <label htmlFor="otp" className="auth__label">
+                    {usingBackup ? 'Backup code' : 'Verification code'}
+                    <span className="auth__req">*</span>
+                  </label>
                   <input
                     id="otp"
+                    name="otp"
                     type="text"
-                    inputMode="numeric"
+                    inputMode={usingBackup ? 'text' : 'numeric'}
                     autoComplete="one-time-code"
+                    autoFocus
+                    maxLength={usingBackup ? 32 : 6}
                     value={otp}
                     onChange={(e) => setOtp(e.target.value)}
-                    autoFocus
-                    className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg tracking-[0.4em] font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    placeholder="123456"
-                    disabled={loading}
+                    placeholder={usingBackup ? 'xxxx-xxxx' : '000000'}
+                    className={`auth__input ${usingBackup ? '' : 'auth__input--code'}`}
                   />
                 </div>
-                <p className="mt-1.5 text-xs text-gray-500">
-                  Enter the code from your authenticator app, or a backup code.
-                </p>
-              </div>
+
+                <button
+                  type="button"
+                  className="auth__link auth__link--block"
+                  onClick={() => { setUsingBackup((b) => !b); setOtp(''); }}
+                >
+                  {usingBackup
+                    ? 'Use your authenticator app instead'
+                    : "Can't reach your authenticator? Use a backup code"}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="auth__field">
+                  <label htmlFor="email" className="auth__label">
+                    Email or username
+                    <span className="auth__req">*</span>
+                  </label>
+                  <input
+                    id="email"
+                    name="email"
+                    type="text"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@operator.net or username"
+                    className="auth__input"
+                  />
+                </div>
+
+                <div className="auth__field">
+                  <label htmlFor="password" className="auth__label">
+                    Password
+                    <span className="auth__req">*</span>
+                  </label>
+                  <div className="auth__control">
+                    <input
+                      id="password"
+                      name="password"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="auth__input auth__input--padded"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="auth__reveal"
+                      tabIndex={-1}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                <label className="auth__remember">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                  />
+                  <span>Keep me signed in</span>
+                </label>
+              </>
             )}
 
-            {/* Remember Me and Forgot Password */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <input
-                  id="remember-me"
-                  name="remember-me"
-                  type="checkbox"
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  disabled={loading}
-                />
-                <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-700">
-                  Remember me
-                </label>
-              </div>
-              <div className="text-sm">
-                <a href="#" className="font-medium text-blue-600 hover:text-blue-500">
-                  Forgot password?
-                </a>
-              </div>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-amber-500 via-orange-500 to-violet-600 hover:from-amber-600 hover:to-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-            >
-              {loading ? (
-                <div className="flex items-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  {needsOtp ? 'Verifying...' : 'Signing In...'}
-                </div>
-              ) : (
-                needsOtp ? 'Verify & Sign In' : 'Sign In'
-              )}
+            <button type="submit" disabled={loading} className="auth__submit">
+              {loading && <Loader2 size={16} className="auth__spin" />}
+              {needsOtp ? 'Verify and sign in' : 'Sign in'}
             </button>
-          </form>
-        </motion.div>
 
-        {/* Sign Up Link */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="text-center mt-6"
-        >
-          {DEMO_MODE ? (
-            <p className="text-sm text-slate-400">
-              <Link to="/" className="font-medium text-amber-300 hover:text-amber-200">
-                ← Back to home
-              </Link>
-            </p>
-          ) : (
-            <p className="text-sm text-slate-400">
-              Don't have an account?{' '}
-              <Link to="/signup" className="font-medium text-amber-300 hover:text-amber-200">
-                Sign up here
-              </Link>
-            </p>
+            {needsOtp && (
+              <button type="button" className="auth__link auth__link--block" onClick={backToPassword}>
+                Back to sign in
+              </button>
+            )}
+          </form>
+
+          {!needsOtp && (
+            <>
+              <div className="auth__divider"><span>or</span></div>
+              <div className="auth__alt">
+                <Link to="/signup" className="auth__alt-btn">
+                  <UserPlus size={16} />
+                  Create an operator account
+                </Link>
+              </div>
+              <p className="auth__hint">
+                Signing in from a shared machine? Untick “Keep me signed in” and the session
+                ends when you close the browser.
+              </p>
+            </>
           )}
         </motion.div>
 
-        {/* Footer */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          className="text-center mt-8"
-        >
-          <p className="text-xs text-slate-500">
-            {BRAND.copyright()}
-          </p>
-        </motion.div>
+        <p className="auth__footer">{BRAND.copyright()}</p>
       </div>
     </div>
   );

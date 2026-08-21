@@ -52,41 +52,16 @@
 
 /* --- Constellation backdrop --------------------------------------------- */
 
-.onb__backdrop {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
+/* The backdrop now lives in components/brand/authBackdrop.css and is shared
+   with sign-in, so the two pages cannot drift apart. It reads --authbg-* from
+   here. */
 
-.onb__grid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(to right, var(--onb-line-soft) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--onb-line-soft) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 20%, transparent 75%);
-  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 20%, transparent 75%);
-  opacity: 0.5;
-}
-
-.onb__constellation {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.onb__constellation line {
-  stroke: var(--onb-accent);
-  stroke-width: 1;
-  opacity: 0.16;
-}
-
-.onb__constellation circle {
-  fill: var(--onb-accent);
-  opacity: 0.5;
+.onb {
+  --authbg-dot: var(--onb-line);
+  --authbg-arc: var(--onb-accent);
+  --authbg-run: var(--onb-accent);
+  --authbg-node: var(--onb-accent);
+  --authbg-glow: var(--onb-accent-dim);
 }
 
 /* --- Shell -------------------------------------------------------------- */
