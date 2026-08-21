@@ -1,6 +1,10 @@
 // API Configuration
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
+// Exported so Settings > Payments can show the real M-Pesa callback URL a
+// tenant has to hand to Safaricom, rather than a guess at the host.
+export { API_BASE_URL };
+
 export const API_ENDPOINTS = {
   // Auth endpoints
   LOGIN: `${API_BASE_URL}/api/auth/login`,

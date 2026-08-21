@@ -17,6 +17,7 @@ import PaymentsSettings from './tabs/PaymentsSettings';
 import IntegrationsSettings from './tabs/IntegrationsSettings';
 import WhatsAppSettings from './tabs/WhatsAppSettings';
 import EmailSettings from './tabs/EmailSettings';
+import CommunicationsSettings from './tabs/CommunicationsSettings';
 import NotificationsSettings from './tabs/NotificationsSettings';
 import LoyaltySettings from './tabs/LoyaltySettings';
 import OperatorAlertsSettings from './tabs/OperatorAlertsSettings';
@@ -47,14 +48,7 @@ function panelFor(id, { admin, go }) {
     case 'hotspot': return <HotspotSettings isAdmin={admin} />;
     case 'radius': return <RadiusSettings />;
     case 'payments': return <PaymentsSettings />;
-    case 'sms':
-      return (
-        <IntegrationsSettings
-          only={['africastalking']}
-          title="SMS gateway"
-          description="The sender that carries receipts, reminders and vouchers to your subscribers"
-        />
-      );
+    case 'sms': return <CommunicationsSettings />;
     case 'email': return <EmailSettings />;
     case 'whatsapp': return <WhatsAppSettings />;
     case 'templates': return <NotificationsSettings exclude={['router_health']} />;

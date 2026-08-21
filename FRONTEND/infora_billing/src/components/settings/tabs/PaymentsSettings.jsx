@@ -1,185 +1,259 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
-  Store, Smartphone, Landmark, Search, ChevronDown, Check, Info,
-  ShieldCheck, Eye, EyeOff, Banknote, CreditCard, Wallet,
+  Banknote, Building2, Copy, CreditCard, ExternalLink, Eye, EyeOff,
+  Smartphone, Wallet,
 } from 'lucide-react';
 import { getAccessToken } from '../../../utils/authToken';
 import settingsService from '../../../services/settingsService';
-import { Card, Field, TextInput, Toggle, PrimaryButton, SaveBar, LoadingBlock } from '../ui';
+import { API_BASE_URL } from '../../../config/api';
+import { useSettingsChrome } from '../chrome';
+import {
+  Card, Field, TextInput, Select, Toggle, StickySaveBar, StatusPill,
+  LoadingBlock, NotWired, Note, PrimaryButton, UnavailableSave,
+} from '../ui';
 
-// Kenyan bank / SACCO M-Pesa paybills (for the "Bank / SACCO" collection route)
-const BANKS = [
-  { name: 'KCB Bank', paybill: '522522' },
-  { name: 'Equity Bank', paybill: '247247' },
-  { name: 'Co-operative Bank', paybill: '400200' },
-  { name: 'Rafiki Micro Finance', paybill: '802200' },
-  { name: 'Citi Bank', paybill: '100229' },
-  { name: 'Vision Fund Kenya', paybill: '200555' },
-  { name: 'Musoni Microfinance', paybill: '514000' },
-  { name: 'Kenya Women Finance Trust (KWFT)', paybill: '101200' },
-  { name: 'Guaranty Trust Bank', paybill: '910200' },
-  { name: 'Family Bank', paybill: '222111' },
-  { name: 'NCBA Bank', paybill: '880100' },
-  { name: 'Absa Bank Kenya', paybill: '303030' },
-  { name: 'Stanbic Bank', paybill: '600100' },
-  { name: 'Diamond Trust Bank (DTB)', paybill: '516600' },
-  { name: 'I&M Bank', paybill: '542542' },
-  { name: 'Sidian Bank', paybill: '111999' },
-  { name: 'Gulf African Bank', paybill: '985050' },
-  { name: 'National Bank of Kenya', paybill: '625625' },
-  { name: 'HFC (Housing Finance)', paybill: '100400' },
-  { name: 'Faulu Microfinance', paybill: '328272' },
-  { name: 'Postbank', paybill: '200999' },
+/* -------------------------------------------------------------------------
+ * Settings > Payments.
+ *
+ * The backend has exactly one payment integration: M-Pesa Daraja, reached
+ * through PaymentSettings.collection_route ∈ {paybill, buygoods, bank} plus
+ * optional Daraja credentials. Everything on this grid that is not one of
+ * those four shapes has no code at all.
+ *
+ * Two behaviours here differ from the Email/SMS panels and matter:
+ *
+ *   · /settings/payments DECRYPTS secrets and returns them in plaintext, so
+ *     saved credentials really are shown. The mock's "Saved credentials are
+ *     shown below" is accurate for this endpoint alone.
+ *   · a blank secret CLEARS it here, unlike the integrations endpoint where
+ *     blank means "keep". So this panel must never say "leave blank to keep
+ *     existing" — it says the opposite, because that is what happens.
+ *
+ * Which gateway is "active" is derived rather than stored: there is no
+ * `active_gateway` column, only the route and whether Daraja credentials are
+ * filled in.
+ * ---------------------------------------------------------------------- */
+
+const CAP = {
+  stk: 'STK', paybill: 'Paybill', till: 'Till', bank: 'Bank transfer',
+  cards: 'Cards', momo: 'Mobile money',
+};
+
+const GATEWAYS = [
+  {
+    id: 'mpesa_api',
+    name: 'M-Pesa Paybill / Till Number (API keys)',
+    badge: 'M-PESA',
+    subtitle: 'M-Pesa · Kenya · automated collection via Daraja',
+    mark: 'M', markClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+    caps: [CAP.stk, CAP.paybill, CAP.till],
+    settlement: 'Instant',
+    built: true,
+  },
+  {
+    id: 'paybill_manual',
+    name: 'Paybill — without API keys',
+    badge: 'M-PESA PAYBILL',
+    subtitle: 'M-Pesa · Kenya',
+    mark: 'P', markClass: 'bg-teal-50 text-teal-600 dark:bg-teal-500/10 dark:text-teal-300',
+    caps: [CAP.paybill],
+    settlement: 'Confirmed by code',
+    built: true,
+  },
+  {
+    id: 'till_manual',
+    name: 'Till Number — without API keys',
+    badge: 'M-PESA TILL',
+    subtitle: 'M-Pesa · Kenya',
+    mark: 'T', markClass: 'bg-teal-50 text-teal-600 dark:bg-teal-500/10 dark:text-teal-300',
+    caps: ['Buy Goods till'],
+    settlement: 'Confirmed by code',
+    built: true,
+  },
+  {
+    id: 'bank',
+    name: 'Bank Account',
+    badge: null,
+    subtitle: 'Bank transfer',
+    mark: <Building2 className="h-5 w-5" />,
+    markClass: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    caps: [CAP.bank],
+    settlement: 'To your bank',
+    built: true,
+  },
+  { id: 'dpo', name: 'DPO Pay', subtitle: 'DPO Pay · multi-country', mark: 'D', markClass: 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-300', caps: [CAP.cards, CAP.momo], settlement: 'To bank' },
+  { id: 'kopokopo', name: 'Kopo Kopo', subtitle: 'Kopo Kopo · Kenya', mark: 'K', markClass: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300', caps: ['Mobile money till'], settlement: 'T+1 to bank' },
+  { id: 'paypal', name: 'PayPal', subtitle: 'PayPal · global', mark: 'PP', markClass: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300', caps: [CAP.cards, 'PayPal'], settlement: 'To PayPal balance' },
+  { id: 'paystack', name: 'Paystack', subtitle: 'Paystack · 14 markets', mark: 'PS', markClass: 'bg-cyan-50 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-300', caps: [CAP.cards, 'MoMo', 'Bank'], settlement: 'T+1 to bank' },
+  { id: 'pesapal', name: 'PesaPal', subtitle: 'Pesapal · East Africa', mark: 'PL', markClass: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300', caps: [CAP.cards, CAP.momo, 'Airtel'], settlement: 'To bank' },
+  { id: 'relworx', name: 'Relworx', subtitle: 'Relworx · Uganda', mark: 'R', markClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300', caps: [CAP.momo], settlement: 'To bank' },
 ];
 
-const ROUTES = [
-  { id: 'buygoods', name: 'Buy Goods', sub: 'Till number', icon: Store },
-  { id: 'paybill', name: 'M-Pesa Paybill', sub: 'Paybill shortcode', icon: Smartphone },
-  { id: 'bank', name: 'Bank / SACCO', sub: 'Bank paybill', icon: Landmark },
+const PAYMENT_METHODS = [
+  { key: 'method_mpesa', name: 'M-Pesa (STK push)', desc: 'Customers pay directly from the captive portal via STK push.', icon: Smartphone, iconClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300' },
+  { key: 'method_manual', name: 'Manual M-Pesa', desc: 'Accept Paybill / Buy Goods payments confirmed by transaction code.', icon: Wallet, iconClass: 'bg-teal-50 text-teal-600 dark:bg-teal-500/10 dark:text-teal-300' },
+  { key: 'method_card', name: 'Card payments', desc: 'Visa / Mastercard checkout via your payment processor.', icon: CreditCard, iconClass: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300' },
+  { key: 'method_cash', name: 'Cash / agent', desc: 'Record over-the-counter or agent-collected payments manually.', icon: Banknote, iconClass: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300' },
 ];
 
-function BankPicker({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const boxRef = useRef(null);
-  const inputRef = useRef(null);
+const BLANK = {
+  collection_route: 'paybill',
+  buygoods_till: '', buygoods_store: '',
+  paybill_shortcode: '', paybill_account: '',
+  bank_name: '', bank_paybill: '', bank_account: '',
+  daraja_env: 'sandbox', daraja_consumer_key: '', daraja_consumer_secret: '',
+  daraja_passkey: '', daraja_shortcode: '', daraja_callback_url: '',
+  method_mpesa: true, method_manual: true, method_card: false, method_cash: true,
+};
 
-  useEffect(() => {
-    const onDoc = (e) => {
-      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
+/** Daraja is "configured" only when all three secrets are present. */
+function hasDaraja(f) {
+  return Boolean(f.daraja_consumer_key && f.daraja_consumer_secret && f.daraja_passkey);
+}
 
-  useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 30);
-  }, [open]);
+function activeGatewayId(f) {
+  if (hasDaraja(f)) return 'mpesa_api';
+  if (f.collection_route === 'bank') return 'bank';
+  if (f.collection_route === 'buygoods') return 'till_manual';
+  return 'paybill_manual';
+}
 
-  const filtered = BANKS.filter(
-    (b) =>
-      b.name.toLowerCase().includes(query.toLowerCase()) ||
-      b.paybill.includes(query.trim()),
-  );
-
+function Mark({ mark, markClass, size = 'h-10 w-10' }) {
   return (
-    <div className="relative" ref={boxRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-left text-sm text-gray-900 outline-none transition hover:border-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/40"
-      >
-        <span className={value ? 'text-gray-900' : 'text-gray-400'}>
-          {value ? (
-            <>
-              <span className="font-medium">{value.name}</span>
-              <span className="text-gray-400"> — Paybill: {value.paybill}</span>
-            </>
-          ) : (
-            'Select bank or SACCO'
-          )}
-        </span>
-        <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition ${open ? 'rotate-180' : ''}`} />
-      </button>
+    <span className={`flex ${size} shrink-0 items-center justify-center rounded-xl text-sm font-bold ${markClass}`}>
+      {mark}
+    </span>
+  );
+}
 
-      {open && (
-        <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
-          <div className="p-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Type bank name or paybill…"
-                className="w-full rounded-lg border-2 border-emerald-500 bg-white py-2.5 pl-9 pr-3 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-emerald-500/30"
-              />
-            </div>
-          </div>
-          <div className="max-h-64 overflow-y-auto pb-1">
-            {filtered.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-gray-400">No banks match “{query}”.</p>
-            ) : (
-              filtered.map((b) => {
-                const active = value?.paybill === b.paybill;
-                return (
-                  <button
-                    key={b.paybill}
-                    type="button"
-                    onClick={() => {
-                      onChange(b);
-                      setOpen(false);
-                      setQuery('');
-                    }}
-                    className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm transition hover:bg-emerald-50 ${
-                      active ? 'bg-emerald-50' : ''
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 font-medium text-gray-900">
-                      {active && <Check className="h-4 w-4 text-emerald-600" />}
-                      {b.name}
-                    </span>
-                    <span className="font-mono text-xs tabular-nums text-gray-400">{b.paybill}</span>
-                  </button>
-                );
-              })
+function GatewayCard({ gateway, active, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`flex w-full flex-col rounded-2xl border p-5 text-left transition ${
+        active
+          ? 'border-emerald-500 bg-emerald-50/60 ring-1 ring-emerald-500/30 dark:border-emerald-500/60 dark:bg-emerald-950/30'
+          : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <Mark mark={gateway.mark} markClass={gateway.markClass} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {gateway.name}
+            </span>
+            {gateway.badge && (
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                {gateway.badge}
+              </span>
             )}
+            {active && <StatusPill tone="connected">Active</StatusPill>}
+            {!gateway.built && <StatusPill tone="warn">Not built</StatusPill>}
           </div>
+          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{gateway.subtitle}</p>
         </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {gateway.caps.map((c) => (
+          <span
+            key={c}
+            className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+          >
+            {c}
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
+        <span className="text-xs text-slate-400 dark:text-slate-500">{gateway.settlement}</span>
+        <span className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+          Configure <span aria-hidden="true">›</span>
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function SecretField({ label, hint, value, onChange, required }) {
+  const [reveal, setReveal] = useState(false);
+  return (
+    <Field label={label} hint={hint} required={required}>
+      <div className="relative">
+        <TextInput
+          type={reveal ? 'text' : 'password'}
+          value={value}
+          autoComplete="off"
+          className="pr-10"
+          onChange={onChange}
+        />
+        <button
+          type="button"
+          onClick={() => setReveal((r) => !r)}
+          tabIndex={-1}
+          aria-label={reveal ? 'Hide value' : 'Show value'}
+          className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 transition hover:text-slate-600 dark:hover:text-slate-300"
+        >
+          {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+    </Field>
+  );
+}
+
+function CallbackRow({ label, url, available }) {
+  const copy = () => {
+    navigator.clipboard?.writeText(url);
+    toast.success(`${label} copied`);
+  };
+  return (
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          {label}
+        </p>
+        <p
+          className={`mt-1 truncate font-mono text-sm ${
+            available
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : 'text-slate-400 line-through dark:text-slate-600'
+          }`}
+        >
+          {url}
+        </p>
+      </div>
+      {available && (
+        <button
+          type="button"
+          onClick={copy}
+          aria-label={`Copy ${label}`}
+          className="shrink-0 rounded-md p-1.5 text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-200"
+        >
+          <Copy className="h-4 w-4" />
+        </button>
       )}
     </div>
   );
 }
 
-const PAYMENT_METHODS = [
-  { key: 'mpesa', name: 'M-Pesa (STK Push)', desc: 'Customers pay directly from the captive portal via STK push.', icon: Smartphone, iconClass: 'bg-emerald-50 text-emerald-600' },
-  { key: 'manual', name: 'Manual M-Pesa', desc: 'Accept Paybill / Buy Goods payments confirmed by transaction code.', icon: Wallet, iconClass: 'bg-teal-50 text-teal-600' },
-  { key: 'card', name: 'Card payments', desc: 'Visa / Mastercard checkout via your payment processor.', icon: CreditCard, iconClass: 'bg-indigo-50 text-indigo-600' },
-  { key: 'cash', name: 'Cash / Agent', desc: 'Record over-the-counter or agent-collected payments manually.', icon: Banknote, iconClass: 'bg-amber-50 text-amber-600' },
-];
-
 export default function PaymentsSettings() {
+  const { setChrome } = useSettingsChrome();
+  const [form, setForm] = useState(BLANK);
+  const [baseline, setBaseline] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [route, setRoute] = useState('paybill');
-  const [buyGoods, setBuyGoods] = useState({ till: '', store: '' });
-  const [paybill, setPaybill] = useState({ shortcode: '', account: '' });
-  const [bank, setBank] = useState(BANKS[0]);
-  const [bankAccount, setBankAccount] = useState('');
-  const [savingCollection, setSavingCollection] = useState(false);
-
-  const [daraja, setDaraja] = useState({
-    env: 'sandbox', consumerKey: '', consumerSecret: '', passkey: '', shortcode: '', callbackUrl: '',
-  });
-  const [showSecret, setShowSecret] = useState(false);
-  const [savingDaraja, setSavingDaraja] = useState(false);
-
-  const [methods, setMethods] = useState({ mpesa: true, manual: true, card: false, cash: true });
+  const [saving, setSaving] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const d = await settingsService.getPayments(getAccessToken());
-        setRoute(d.collection_route || 'paybill');
-        setBuyGoods({ till: d.buygoods_till || '', store: d.buygoods_store || '' });
-        setPaybill({ shortcode: d.paybill_shortcode || '', account: d.paybill_account || '' });
-        setBank(
-          BANKS.find((b) => b.paybill === d.bank_paybill) ||
-            (d.bank_name ? { name: d.bank_name, paybill: d.bank_paybill || '' } : BANKS[0]),
-        );
-        setBankAccount(d.bank_account || '');
-        setDaraja({
-          env: d.daraja_env || 'sandbox',
-          consumerKey: d.daraja_consumer_key || '',
-          consumerSecret: d.daraja_consumer_secret || '',
-          passkey: d.daraja_passkey || '',
-          shortcode: d.daraja_shortcode || '',
-          callbackUrl: d.daraja_callback_url || '',
-        });
-        setMethods({
-          mpesa: !!d.method_mpesa, manual: !!d.method_manual,
-          card: !!d.method_card, cash: !!d.method_cash,
-        });
+        const data = await settingsService.getPayments(getAccessToken());
+        const next = { ...BLANK, ...data };
+        setForm(next);
+        setBaseline(JSON.stringify(next));
       } catch (e) {
         toast.error(e.message || 'Failed to load payment settings');
       } finally {
@@ -188,279 +262,345 @@ export default function PaymentsSettings() {
     })();
   }, []);
 
-  const configured =
-    (route === 'buygoods' && buyGoods.till.trim()) ||
-    (route === 'paybill' && paybill.shortcode.trim()) ||
-    (route === 'bank' && !!bank);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const dirty = baseline !== null && JSON.stringify(form) !== baseline;
+  const activeId = useMemo(() => activeGatewayId(form), [form]);
+  const gateway = useMemo(() => GATEWAYS.find((g) => g.id === selectedId) || null, [selectedId]);
 
-  const saveCollection = async () => {
-    setSavingCollection(true);
+  const persist = useCallback(async (payload, message) => {
     try {
-      await settingsService.savePayments(getAccessToken(), {
-        collection_route: route,
-        buygoods_till: buyGoods.till,
-        buygoods_store: buyGoods.store,
-        paybill_shortcode: paybill.shortcode,
-        paybill_account: paybill.account,
-        bank_name: bank?.name || '',
-        bank_paybill: bank?.paybill || '',
-        bank_account: bankAccount,
-      });
-      toast.success('Payment collection saved');
+      setSaving(true);
+      const res = await settingsService.savePayments(getAccessToken(), payload);
+      const next = { ...BLANK, ...(res.payments || payload) };
+      setForm(next);
+      setBaseline(JSON.stringify(next));
+      toast.success(message);
     } catch (e) {
       toast.error(e.message || 'Save failed');
     } finally {
-      setSavingCollection(false);
+      setSaving(false);
     }
+  }, []);
+
+  const save = () => persist(form, 'Payment settings saved');
+
+  // "Use this gateway" only moves the collection route — the credentials the
+  // other gateways already hold are left alone, so switching back is free.
+  const activate = (id) => {
+    const route = id === 'bank' ? 'bank' : id === 'till_manual' ? 'buygoods' : 'paybill';
+    persist({ ...form, collection_route: route }, 'Gateway switched');
   };
 
-  const saveDaraja = async () => {
-    if (!daraja.consumerKey.trim() || !daraja.consumerSecret.trim()) {
-      return toast.error('Consumer key and secret are required');
-    }
-    setSavingDaraja(true);
-    try {
-      await settingsService.savePayments(getAccessToken(), {
-        daraja_env: daraja.env,
-        daraja_consumer_key: daraja.consumerKey,
-        daraja_consumer_secret: daraja.consumerSecret,
-        daraja_passkey: daraja.passkey,
-        daraja_shortcode: daraja.shortcode,
-        daraja_callback_url: daraja.callbackUrl,
-      });
-      toast.success('M-Pesa API credentials saved');
-    } catch (e) {
-      toast.error(e.message || 'Save failed');
-    } finally {
-      setSavingDaraja(false);
-    }
+  const toggleMethod = (key, value) => {
+    const next = { ...form, [key]: value };
+    setForm(next);
+    persist(next, 'Payment methods updated');
   };
 
-  const toggleMethod = async (key, value) => {
-    const prev = methods;
-    setMethods((m) => ({ ...m, [key]: value }));
-    try {
-      await settingsService.savePayments(getAccessToken(), { [`method_${key}`]: value });
-    } catch (e) {
-      setMethods(prev);
-      toast.error(e.message || 'Update failed');
+  useEffect(() => {
+    if (!gateway) {
+      setChrome(null);
+      return undefined;
     }
-  };
+    const isActive = gateway.id === activeId;
+    setChrome({
+      icon: gateway.mark,
+      iconClass: gateway.markClass,
+      eyebrow: 'Payment gateway',
+      title: gateway.name,
+      subtitle: gateway.subtitle,
+      status: (
+        <StatusPill tone={isActive ? 'connected' : gateway.built ? 'idle' : 'warn'}>
+          {isActive ? 'Active' : gateway.built ? 'Not active' : 'Not built'}
+        </StatusPill>
+      ),
+      action:
+        gateway.built && !isActive ? (
+          <PrimaryButton onClick={() => activate(gateway.id)} loading={saving} className="px-4 py-2">
+            Use this gateway
+          </PrimaryButton>
+        ) : null,
+      onBack: () => setSelectedId(null),
+      backLabel: 'All gateways',
+    });
+    return () => setChrome(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gateway, activeId, saving, setChrome]);
 
   if (loading) return <LoadingBlock />;
 
-  return (
-    <div className="space-y-6">
-      {/* Payment collection route */}
-      <Card>
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <span className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-bold tracking-wide text-white">
-              M-PESA
-            </span>
-            <div>
-              <h3 className="text-base font-semibold text-gray-900">Payment Collection</h3>
-              <p className="mt-0.5 text-sm text-gray-500">Where should customers' money go when they pay?</p>
-            </div>
-          </div>
-          <span
-            className={`inline-flex shrink-0 items-center gap-1.5 text-xs font-semibold ${
-              configured ? 'text-emerald-600' : 'text-gray-400'
-            }`}
-          >
-            <span className={`h-2 w-2 rounded-full ${configured ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-            {configured ? 'Configured' : 'Not set'}
-          </span>
-        </div>
-
-        {/* Segmented route selector */}
-        <div className="grid grid-cols-1 gap-2 rounded-xl bg-gray-100 p-1.5 sm:grid-cols-3">
-          {ROUTES.map((r) => {
-            const on = route === r.id;
-            return (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => setRoute(r.id)}
-                className={`flex flex-col items-center rounded-lg px-4 py-3 text-center transition ${
-                  on ? 'bg-white shadow-sm ring-1 ring-gray-200' : 'hover:bg-white/60'
-                }`}
+  /* --- Detail: unbuilt gateways ---------------------------------------- */
+  if (gateway && !gateway.built) {
+    return (
+      <div className="space-y-6">
+        <NotWired>
+          Nothing here saves. {gateway.name} has no integration in this system — the only payment
+          code that exists is M-Pesa Daraja. Collecting through {gateway.name} would mean a new
+          credential store, a checkout call and a callback handler of its own.
+        </NotWired>
+        <Card title="What it would collect" description="Capabilities this gateway is used for.">
+          <div className="flex flex-wrap gap-2">
+            {gateway.caps.map((c) => (
+              <span
+                key={c}
+                className="rounded-md bg-slate-100 px-2.5 py-1 text-sm font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
               >
-                <span className={`text-sm font-semibold ${on ? 'text-gray-900' : 'text-gray-600'}`}>{r.name}</span>
-                <span className="mt-0.5 text-xs text-gray-400">{r.sub}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Route-specific fields */}
-        <div className="mt-6">
-          {route === 'buygoods' && (
-            <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-              <Field label="Till Number" hint="Your M-Pesa Buy Goods till number">
-                <TextInput
-                  value={buyGoods.till}
-                  placeholder="e.g. 5203847"
-                  onChange={(e) => setBuyGoods({ ...buyGoods, till: e.target.value })}
-                />
-              </Field>
-              <Field label="Store Number" hint="Head office / store number (optional)">
-                <TextInput
-                  value={buyGoods.store}
-                  placeholder="e.g. 4102938"
-                  onChange={(e) => setBuyGoods({ ...buyGoods, store: e.target.value })}
-                />
-              </Field>
-            </div>
-          )}
-
-          {route === 'paybill' && (
-            <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-              <Field label="Paybill Shortcode" hint="Your M-Pesa Paybill business number">
-                <TextInput
-                  value={paybill.shortcode}
-                  placeholder="e.g. 174379"
-                  onChange={(e) => setPaybill({ ...paybill, shortcode: e.target.value })}
-                />
-              </Field>
-              <Field label="Account Number Reference" hint="What customers put as the account (e.g. their phone number)">
-                <TextInput
-                  value={paybill.account}
-                  placeholder="e.g. account or phone"
-                  onChange={(e) => setPaybill({ ...paybill, account: e.target.value })}
-                />
-              </Field>
-            </div>
-          )}
-
-          {route === 'bank' && (
-            <div className="space-y-5">
-              <Field
-                label="Bank"
-                hint="Search the bank or SACCO whose paybill collects your funds. The paybill number is filled automatically."
-              >
-                <BankPicker value={bank} onChange={setBank} />
-              </Field>
-              <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-                <Field label="Paybill">
-                  <TextInput value={bank?.paybill || ''} readOnly className="bg-gray-50 font-mono" />
-                </Field>
-                <Field label="Account Number" hint="Your bank account number that receives settlements">
-                  <TextInput
-                    value={bankAccount}
-                    placeholder="e.g. 0112233445566"
-                    onChange={(e) => setBankAccount(e.target.value)}
-                  />
-                </Field>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 flex items-center justify-between gap-4 border-t border-gray-100 pt-5">
-          <p className="flex items-center gap-1.5 text-xs text-gray-400">
-            <Info className="h-3.5 w-3.5" />
-            Only one collection route is active at a time.
-          </p>
-          <SaveBar onSave={saveCollection} saving={savingCollection} />
-        </div>
-      </Card>
-
-      {/* M-Pesa Daraja API credentials */}
-      <Card
-        title="M-Pesa Daraja API"
-        description="Credentials for automated STK push. Get these from the Safaricom Daraja developer portal."
-        action={
-          <div className="inline-flex rounded-lg bg-gray-100 p-1 text-xs font-medium">
-            {['sandbox', 'live'].map((env) => (
-              <button
-                key={env}
-                type="button"
-                onClick={() => setDaraja({ ...daraja, env })}
-                className={`rounded-md px-3 py-1.5 capitalize transition ${
-                  daraja.env === env ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                {env}
-              </button>
+                {c}
+              </span>
             ))}
           </div>
-        }
-      >
-        <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-          <Field label="Consumer Key">
-            <TextInput
-              value={daraja.consumerKey}
-              placeholder="Daraja consumer key"
-              onChange={(e) => setDaraja({ ...daraja, consumerKey: e.target.value })}
-            />
-          </Field>
-          <Field label="Consumer Secret">
-            <div className="relative">
-              <TextInput
-                type={showSecret ? 'text' : 'password'}
-                value={daraja.consumerSecret}
-                placeholder="Daraja consumer secret"
-                className="pr-10"
-                onChange={(e) => setDaraja({ ...daraja, consumerSecret: e.target.value })}
-              />
-              <button
-                type="button"
-                onClick={() => setShowSecret((s) => !s)}
-                className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+          <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+            Settlement: {gateway.settlement}.
+          </p>
+          <div className="mt-6">
+            <UnavailableSave />
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  /* --- Detail: the four real ones -------------------------------------- */
+  if (gateway) {
+    const isMpesaApi = gateway.id === 'mpesa_api';
+    const callback =
+      form.daraja_callback_url || `${API_BASE_URL}/api/payments/mpesa/callback`;
+
+    return (
+      <div className="space-y-6">
+        <Card
+          title="Configuration"
+          description="Saved credentials are shown below. Edit a field and save to update it."
+        >
+          {isMpesaApi ? (
+            <div className="space-y-5">
+              <Field
+                label="Collection method"
+                required
+                hint="Paybill — the customer pays your paybill and enters an account number. Till — the customer pays your till (Buy Goods). It also decides the Daraja transaction type."
               >
-                {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+                <Select
+                  value={form.collection_route === 'buygoods' ? 'buygoods' : 'paybill'}
+                  onChange={(e) => set('collection_route', e.target.value)}
+                >
+                  <option value="paybill">Paybill</option>
+                  <option value="buygoods">Till (Buy Goods)</option>
+                </Select>
+              </Field>
+
+              <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+                {form.collection_route === 'buygoods' ? (
+                  <>
+                    <Field label="Till number" required hint="e.g. 123456">
+                      <TextInput value={form.buygoods_till} onChange={(e) => set('buygoods_till', e.target.value)} />
+                    </Field>
+                    <Field label="Store number" hint="The store behind the till, where Safaricom issued one.">
+                      <TextInput value={form.buygoods_store} onChange={(e) => set('buygoods_store', e.target.value)} />
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field label="Paybill number" required hint="e.g. 123456">
+                      <TextInput value={form.paybill_shortcode} onChange={(e) => set('paybill_shortcode', e.target.value)} />
+                    </Field>
+                    <Field label="Account number" hint="What subscribers type as the account. Usually their own account number.">
+                      <TextInput value={form.paybill_account} onChange={(e) => set('paybill_account', e.target.value)} />
+                    </Field>
+                  </>
+                )}
+
+                <Field label="M-Pesa shortcode" required hint="Usually the same as your paybill — this is the one Daraja STK signs with.">
+                  <TextInput value={form.daraja_shortcode} onChange={(e) => set('daraja_shortcode', e.target.value)} />
+                </Field>
+                <Field label="Environment" required hint="Sandbox uses Safaricom's test credentials. Live moves real money.">
+                  <Select value={form.daraja_env} onChange={(e) => set('daraja_env', e.target.value)}>
+                    <option value="sandbox">Sandbox</option>
+                    <option value="live">Live</option>
+                  </Select>
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+                <SecretField
+                  label="Consumer key" required
+                  value={form.daraja_consumer_key}
+                  onChange={(e) => set('daraja_consumer_key', e.target.value)}
+                />
+                <SecretField
+                  label="Consumer secret" required
+                  value={form.daraja_consumer_secret}
+                  onChange={(e) => set('daraja_consumer_secret', e.target.value)}
+                />
+                <SecretField
+                  label="Passkey" required
+                  hint="For STK push — Safaricom sends it to the email registered in Daraja."
+                  value={form.daraja_passkey}
+                  onChange={(e) => set('daraja_passkey', e.target.value)}
+                />
+              </div>
+
+              <Note title="Clearing a field here deletes the credential" tone="warn">
+                <p className="mt-1">
+                  Unlike the other gateways in Settings, this endpoint stores exactly what you send:
+                  emptying a secret and saving <em>removes</em> it rather than keeping the previous
+                  value. That is also why the saved values are shown rather than masked.
+                </p>
+              </Note>
             </div>
-          </Field>
-          <Field label="Business Shortcode" hint="Paybill or till used for STK push">
-            <TextInput
-              value={daraja.shortcode}
-              placeholder="e.g. 174379"
-              onChange={(e) => setDaraja({ ...daraja, shortcode: e.target.value })}
-            />
-          </Field>
-          <Field label="Passkey" hint="Lipa na M-Pesa Online passkey">
-            <TextInput
-              value={daraja.passkey}
-              placeholder="STK passkey"
-              onChange={(e) => setDaraja({ ...daraja, passkey: e.target.value })}
-            />
-          </Field>
-          <Field label="Callback URL" className="md:col-span-2" hint="Safaricom posts payment confirmations here">
-            <TextInput
-              value={daraja.callbackUrl}
-              placeholder="https://yourdomain.com/api/mpesa/callback"
-              onChange={(e) => setDaraja({ ...daraja, callbackUrl: e.target.value })}
-            />
-          </Field>
-        </div>
+          ) : gateway.id === 'bank' ? (
+            <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+              <Field label="Bank name" required>
+                <TextInput value={form.bank_name} onChange={(e) => set('bank_name', e.target.value)} />
+              </Field>
+              <Field label="Bank paybill" required hint="The paybill Safaricom lists for your bank.">
+                <TextInput value={form.bank_paybill} onChange={(e) => set('bank_paybill', e.target.value)} />
+              </Field>
+              <Field label="Account number" required hint="Your account at that bank — what subscribers enter as the account.">
+                <TextInput value={form.bank_account} onChange={(e) => set('bank_account', e.target.value)} />
+              </Field>
+            </div>
+          ) : gateway.id === 'till_manual' ? (
+            <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+              <Field label="Till number" required hint="e.g. 123456">
+                <TextInput value={form.buygoods_till} onChange={(e) => set('buygoods_till', e.target.value)} />
+              </Field>
+              <Field label="Store number" hint="The store behind the till, where Safaricom issued one.">
+                <TextInput value={form.buygoods_store} onChange={(e) => set('buygoods_store', e.target.value)} />
+              </Field>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+              <Field label="Paybill number" required hint="e.g. 123456">
+                <TextInput value={form.paybill_shortcode} onChange={(e) => set('paybill_shortcode', e.target.value)} />
+              </Field>
+              <Field label="Account number" hint="What subscribers type as the account. Usually their own account number.">
+                <TextInput value={form.paybill_account} onChange={(e) => set('paybill_account', e.target.value)} />
+              </Field>
+            </div>
+          )}
 
-        <div className="mt-5 flex items-start gap-2 rounded-lg bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Credentials are encrypted at rest. Use sandbox keys while testing, then switch to live before go-live.</span>
-        </div>
+          {!isMpesaApi && (
+            <div className="mt-5">
+              <Note title="No API keys means no automatic confirmation" tone="info">
+                <p className="mt-1">
+                  Without Daraja credentials nothing tells the system a payment landed — subscribers
+                  pay, then someone records the transaction code. Add API keys on the M-Pesa gateway
+                  to have renewals confirm themselves.
+                </p>
+              </Note>
+            </div>
+          )}
+        </Card>
 
-        <div className="mt-6">
-          <SaveBar onSave={saveDaraja} saving={savingDaraja} label="Save credentials" />
-        </div>
-      </Card>
+        {isMpesaApi && (
+          <Card
+            title="Callback URLs"
+            description="Register these with Safaricom so payments confirm themselves."
+          >
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              <CallbackRow label="STK callback" url={callback} available />
+              <CallbackRow
+                label="C2B validation URL"
+                url={`${API_BASE_URL}/api/payments/mpesa/validation`}
+                available={false}
+              />
+              <CallbackRow
+                label="C2B confirmation URL"
+                url={`${API_BASE_URL}/api/payments/mpesa/confirmation`}
+                available={false}
+              />
+            </div>
 
-      {/* Accepted payment methods */}
-      <Card title="Accepted payment methods" description="Turn payment options on or off across the portal and dashboard">
-        <div className="divide-y divide-gray-100">
+            <div className="mt-5 space-y-4">
+              <Field
+                label="Override STK callback"
+                hint="Leave blank to use the URL above. Set it only when Safaricom must reach you on a different host."
+              >
+                <TextInput
+                  value={form.daraja_callback_url}
+                  placeholder={callback}
+                  spellCheck={false}
+                  onChange={(e) => set('daraja_callback_url', e.target.value)}
+                />
+              </Field>
+
+              <NotWired>
+                Only the STK callback exists. The C2B validation and confirmation routes are struck
+                through above because they are not implemented, and there is no register-URL call
+                either — so a customer paying your paybill directly, outside an STK prompt, is not
+                picked up automatically today.
+              </NotWired>
+            </div>
+          </Card>
+        )}
+
+        <StickySaveBar
+          dirty={dirty}
+          saving={saving}
+          onSave={save}
+          onReset={() => setForm(JSON.parse(baseline))}
+        />
+      </div>
+    );
+  }
+
+  /* --- List ------------------------------------------------------------- */
+  const builtCount = GATEWAYS.filter((g) => g.built).length;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+          {GATEWAYS.length} gateways listed · {builtCount} built ·{' '}
+          <span className="text-emerald-600 dark:text-emerald-400">
+            {GATEWAYS.find((g) => g.id === activeId)?.name} active
+          </span>
+        </p>
+        <a
+          href="https://www.safaricom.co.ke/business/sme/m-pesa-payment-solutions"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-600 transition hover:text-emerald-700 dark:text-emerald-400"
+        >
+          Need a till number?
+          <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {GATEWAYS.map((g) => (
+          <GatewayCard
+            key={g.id}
+            gateway={g}
+            active={g.id === activeId}
+            onSelect={() => setSelectedId(g.id)}
+          />
+        ))}
+      </div>
+
+      <NotWired>
+        Only the four M-Pesa and bank shapes are real — they are the same PaymentSettings row seen
+        four ways, so only one can be active at a time. The other six open a summary of what
+        building them would involve; none of them can take money today.
+      </NotWired>
+
+      <Card
+        title="Accepted payment methods"
+        description="Turn payment options on or off across the portal and dashboard"
+      >
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {PAYMENT_METHODS.map((m) => {
             const Icon = m.icon;
             return (
               <div key={m.key} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${m.iconClass}`}>
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${m.iconClass}`}>
                   <Icon className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-gray-900">{m.name}</p>
-                  <p className="text-sm text-gray-500">{m.desc}</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{m.name}</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{m.desc}</p>
                 </div>
-                <Toggle checked={methods[m.key]} onChange={(v) => toggleMethod(m.key, v)} />
+                <Toggle checked={Boolean(form[m.key])} onChange={(v) => toggleMethod(m.key, v)} />
               </div>
             );
           })}
