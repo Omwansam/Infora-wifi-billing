@@ -27,10 +27,12 @@ import {
   AlertTriangle,
   Info,
   Menu,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useSidebar } from '../../contexts/SidebarContext';
+import CopilotPanel from '../copilot/CopilotPanel';
 import { BRAND, sanitizeBrandText, STORAGE_KEYS } from '../../lib/brand';
 import { buildBreadcrumbs } from '../../lib/navBreadcrumbs';
 import { getDashboardStats } from '../../services/dashboardService';
@@ -170,6 +172,7 @@ export default function Header() {
   const searchRef = useRef(null);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -268,6 +271,8 @@ export default function Header() {
 
   return (
     <>
+      <CopilotPanel open={copilotOpen} onClose={() => setCopilotOpen(false)} />
+
       <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center gap-2 px-4 h-[60px] min-w-0 lg:gap-3 lg:px-6">
           <button
@@ -370,6 +375,19 @@ export default function Header() {
               <kbd className="hidden lg:inline-flex items-center rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
                 ⌘K
               </kbd>
+            </button>
+
+            {/* Copilot. Sits against the search box because the two answer the
+                same impulse — "find me the thing" — one by navigating, one by
+                explaining. */}
+            <button
+              type="button"
+              onClick={() => setCopilotOpen(true)}
+              aria-label="Open the network copilot"
+              title="Ask the copilot"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/30 transition hover:bg-emerald-500/20 dark:text-emerald-300"
+            >
+              <Sparkles className="h-[18px] w-[18px]" />
             </button>
 
             {/* Notifications */}
