@@ -1,61 +1,24 @@
-import React, { useMemo, useState } from 'react';
-import { Check, Eye, EyeOff, Sparkles } from 'lucide-react';
-import { Card, Select, Field, NotWired, UnavailableSave } from '../ui';
+import React, { useCallback, useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
+import { Check, Eye, EyeOff, Send, Sparkles } from 'lucide-react';
+import { getAccessToken } from '../../../utils/authToken';
+import settingsService from '../../../services/settingsService';
+import {
+  Card, Field, Select, ToggleRow, StickySaveBar, LoadingBlock, Note,
+  PrimaryButton, TextInput,
+} from '../ui';
 
 /* -------------------------------------------------------------------------
- * Settings > AI Assistant — design only.
+ * Settings > AI Assistant.
  *
- * No AI provider exists anywhere in this codebase: no key column, no client,
- * no route, no assistant surface for it to answer on. The controls are live so
- * the panel can be clicked through and argued about; the save button is the one
- * thing disabled, because it is the only control that would imply otherwise.
- *
- * Two deliberate departures from the mock this came from:
- *
- *   · the mock listed `claude-sonnet-4-6`. The current models are Opus 5,
- *     Sonnet 5 and Haiku 4.5, so the picker names those — shipping a stale
- *     model id inside a design is how it ends up in the implementation.
- *   · "Internal AI" is billed as costing nothing in the mock. It is not free to
- *     us, so it is described as included in the plan and metered by a daily
- *     allowance — the version that survives a finance conversation.
+ * Backed by /settings/ai — the provider list, model list and readiness all
+ * come from the server, so a provider we have not implemented a client for is
+ * reported as unavailable rather than quietly answered by a different vendor.
+ * The ask box below sends a real question through whatever is configured.
  * ---------------------------------------------------------------------- */
 
-const PROVIDERS = [
-  {
-    id: 'internal',
-    name: 'Internal AI',
-    host: 'Included with your plan',
-    detail: 'No API key needed — runs on our account against your daily allowance.',
-  },
-  {
-    id: 'anthropic',
-    name: 'Claude (Anthropic)',
-    host: 'anthropic.com',
-    detail: 'Claude Opus 5, Sonnet 5 and Haiku 4.5.',
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    host: 'openai.com',
-    detail: 'GPT-4o, GPT-4o mini and family.',
-  },
-];
-
-const MODELS = {
-  anthropic: [
-    ['claude-opus-5', 'Claude Opus 5 — most capable'],
-    ['claude-sonnet-5', 'Claude Sonnet 5 — balanced'],
-    ['claude-haiku-4-5', 'Claude Haiku 4.5 — fastest, cheapest'],
-  ],
-  openai: [
-    ['gpt-4o', 'GPT-4o'],
-    ['gpt-4o-mini', 'GPT-4o mini'],
-  ],
-};
-
-const KEY_PREFIX = { anthropic: 'sk-ant-', openai: 'sk-' };
-
 function ProviderCard({ provider, selected, onSelect }) {
+  const usable = provider.implemented;
   return (
     <button
       type="button"
@@ -72,12 +35,19 @@ function ProviderCard({ provider, selected, onSelect }) {
           <Check className="h-3 w-3" strokeWidth={3} />
         </span>
       )}
-      <span
-        className={`pr-6 text-sm font-semibold ${
-          selected ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-900 dark:text-slate-100'
-        }`}
-      >
-        {provider.name}
+      <span className="flex flex-wrap items-center gap-2 pr-6">
+        <span
+          className={`text-sm font-semibold ${
+            selected ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-900 dark:text-slate-100'
+          }`}
+        >
+          {provider.name}
+        </span>
+        {!usable && (
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-300">
+            No client
+          </span>
+        )}
       </span>
       <span className="mt-1 text-xs font-medium text-slate-400 dark:text-slate-500">
         {provider.host}
@@ -90,64 +60,118 @@ function ProviderCard({ provider, selected, onSelect }) {
 }
 
 export default function AiAssistantSettings() {
-  const [provider, setProvider] = useState('internal');
-  const [model, setModel] = useState('claude-opus-5');
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState(null);
+  const [baseline, setBaseline] = useState(null);
   const [apiKey, setApiKey] = useState('');
   const [reveal, setReveal] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const internal = provider === 'internal';
-  const models = MODELS[provider] || [];
+  const [question, setQuestion] = useState('');
+  const [asking, setAsking] = useState(false);
+  const [answer, setAnswer] = useState(null);
 
-  // Keep the model valid for the provider rather than carrying a Claude id
-  // across to OpenAI.
+  const load = useCallback(async () => {
+    try {
+      const res = await settingsService.getAi(getAccessToken());
+      const next = { enabled: res.enabled, provider: res.provider, model: res.model };
+      setData(res);
+      setForm(next);
+      setBaseline(JSON.stringify(next));
+    } catch (e) {
+      toast.error(e.message || 'Failed to load AI settings');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading || !form || !data) return <LoadingBlock />;
+
+  const provider = data.providers.find((p) => p.id === form.provider) || data.providers[0];
+  const dirty = JSON.stringify(form) !== baseline || Boolean(apiKey);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
   const pick = (id) => {
-    setProvider(id);
-    const list = MODELS[id];
-    if (list) setModel(list[0][0]);
+    const spec = data.providers.find((p) => p.id === id);
+    setForm((f) => ({
+      ...f,
+      provider: id,
+      // Keep the model valid for the provider rather than carrying a Claude id
+      // across to OpenAI.
+      model: spec?.models?.some(([m]) => m === f.model) ? f.model : (spec?.models?.[0]?.[0] || ''),
+    }));
   };
 
-  const placeholder = useMemo(
-    () => (internal ? '' : `${KEY_PREFIX[provider]}…`),
-    [internal, provider],
-  );
+  const save = async () => {
+    try {
+      setSaving(true);
+      await settingsService.saveAi(getAccessToken(), {
+        ...form, ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      });
+      setApiKey('');
+      toast.success('AI settings saved');
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const ask = async () => {
+    setAnswer(null);
+    try {
+      setAsking(true);
+      const res = await settingsService.askAi(getAccessToken(), { question: question.trim() });
+      setAnswer({ ok: true, text: res.answer, model: res.model, source: res.source });
+    } catch (e) {
+      setAnswer({ ok: false, text: e.message || 'The assistant could not answer' });
+    } finally {
+      setAsking(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      <NotWired>
-        Nothing on this panel saves. There is no AI provider wired into the backend — no key
-        storage, no client, no route, and no assistant surface for it to answer on. This settles
-        what the feature would ask you for; ask for it to be built and it will be built against
-        these controls.
-      </NotWired>
+      {!data.ready && (
+        <Note title="The assistant cannot answer yet" tone="warn">
+          <p className="mt-1">{data.reason}</p>
+        </Note>
+      )}
 
       <Card
         title="Provider"
-        description="Which large language model powers the AI assistant for your dashboard."
+        description="Which model answers, and whose account pays for it."
         action={
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
             <Sparkles className="h-[18px] w-[18px]" />
           </span>
         }
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {PROVIDERS.map((p) => (
-            <ProviderCard
-              key={p.id}
-              provider={p}
-              selected={provider === p.id}
-              onSelect={pick}
-            />
+        <ToggleRow
+          label="Enable the assistant"
+          description="Off means nothing is ever sent to a model."
+          checked={form.enabled}
+          onChange={(v) => set('enabled', v)}
+        />
+
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {data.providers.map((p) => (
+            <ProviderCard key={p.id} provider={p} selected={p.id === form.provider} onSelect={pick} />
           ))}
         </div>
 
-        {!internal && (
+        {provider?.models?.length > 0 && (
           <div className="mt-5 max-w-sm">
             <Field label="Model" hint="Higher tiers cost more per message and answer better.">
-              <Select value={model} onChange={(e) => setModel(e.target.value)}>
-                {models.map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
+              <Select value={form.model} onChange={(e) => set('model', e.target.value)}>
+                {provider.models.map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
                 ))}
               </Select>
             </Field>
@@ -158,33 +182,21 @@ export default function AiAssistantSettings() {
       <Card
         title="API key"
         description={
-          internal
-            ? 'Nothing to configure while the assistant runs on our account.'
-            : 'Optional — leave it blank to keep using the internal AI instead.'
+          provider?.needs_key
+            ? 'Your own key — usage and cost are billed to you, and the plan allowance stops applying.'
+            : 'Nothing to configure while the assistant runs on our account.'
         }
       >
-        {internal ? (
-          <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
-            Internal AI runs on our account, so there is no key to enter and no provider bill
-            reaches you. Usage counts against your plan&apos;s daily assistant allowance — pick a
-            provider above and add your own key to lift that ceiling.
-          </p>
-        ) : (
+        {provider?.needs_key ? (
           <>
-            <p className="mb-4 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
-              Enter your own key and the assistant calls{' '}
-              {PROVIDERS.find((p) => p.id === provider)?.name} directly on your account — usage and
-              costs are billed to you, and the daily allowance stops applying.
-            </p>
             <div className="relative max-w-xl">
-              <input
+              <TextInput
                 type={reveal ? 'text' : 'password'}
                 value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={placeholder}
-                spellCheck={false}
+                placeholder={data.has_key ? '•••••••• (saved — type to replace)' : 'sk-ant-…'}
                 autoComplete="off"
-                className="block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 pr-10 font-mono text-sm text-slate-900 outline-none transition placeholder:font-mono placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-600"
+                className="pr-10 font-mono"
+                onChange={(e) => setApiKey(e.target.value)}
               />
               <button
                 type="button"
@@ -197,17 +209,81 @@ export default function AiAssistantSettings() {
               </button>
             </div>
             <p className="mt-2 text-xs leading-relaxed text-slate-400 dark:text-slate-500">
-              Anthropic keys start with <span className="font-mono">sk-ant-</span>; OpenAI keys
-              start with <span className="font-mono">sk-</span>. It would be encrypted at rest and
-              returned masked, the way SMS and M-Pesa credentials already are.
+              Encrypted at rest and never shown again after saving. Leave blank to keep the key
+              already stored.
             </p>
           </>
+        ) : (
+          <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+            Internal AI runs on our account, so no key is needed and no provider bill reaches you.
+            Usage counts against your plan&apos;s daily allowance — add your own key to lift that.
+          </p>
         )}
+      </Card>
 
-        <div className="mt-6">
-          <UnavailableSave />
+      <Card
+        title="Ask it something"
+        description="Sends a real question using the settings that are saved right now."
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <Field label="Question" className="flex-1">
+              <TextInput
+                value={question}
+                placeholder="How many subscribers are past expiry?"
+                onChange={(e) => setQuestion(e.target.value)}
+              />
+            </Field>
+            <PrimaryButton
+              onClick={ask}
+              loading={asking}
+              disabled={!question.trim() || !data.ready}
+              className="shrink-0"
+            >
+              <Send className="h-4 w-4" />
+              Ask
+            </PrimaryButton>
+          </div>
+
+          {dirty && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              You have unsaved changes — the question uses what is saved. Save first.
+            </p>
+          )}
+
+          {answer && (
+            <div
+              className={`rounded-xl border px-4 py-3 ${
+                answer.ok
+                  ? 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40'
+                  : 'border-rose-200 bg-rose-50 dark:border-rose-900/60 dark:bg-rose-950/40'
+              }`}
+            >
+              <p
+                className={`whitespace-pre-wrap text-sm leading-relaxed ${
+                  answer.ok
+                    ? 'text-slate-700 dark:text-slate-200'
+                    : 'font-mono text-xs text-rose-700 dark:text-rose-300'
+                }`}
+              >
+                {answer.text}
+              </p>
+              {answer.ok && (
+                <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                  {answer.model} · {answer.source === 'tenant' ? 'your key' : 'platform key'}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </Card>
+
+      <StickySaveBar
+        dirty={dirty}
+        saving={saving}
+        onSave={save}
+        onReset={() => { setForm(JSON.parse(baseline)); setApiKey(''); }}
+      />
     </div>
   );
 }

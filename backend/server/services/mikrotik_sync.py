@@ -28,10 +28,32 @@ def _offline_grace_seconds():
         return _DEFAULT_OFFLINE_GRACE_SECONDS
 
 
+def _record_outage_transition(device, going_online):
+    """Open or close the outage log around a real status change.
+
+    Best-effort: an accounting problem must never stop a router being marked
+    online again, because that status is what the rest of the console acts on.
+    """
+    try:
+        from services import outage_compensation
+        if going_online:
+            outage_compensation.close_outage(device)
+        else:
+            outage_compensation.open_outage(device)
+    except Exception as exc:  # noqa: BLE001
+        db.session.rollback()
+        current_app.logger.error('Outage bookkeeping failed for device %s: %s', device.id, exc)
+
+
 def _mark_online(device):
     """Flip a device ONLINE and stamp the contact time (idempotent)."""
+    was_offline = device.device_status == DeviceStatus.OFFLINE
     device.device_status = DeviceStatus.ONLINE
     device.last_synced = datetime.utcnow()
+    if was_offline:
+        # Closing the outage is what credits the downtime, so it has to happen
+        # on the transition rather than on every successful poll.
+        _record_outage_transition(device, going_online=True)
 
 
 def mark_unreachable(device, already_probed=False):
@@ -77,8 +99,11 @@ def mark_unreachable(device, already_probed=False):
         # Recently confirmed online and no proof it's gone yet — stay sticky.
         return DeviceStatus.ONLINE
 
+    was_online = device.device_status != DeviceStatus.OFFLINE
     device.device_status = DeviceStatus.OFFLINE
     db.session.commit()
+    if was_online:
+        _record_outage_transition(device, going_online=False)
     return DeviceStatus.OFFLINE
 
 

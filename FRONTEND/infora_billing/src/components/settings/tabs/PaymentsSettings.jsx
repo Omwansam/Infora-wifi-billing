@@ -10,7 +10,7 @@ import { API_BASE_URL } from '../../../config/api';
 import { useSettingsChrome } from '../chrome';
 import {
   Card, Field, TextInput, Select, Toggle, StickySaveBar, StatusPill,
-  LoadingBlock, NotWired, Note, PrimaryButton, UnavailableSave,
+  LoadingBlock, NotWired, Note, PrimaryButton, UnavailableSave, TestResult,
 } from '../ui';
 
 /* -------------------------------------------------------------------------
@@ -82,13 +82,34 @@ const GATEWAYS = [
     settlement: 'To your bank',
     built: true,
   },
-  { id: 'dpo', name: 'DPO Pay', subtitle: 'DPO Pay · multi-country', mark: 'D', markClass: 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-300', caps: [CAP.cards, CAP.momo], settlement: 'To bank' },
-  { id: 'kopokopo', name: 'Kopo Kopo', subtitle: 'Kopo Kopo · Kenya', mark: 'K', markClass: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300', caps: ['Mobile money till'], settlement: 'T+1 to bank' },
-  { id: 'paypal', name: 'PayPal', subtitle: 'PayPal · global', mark: 'PP', markClass: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300', caps: [CAP.cards, 'PayPal'], settlement: 'To PayPal balance' },
-  { id: 'paystack', name: 'Paystack', subtitle: 'Paystack · 14 markets', mark: 'PS', markClass: 'bg-cyan-50 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-300', caps: [CAP.cards, 'MoMo', 'Bank'], settlement: 'T+1 to bank' },
-  { id: 'pesapal', name: 'PesaPal', subtitle: 'Pesapal · East Africa', mark: 'PL', markClass: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300', caps: [CAP.cards, CAP.momo, 'Airtel'], settlement: 'To bank' },
-  { id: 'relworx', name: 'Relworx', subtitle: 'Relworx · Uganda', mark: 'R', markClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300', caps: [CAP.momo], settlement: 'To bank' },
 ];
+
+/* The six non-M-Pesa gateways come from /settings/payment-gateways rather than
+   being listed here — the backend registry owns their credential shapes, so a
+   new gateway appears in this grid with no change to this file. */
+const TINTS = [
+  'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-300',
+  'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300',
+  'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+  'bg-cyan-50 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-300',
+  'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300',
+  'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+];
+
+function externalToCard(gateway, index) {
+  return {
+    id: gateway.id,
+    name: gateway.name,
+    subtitle: gateway.region,
+    mark: gateway.mark,
+    markClass: TINTS[index % TINTS.length],
+    caps: gateway.caps,
+    settlement: gateway.settlement,
+    built: true,
+    external: true,
+    spec: gateway,
+  };
+}
 
 const PAYMENT_METHODS = [
   { key: 'method_mpesa', name: 'M-Pesa (STK push)', desc: 'Customers pay directly from the captive portal via STK push.', icon: Smartphone, iconClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300' },
@@ -239,6 +260,145 @@ function CallbackRow({ label, url, available }) {
   );
 }
 
+/** Credentials + a live test for one registry gateway. */
+function ExternalGatewayDetail({ gateway, onSaved }) {
+  const initial = useMemo(() => {
+    const base = {};
+    gateway.fields.forEach((f) => {
+      const saved = gateway.config?.[f.name];
+      base[f.name] = saved === '********' ? '' : (saved ?? f.default ?? '');
+    });
+    return base;
+  }, [gateway]);
+
+  const [form, setForm] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [email, setEmail] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => setForm(initial), [initial]);
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+
+  const save = async () => {
+    try {
+      setSaving(true);
+      const config = { ...form };
+      gateway.fields.forEach((f) => {
+        if (f.secret && !config[f.name]) delete config[f.name];
+      });
+      await settingsService.saveIntegration(getAccessToken(), gateway.storage_key, {
+        enabled: true, config,
+      });
+      toast.success(`${gateway.name} credentials saved`);
+      onSaved?.();
+    } catch (e) {
+      toast.error(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const test = async () => {
+    setResult(null);
+    try {
+      setTesting(true);
+      const res = await settingsService.testPaymentGateway(
+        getAccessToken(), gateway.id, { email: email.trim() });
+      setResult({ ok: true, detail: res.message, via: res.checkout_url || res.reference });
+    } catch (e) {
+      setResult({ ok: false, detail: e.message || 'Checkout failed' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Note title="Starting a checkout is wired; confirming one is not" tone="warn">
+        <p className="mt-1">
+          {gateway.name} can create a real payment page today. What is missing is webhook
+          verification — each vendor signs differently, and a handler that accepts unverified
+          callbacks can be paid in forgeries. Until that lands, payments taken here must be
+          reconciled by hand; M-Pesa Daraja is the one gateway that confirms itself.
+        </p>
+      </Note>
+
+      {!gateway.verified && (
+        <Note title="Endpoint not verified against live docs" tone="warn">
+          <p className="mt-1">
+            The endpoint and field names below are a best effort. They are editable — paste your
+            account&apos;s real values if they differ, then run the test.
+          </p>
+        </Note>
+      )}
+
+      <Card title="Credentials" description="Stored encrypted. Leave a secret blank to keep the saved one.">
+        <div className="space-y-5">
+          {gateway.fields.map((f) => (
+            <Field key={f.name} label={f.label} hint={f.hint} required={f.required}>
+              {f.secret ? (
+                <SecretField
+                  label={null}
+                  value={form[f.name] || ''}
+                  onChange={(e) => setForm((s2) => ({ ...s2, [f.name]: e.target.value }))}
+                />
+              ) : (
+                <TextInput
+                  value={form[f.name] || ''}
+                  spellCheck={false}
+                  onChange={(e) => setForm((s2) => ({ ...s2, [f.name]: e.target.value }))}
+                />
+              )}
+            </Field>
+          ))}
+        </div>
+      </Card>
+
+      <Card
+        title="Test checkout"
+        description="Creates a real 1-unit payment page to prove the credentials work."
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <Field label="Customer email" hint="Whose address the test checkout is raised against." className="flex-1">
+              <TextInput
+                type="email"
+                value={email}
+                placeholder="you@example.com"
+                spellCheck={false}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Field>
+            <PrimaryButton
+              onClick={test}
+              loading={testing}
+              disabled={!gateway.configured}
+              className="shrink-0"
+            >
+              Create test checkout
+            </PrimaryButton>
+          </div>
+          {!gateway.configured && (
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              Save the required credentials first — the test uses what is stored.
+            </p>
+          )}
+          <TestResult result={result} />
+        </div>
+      </Card>
+
+      <StickySaveBar
+        dirty={dirty}
+        saving={saving}
+        onSave={save}
+        onReset={() => setForm(initial)}
+        label="Save credentials"
+      />
+    </div>
+  );
+}
+
 export default function PaymentsSettings() {
   const { setChrome } = useSettingsChrome();
   const [form, setForm] = useState(BLANK);
@@ -246,10 +406,14 @@ export default function PaymentsSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+  const [external, setExternal] = useState([]);
 
   useEffect(() => {
     (async () => {
       try {
+        settingsService.getPaymentGateways(getAccessToken())
+          .then((res) => setExternal(res.gateways || []))
+          .catch(() => setExternal([]));
         const data = await settingsService.getPayments(getAccessToken());
         const next = { ...BLANK, ...data };
         setForm(next);
@@ -265,7 +429,14 @@ export default function PaymentsSettings() {
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const dirty = baseline !== null && JSON.stringify(form) !== baseline;
   const activeId = useMemo(() => activeGatewayId(form), [form]);
-  const gateway = useMemo(() => GATEWAYS.find((g) => g.id === selectedId) || null, [selectedId]);
+  const allGateways = useMemo(
+    () => [...GATEWAYS, ...external.map(externalToCard)],
+    [external],
+  );
+  const gateway = useMemo(
+    () => allGateways.find((g) => g.id === selectedId) || null,
+    [allGateways, selectedId],
+  );
 
   const persist = useCallback(async (payload, message) => {
     try {
@@ -328,6 +499,13 @@ export default function PaymentsSettings() {
   }, [gateway, activeId, saving, setChrome]);
 
   if (loading) return <LoadingBlock />;
+
+  /* --- Detail: a registry gateway --------------------------------------- */
+  if (gateway && gateway.external) {
+    return <ExternalGatewayDetail gateway={gateway.spec} onSaved={() =>
+      settingsService.getPaymentGateways(getAccessToken())
+        .then((res) => setExternal(res.gateways || []))} />;
+  }
 
   /* --- Detail: unbuilt gateways ---------------------------------------- */
   if (gateway && !gateway.built) {
@@ -545,15 +723,15 @@ export default function PaymentsSettings() {
   }
 
   /* --- List ------------------------------------------------------------- */
-  const builtCount = GATEWAYS.filter((g) => g.built).length;
+  const builtCount = allGateways.filter((g) => g.built).length;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-          {GATEWAYS.length} gateways listed · {builtCount} built ·{' '}
+          {allGateways.length} gateways · {builtCount} usable ·{' '}
           <span className="text-emerald-600 dark:text-emerald-400">
-            {GATEWAYS.find((g) => g.id === activeId)?.name} active
+            {allGateways.find((g) => g.id === activeId)?.name} active
           </span>
         </p>
         <a
@@ -568,7 +746,7 @@ export default function PaymentsSettings() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {GATEWAYS.map((g) => (
+        {allGateways.map((g) => (
           <GatewayCard
             key={g.id}
             gateway={g}

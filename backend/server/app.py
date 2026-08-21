@@ -166,6 +166,16 @@ def ensure_schema_upgrades():
             # integration_settings keyed by the same provider id.
             'sms_provider': 'VARCHAR(40)',
             'whatsapp_provider': 'VARCHAR(40)',
+            # Operator automation + AI assistant (Settings).
+            'outage_compensation_enabled': 'BOOLEAN DEFAULT FALSE',
+            'outage_min_minutes': 'INTEGER DEFAULT 15',
+            'sales_digest_enabled': 'BOOLEAN DEFAULT FALSE',
+            'sales_digest_frequency': 'VARCHAR(10)',
+            'sales_digest_recipients': 'TEXT',
+            'sales_digest_last_sent_at': 'TIMESTAMP',
+            'ai_enabled': 'BOOLEAN DEFAULT FALSE',
+            'ai_provider': 'VARCHAR(20)',
+            'ai_model': 'VARCHAR(60)',
         },
         'cpe_devices': {
             # ONT position + which ODB/splitter port it hangs off, so a dimming

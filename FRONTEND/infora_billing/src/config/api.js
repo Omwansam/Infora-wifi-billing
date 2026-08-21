@@ -173,6 +173,17 @@ export const API_ENDPOINTS = {
     `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}`,
   settingsMessagingActive: (channel) =>
     `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}/active`,
+  SETTINGS_LOYALTY: `${API_BASE_URL}/api/settings/loyalty`,
+  settingsLoyaltyCustomer: (id) => `${API_BASE_URL}/api/settings/loyalty/customers/${id}`,
+  settingsLoyaltyRedeem: (id) => `${API_BASE_URL}/api/settings/loyalty/customers/${id}/redeem`,
+  SETTINGS_AUTOMATION: `${API_BASE_URL}/api/settings/automation`,
+  SETTINGS_DIGEST_SEND: `${API_BASE_URL}/api/settings/automation/digest/send`,
+  SETTINGS_AI: `${API_BASE_URL}/api/settings/ai`,
+  SETTINGS_AI_ASK: `${API_BASE_URL}/api/settings/ai/ask`,
+  SETTINGS_PAYMENT_GATEWAYS: `${API_BASE_URL}/api/settings/payment-gateways`,
+  settingsPaymentGatewayTest: (id) =>
+    `${API_BASE_URL}/api/settings/payment-gateways/${encodeURIComponent(id)}/test`,
+  SETTINGS_DOMAIN_SLUG: `${API_BASE_URL}/api/settings/domain/slug`,
   settingsMessagingTest: (channel, provider) =>
     `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}/${encodeURIComponent(provider)}/test`,
   SETTINGS_API_KEYS: `${API_BASE_URL}/api/settings/api-keys`,

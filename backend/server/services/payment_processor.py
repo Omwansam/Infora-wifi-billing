@@ -54,6 +54,19 @@ def complete_successful_payment(payment, mpesa_receipt=None, amount=None):
     db.session.add(txn)
     db.session.commit()
 
+    # Loyalty accrual. Best-effort and after the commit above on purpose: a
+    # points bug must never roll back a payment that has already been taken.
+    # award_for_payment is idempotent per payment, so a retried callback that
+    # reaches here twice still credits once.
+    try:
+        from services.loyalty import award_for_payment
+        award_for_payment(payment, isp=isp)
+    except Exception as exc:  # noqa: BLE001 - never let points break a payment
+        db.session.rollback()
+        import logging
+        logging.getLogger(__name__).error(
+            'Loyalty accrual failed for payment=%s: %s', payment.id, exc)
+
     try:
         from services.notification_dispatch import dispatch_hotspot_payment_success
         dispatch_hotspot_payment_success(payment)

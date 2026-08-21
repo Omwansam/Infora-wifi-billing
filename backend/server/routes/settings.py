@@ -14,10 +14,11 @@ from werkzeug.utils import secure_filename
 from extensions import db
 from auth_utils import get_current_user
 from models import (
-    ISP, MikrotikDevice, NotificationSetting, PortalAnnouncement,
+    ISP, Customer, MikrotikDevice, NotificationSetting, PortalAnnouncement,
     PaymentSettings, RadiusConfig, RadiusNasClient, IntegrationSetting,
     ApiKey, ApiSetting,
 )
+from services.system_log import record_system_log
 from services.rate_limit import rate_limit
 from services import notification_events as nev
 from services.portal_urls import portal_entry_url, portal_frontend_base_url
@@ -986,6 +987,412 @@ def get_integrations():
         for r in rows
     ]
     return jsonify({'integrations': integrations}), 200
+
+
+# ---------------------------------------------------------------------------
+# Loyalty points (Settings > Loyalty points)
+# ---------------------------------------------------------------------------
+
+@settings_bp.route('/loyalty', methods=['GET'])
+@jwt_required()
+def get_loyalty():
+    from services import loyalty
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    row = loyalty.get_settings(isp)
+    return jsonify({
+        'settings': loyalty.serialize_settings(row),
+        'stats': loyalty.scheme_stats(isp),
+    }), 200
+
+
+@settings_bp.route('/loyalty', methods=['PUT'])
+@jwt_required()
+def update_loyalty():
+    from services import loyalty
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    row = loyalty.get_settings(isp)
+    data = request.get_json() or {}
+
+    if 'enabled' in data:
+        row.enabled = bool(data['enabled'])
+    for field, cast, floor in (('points_earned', int, 0), ('min_redeem', int, 0),
+                               ('earn_per', float, 0.01), ('point_value', float, 0)):
+        if field in data:
+            try:
+                value = cast(data[field])
+            except (TypeError, ValueError):
+                return jsonify({'error': f'{field} must be a number'}), 400
+            if value < floor:
+                return jsonify({'error': f'{field} must be at least {floor}'}), 400
+            setattr(row, field, value)
+    if 'rounding' in data:
+        mode = (data['rounding'] or 'floor').strip().lower()
+        row.rounding = mode if mode in ('floor', 'nearest') else 'floor'
+    if 'expiry_months' in data:
+        raw = data['expiry_months']
+        if raw in (None, '', 'null'):
+            row.expiry_months = None
+        else:
+            try:
+                months = int(raw)
+            except (TypeError, ValueError):
+                return jsonify({'error': 'Expiry must be a whole number of months'}), 400
+            row.expiry_months = months if months > 0 else None
+
+    db.session.commit()
+    return jsonify({'message': 'Loyalty settings saved',
+                    'settings': loyalty.serialize_settings(row)}), 200
+
+
+@settings_bp.route('/loyalty/customers/<int:customer_id>', methods=['GET'])
+@jwt_required()
+def get_loyalty_customer(customer_id):
+    from services import loyalty
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    customer = Customer.query.filter_by(id=customer_id, isp_id=isp.id).first()
+    if customer is None:
+        return jsonify({'error': 'Subscriber not found'}), 404
+    return jsonify({
+        'customer_id': customer.id,
+        'balance': loyalty.balance(customer.id),
+        'history': [loyalty.serialize_entry(r) for r in loyalty.history(customer.id)],
+    }), 200
+
+
+@settings_bp.route('/loyalty/customers/<int:customer_id>/redeem', methods=['POST'])
+@jwt_required()
+def redeem_loyalty(customer_id):
+    from services import loyalty
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    customer = Customer.query.filter_by(id=customer_id, isp_id=isp.id).first()
+    if customer is None:
+        return jsonify({'error': 'Subscriber not found'}), 404
+    try:
+        value = loyalty.redeem(customer, (request.get_json() or {}).get('points'), isp=isp)
+    except loyalty.RedemptionError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return jsonify({'message': f'Redeemed for {value}', 'value': float(value),
+                    'balance': loyalty.balance(customer.id)}), 200
+
+
+@settings_bp.route('/loyalty/expire', methods=['POST'])
+@jwt_required()
+def expire_loyalty():
+    from services import loyalty
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    expired = loyalty.expire_stale(isp)
+    return jsonify({'message': f'{expired} point(s) written off', 'expired': expired}), 200
+
+
+# ---------------------------------------------------------------------------
+# Operator automation (Settings > Operator alerts)
+# ---------------------------------------------------------------------------
+
+@settings_bp.route('/automation', methods=['GET'])
+@jwt_required()
+def get_automation():
+    from services import outage_compensation, sales_digest
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    return jsonify({
+        'outage': {
+            'enabled': bool(isp.outage_compensation_enabled),
+            'min_minutes': int(isp.outage_min_minutes or 15),
+            'recent': [outage_compensation.serialize(o)
+                       for o in outage_compensation.recent(isp.id)],
+        },
+        'digest': {
+            'enabled': bool(isp.sales_digest_enabled),
+            'frequency': isp.sales_digest_frequency or 'daily',
+            'recipients': isp.sales_digest_recipients or '',
+            'last_sent_at': (isp.sales_digest_last_sent_at.isoformat()
+                             if isp.sales_digest_last_sent_at else None),
+            'preview': sales_digest.render(isp, sales_digest.build(isp)),
+        },
+    }), 200
+
+
+@settings_bp.route('/automation', methods=['PUT'])
+@jwt_required()
+def update_automation():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    data = request.get_json() or {}
+    outage = data.get('outage') or {}
+    digest = data.get('digest') or {}
+
+    if 'enabled' in outage:
+        isp.outage_compensation_enabled = bool(outage['enabled'])
+    if 'min_minutes' in outage:
+        try:
+            minutes = int(outage['min_minutes'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Minimum outage must be a whole number of minutes'}), 400
+        if minutes < 1:
+            return jsonify({'error': 'Minimum outage must be at least 1 minute'}), 400
+        isp.outage_min_minutes = minutes
+
+    if 'enabled' in digest:
+        isp.sales_digest_enabled = bool(digest['enabled'])
+    if 'frequency' in digest:
+        freq = (digest['frequency'] or 'daily').strip().lower()
+        isp.sales_digest_frequency = freq if freq in ('daily', 'weekly') else 'daily'
+    if 'recipients' in digest:
+        raw = (digest['recipients'] or '').replace(';', ',')
+        addresses = [a.strip() for a in raw.split(',') if a.strip()]
+        bad = [a for a in addresses if '@' not in a]
+        if bad:
+            return jsonify({'error': f"Not an email address: {bad[0]}"}), 400
+        isp.sales_digest_recipients = ', '.join(addresses) or None
+
+    db.session.commit()
+    return jsonify({'message': 'Automation settings saved'}), 200
+
+
+@settings_bp.route('/automation/digest/send', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=5, window=300, scope='settings-digest-send')
+def send_digest_now():
+    from services import sales_digest
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    try:
+        sent, detail = sales_digest.send(isp, force=True)
+    except Exception as exc:
+        return jsonify({'error': f'{type(exc).__name__}: {exc}'}), 502
+    if not sent:
+        return jsonify({'error': detail}), 400
+    return jsonify({'message': detail, 'sent': sent}), 200
+
+
+# ---------------------------------------------------------------------------
+# AI assistant (Settings > AI Assistant)
+# ---------------------------------------------------------------------------
+
+@settings_bp.route('/ai', methods=['GET'])
+@jwt_required()
+def get_ai():
+    from services import ai_assistant
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    row = IntegrationSetting.query.filter_by(isp_id=isp.id, key='ai').first()
+    payload = ai_assistant.serialize_settings(isp)
+    payload['has_key'] = bool((_integration_config(row) if row else {}).get('api_key'))
+    try:
+        ai_assistant.resolve(isp)
+        payload['ready'] = True
+        payload['reason'] = ''
+    except ai_assistant.AiError as exc:
+        payload['ready'] = False
+        payload['reason'] = str(exc)
+    return jsonify(payload), 200
+
+
+@settings_bp.route('/ai', methods=['PUT'])
+@jwt_required()
+def update_ai():
+    from services import ai_assistant
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    data = request.get_json() or {}
+
+    if 'enabled' in data:
+        isp.ai_enabled = bool(data['enabled'])
+    if 'provider' in data:
+        provider = (data['provider'] or 'internal').strip().lower()
+        if provider not in ai_assistant.PROVIDERS:
+            return jsonify({'error': 'Unknown provider'}), 400
+        isp.ai_provider = provider
+    if 'model' in data:
+        isp.ai_model = (data['model'] or '').strip() or None
+    if 'api_key' in data and (data['api_key'] or '').strip():
+        row = IntegrationSetting.query.filter_by(isp_id=isp.id, key='ai').first()
+        if row is None:
+            row = IntegrationSetting(isp_id=isp.id, key='ai')
+            db.session.add(row)
+        row.enabled = True
+        row.config = json.dumps({'api_key': encrypt_value(data['api_key'].strip())})
+
+    db.session.commit()
+    return jsonify({'message': 'AI settings saved'}), 200
+
+
+@settings_bp.route('/ai/ask', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=30, window=300, scope='settings-ai-ask')
+def ask_ai():
+    from services import ai_assistant
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    data = request.get_json() or {}
+    try:
+        result = ai_assistant.ask(isp, data.get('question'), data.get('history'))
+    except ai_assistant.AiNotConfigured as exc:
+        return jsonify({'error': str(exc)}), 400
+    except ai_assistant.AiError as exc:
+        return jsonify({'error': str(exc)}), 502
+    return jsonify(result), 200
+
+
+# ---------------------------------------------------------------------------
+# Payment gateways beyond M-Pesa (Settings > Payments)
+# ---------------------------------------------------------------------------
+
+@settings_bp.route('/payment-gateways', methods=['GET'])
+@jwt_required()
+def list_payment_gateways():
+    from services import payment_gateways as pg
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    rows = {r.key: r for r in IntegrationSetting.query.filter_by(isp_id=isp.id).all()}
+    gateways = []
+    for spec in pg.all_gateways():
+        key = f"gateway:{spec['id']}"
+        row = rows.get(key)
+        raw = _integration_config(row) if row else {}
+        gateways.append({
+            **pg.public_spec(spec['id']),
+            'storage_key': key,
+            'enabled': bool(row and row.enabled),
+            'configured': bool(row and row.enabled and not pg.missing_fields(spec['id'], raw)),
+            'config': _public_integration_config(raw),
+        })
+    return jsonify({'gateways': gateways}), 200
+
+
+@settings_bp.route('/payment-gateways/<gateway_id>/test', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=5, window=300, scope='settings-gateway-test')
+def test_payment_gateway(gateway_id):
+    """Create a real 1-unit checkout to prove the credentials work."""
+    from services import payment_gateways as pg
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    spec = pg.get(gateway_id)
+    if not spec:
+        return jsonify({'error': 'Unknown gateway'}), 404
+
+    row = IntegrationSetting.query.filter_by(
+        isp_id=isp.id, key=f'gateway:{gateway_id}').first()
+    config = _decrypted_integration_config(row) if row else {}
+    missing = pg.missing_fields(gateway_id, config)
+    if missing:
+        labels = {f['name']: f['label'] for f in spec['fields']}
+        return jsonify({'error': 'Save credentials first — missing '
+                                 + ', '.join(labels.get(m, m) for m in missing)}), 400
+
+    email = ((request.get_json() or {}).get('email') or isp.email or '').strip()
+    if not email or '@' not in email:
+        return jsonify({'error': 'Enter an email address for the test checkout'}), 400
+
+    try:
+        result = pg.create_checkout(
+            gateway_id, config, amount=1, reference=f'TEST-{secrets.token_hex(4).upper()}',
+            email=email, description='Gateway credential test',
+            return_url=_public_base_url(),
+        )
+    except pg.GatewayError as exc:
+        return jsonify({'error': f'{type(exc).__name__}: {exc}'}), 502
+
+    return jsonify({
+        'message': 'Checkout created — the credentials work.',
+        'checkout_url': result['url'] or '',
+        'reference': result['reference'],
+        'note': 'Starting a checkout is wired; confirming one by webhook is not.',
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Account address (Settings > Domain)
+# ---------------------------------------------------------------------------
+
+@settings_bp.route('/domain/slug', methods=['PUT'])
+@jwt_required()
+def change_slug():
+    """Move the tenant to a different account address.
+
+    ``services/tenant_slug`` calls the slug permanent, and it is right that
+    nothing should change it casually — the old address stops resolving the
+    moment this succeeds, and it is baked into welcome emails, support threads
+    and any hotspot config already pushed to a router. So this exists, is
+    admin-only, and makes the caller acknowledge that explicitly rather than
+    discovering it afterwards.
+    """
+    from services import tenant_slug
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+
+    user = get_current_user()
+    if not user or (user.role or '').lower() != 'admin':
+        return jsonify({'error': 'Only an administrator can change the account address'}), 403
+
+    data = request.get_json() or {}
+    if not data.get('confirm'):
+        return jsonify({
+            'error': 'Confirm the change first.',
+            'consequences': [
+                f'{tenant_slug.account_address(isp.slug)} stops working immediately.',
+                'Hotspot portal files already pushed to routers keep the old address '
+                'until each router is re-provisioned.',
+                'Links in welcome emails and support threads already sent will break.',
+            ],
+        }), 400
+
+    candidate = (data.get('slug') or '').strip().lower()
+    available, normalised, message = tenant_slug.check_slug(candidate)
+    if not available:
+        payload = {'error': message}
+        if normalised:
+            payload['suggestion'] = tenant_slug.suggest_slug(normalised)
+        return jsonify(payload), 400
+    if normalised == isp.slug:
+        return jsonify({'error': 'That is already your account address'}), 400
+
+    previous = isp.slug
+    isp.slug = normalised
+    db.session.commit()
+    record_system_log('settings', f'Account address changed from {previous} to {normalised}',
+                      user_id=user.id)
+    return jsonify({
+        'message': 'Account address changed',
+        'slug': normalised,
+        'account_address': tenant_slug.account_address(normalised),
+        'previous': previous,
+        'warning': 'Re-run "Configure services" on each hotspot router so it fetches '
+                   'portal files from the new address.',
+    }), 200
 
 
 # ---------------------------------------------------------------------------

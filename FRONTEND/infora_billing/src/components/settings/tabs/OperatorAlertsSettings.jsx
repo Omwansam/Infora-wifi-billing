@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Clock3, Router, TrendingUp } from 'lucide-react';
+import { Clock3, Router, Send, TrendingUp } from 'lucide-react';
 import { getAccessToken } from '../../../utils/authToken';
 import settingsService from '../../../services/settingsService';
 import IntegrationsSettings from './IntegrationsSettings';
 import {
-  Card, Textarea, Toggle, ToggleRow, VariableChips, StickySaveBar,
-  LoadingBlock, NotWired, insertAtCursor,
+  Card, Field, Select, TextInput, Textarea, Toggle, ToggleRow, VariableChips,
+  StickySaveBar, LoadingBlock, Note, PrimaryButton, insertAtCursor,
 } from '../ui';
 
 /* -------------------------------------------------------------------------
@@ -18,8 +18,9 @@ import {
  * router_health events, so "on" here means "at least one of them is on" and
  * flipping it off remembers what was on so it can be put back.
  *
- * Outage compensation and sales digests are ideas with no backend behind them.
- * They are drawn, and labelled as drawn.
+ * Outage compensation and the sales digest are backed by /settings/automation.
+ * Compensation reads the device_outages log the liveness monitor writes, so the
+ * credits listed below are real ones rather than a projection.
  * ---------------------------------------------------------------------- */
 
 const GROUP = 'router_health';
@@ -73,14 +74,22 @@ export default function OperatorAlertsSettings() {
   const [saving, setSaving] = useState(false);
   // What was on before the master switch was thrown, so it can be restored.
   const [lastOn, setLastOn] = useState([]);
+  const [auto, setAuto] = useState(null);
+  const [autoBaseline, setAutoBaseline] = useState(null);
+  const [sendingDigest, setSendingDigest] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await settingsService.getNotifications(getAccessToken());
+      const [data, automation] = await Promise.all([
+        settingsService.getNotifications(getAccessToken()),
+        settingsService.getAutomation(getAccessToken()),
+      ]);
       const group = (data.groups || []).find((g) => g.key === GROUP);
       const list = group?.events || [];
       setEvents(list);
       setBaseline(JSON.stringify(list));
+      setAuto(automation);
+      setAutoBaseline(JSON.stringify({ outage: automation.outage, digest: automation.digest }));
     } catch (e) {
       toast.error(e.message || 'Failed to load alerts');
     } finally {
@@ -92,10 +101,11 @@ export default function OperatorAlertsSettings() {
     load();
   }, [load]);
 
-  const dirty = useMemo(
-    () => Boolean(events) && JSON.stringify(events) !== baseline,
-    [events, baseline],
-  );
+  const dirty = useMemo(() => {
+    if (!events || !auto) return false;
+    if (JSON.stringify(events) !== baseline) return true;
+    return JSON.stringify({ outage: auto.outage, digest: auto.digest }) !== autoBaseline;
+  }, [events, baseline, auto, autoBaseline]);
 
   const anyOn = useMemo(() => (events || []).some((e) => e.enabled), [events]);
 
@@ -124,8 +134,18 @@ export default function OperatorAlertsSettings() {
           event_key, channel, enabled, template,
         })),
       );
+      await settingsService.saveAutomation(getAccessToken(), {
+        outage: { enabled: auto.outage.enabled, min_minutes: auto.outage.min_minutes },
+        digest: {
+          enabled: auto.digest.enabled,
+          frequency: auto.digest.frequency,
+          recipients: auto.digest.recipients,
+        },
+      });
       setBaseline(JSON.stringify(events));
+      setAutoBaseline(JSON.stringify({ outage: auto.outage, digest: auto.digest }));
       toast.success('Alert preferences saved');
+      load();
     } catch (e) {
       toast.error(e.message || 'Save failed');
     } finally {
@@ -133,9 +153,25 @@ export default function OperatorAlertsSettings() {
     }
   };
 
-  const reset = () => setEvents(JSON.parse(baseline));
+  const reset = () => {
+    setEvents(JSON.parse(baseline));
+    setAuto((a) => ({ ...a, ...JSON.parse(autoBaseline) }));
+  };
 
-  if (loading || !events) return <LoadingBlock />;
+  const sendDigest = async () => {
+    try {
+      setSendingDigest(true);
+      const res = await settingsService.sendDigestNow(getAccessToken());
+      toast.success(res.message);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Could not send the digest');
+    } finally {
+      setSendingDigest(false);
+    }
+  };
+
+  if (loading || !events || !auto) return <LoadingBlock />;
 
   return (
     <div className="space-y-6">
@@ -179,21 +215,72 @@ export default function OperatorAlertsSettings() {
           </span>
         }
       >
-        <div className="space-y-4">
-          <NotWired>
-            Nothing here saves. Crediting downtime needs something that does not exist yet: a
-            record of which subscribers were behind a router while it was down, and a step that
-            moves their expiry when it returns. The liveness data to build it on is already
-            collected — it is the crediting half that is missing.
-          </NotWired>
+        <div className="space-y-5">
           <ToggleRow
             label="Compensate outages"
-            description="Would be driven by the same monitoring that powers the status alerts above."
-            checked={false}
-            onChange={() => {}}
+            description="Driven by the same monitoring that powers the status alerts above."
+            checked={auto.outage.enabled}
+            onChange={(v) => setAuto((a) => ({ ...a, outage: { ...a.outage, enabled: v } }))}
             onLabel="Enabled"
             offLabel="Disabled"
-          />
+          >
+            {auto.outage.enabled && (
+              <div className="max-w-xs">
+                <Field
+                  label="Ignore outages shorter than"
+                  hint="Minutes. A brief reconnect is not worth a credit, and crediting it would bury the real outages in noise."
+                >
+                  <TextInput
+                    type="number"
+                    min={1}
+                    value={auto.outage.min_minutes}
+                    onChange={(e) => setAuto((a) => ({
+                      ...a, outage: { ...a.outage, min_minutes: e.target.value },
+                    }))}
+                  />
+                </Field>
+              </div>
+            )}
+          </ToggleRow>
+
+          <Note title="Only subscribers actually behind that router are credited" tone="info">
+            <p className="mt-1">
+              Who was affected comes from RADIUS sessions on that NAS during the outage — someone
+              on a different router lost nothing and is not credited.
+            </p>
+          </Note>
+
+          {auto.outage.recent.length > 0 && (
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Recent outages
+              </p>
+              <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                {auto.outage.recent.slice(0, 6).map((o) => (
+                  <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                        {o.device_name || `Router ${o.device_id}`}
+                        {o.open && (
+                          <span className="ml-2 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-600 dark:text-rose-300">
+                            Down now
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500">
+                        {new Date(o.started_at).toLocaleString()} · {o.minutes} min
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-xs font-medium text-slate-500 dark:text-slate-400">
+                      {o.compensated_at
+                        ? `${o.compensated_customers} credited`
+                        : o.open ? 'in progress' : 'not credited'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -206,20 +293,60 @@ export default function OperatorAlertsSettings() {
           </span>
         }
       >
-        <div className="space-y-4">
-          <NotWired>
-            Nothing here saves. There is no scheduled digest job and no report template — the
-            revenue figures it would send already exist on Overview, but nothing assembles or
-            posts them on a timer.
-          </NotWired>
+        <div className="space-y-5">
           <ToggleRow
             label="Send sales digest"
-            description="Would go to admin email addresses through the SMTP gateway under Email."
-            checked={false}
-            onChange={() => {}}
+            description="Goes out through the SMTP gateway configured under Email."
+            checked={auto.digest.enabled}
+            onChange={(v) => setAuto((a) => ({ ...a, digest: { ...a.digest, enabled: v } }))}
             onLabel="Enabled"
             offLabel="Disabled"
-          />
+          >
+            <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+              <Field label="Frequency">
+                <Select
+                  value={auto.digest.frequency}
+                  onChange={(e) => setAuto((a) => ({
+                    ...a, digest: { ...a.digest, frequency: e.target.value },
+                  }))}
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </Select>
+              </Field>
+              <Field label="Recipients" hint="Comma-separated email addresses.">
+                <TextInput
+                  value={auto.digest.recipients}
+                  placeholder="you@yourcompany.com, ops@yourcompany.com"
+                  spellCheck={false}
+                  onChange={(e) => setAuto((a) => ({
+                    ...a, digest: { ...a.digest, recipients: e.target.value },
+                  }))}
+                />
+              </Field>
+            </div>
+          </ToggleRow>
+
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              What today&apos;s digest would say
+            </p>
+            <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+{auto.digest.preview}
+            </pre>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              {auto.digest.last_sent_at
+                ? `Last sent ${new Date(auto.digest.last_sent_at).toLocaleString()}.`
+                : 'Never sent.'}
+            </p>
+            <PrimaryButton onClick={sendDigest} loading={sendingDigest} className="px-4 py-2">
+              <Send className="h-4 w-4" />
+              Send one now
+            </PrimaryButton>
+          </div>
         </div>
       </Card>
 

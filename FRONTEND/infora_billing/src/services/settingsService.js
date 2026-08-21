@@ -129,6 +129,63 @@ const settingsService = {
   async getIntegrations(token) {
     return handle(await fetch(API_ENDPOINTS.SETTINGS_INTEGRATIONS, { headers: json(token) }));
   },
+  // ---- Loyalty ----
+  async getLoyalty(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_LOYALTY, { headers: json(token) }));
+  },
+  async saveLoyalty(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_LOYALTY, {
+      method: 'PUT', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+
+  // ---- Operator automation ----
+  async getAutomation(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_AUTOMATION, { headers: json(token) }));
+  },
+  async saveAutomation(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_AUTOMATION, {
+      method: 'PUT', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+  async sendDigestNow(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_DIGEST_SEND, {
+      method: 'POST', headers: json(token), body: '{}',
+    }));
+  },
+
+  // ---- AI assistant ----
+  async getAi(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_AI, { headers: json(token) }));
+  },
+  async saveAi(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_AI, {
+      method: 'PUT', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+  async askAi(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_AI_ASK, {
+      method: 'POST', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+
+  // ---- Payment gateways ----
+  async getPaymentGateways(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_PAYMENT_GATEWAYS, { headers: json(token) }));
+  },
+  async testPaymentGateway(token, id, payload) {
+    return handle(await fetch(API_ENDPOINTS.settingsPaymentGatewayTest(id), {
+      method: 'POST', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+
+  // ---- Account address ----
+  async changeSlug(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_DOMAIN_SLUG, {
+      method: 'PUT', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
+
   // ---- Messaging gateways ----
   async getMessaging(token, channel) {
     return handle(await fetch(API_ENDPOINTS.settingsMessaging(channel), { headers: json(token) }));

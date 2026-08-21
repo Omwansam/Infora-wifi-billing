@@ -6,7 +6,7 @@ import settingsService from '../../../services/settingsService';
 import { checkSlug } from '../../../services/onboardingService';
 import { BRAND } from '../../../lib/brand';
 import {
-  Card, Section, Field, TextInput, PrimaryButton, LoadingBlock, Note, NotWired,
+  Card, Section, Field, TextInput, PrimaryButton, GhostButton, LoadingBlock, Note,
 } from '../ui';
 
 /* -------------------------------------------------------------------------
@@ -15,10 +15,10 @@ import {
  * Two addresses can point at a tenant and they behave very differently:
  *
  *   · the account address (`<slug>.<app domain>`) is issued once at signup and
- *     is deliberately permanent — services/tenant_slug.py explains why. It is
- *     shown here, and its availability checker is live so an operator can see
- *     what a different name would cost them, but nothing on this panel moves
- *     it. That is a backend capability we do not have.
+ *     treated as permanent — services/tenant_slug.py explains why. It CAN now
+ *     be moved, by an administrator, after acknowledging what breaks: the old
+ *     address stops resolving at once, and routers keep serving portal files
+ *     from it until each one is re-provisioned. The confirm step is the point.
  *
  *   · the custom domain is a normal editable setting and is fully wired.
  *
@@ -106,6 +106,9 @@ export default function DomainSettings() {
 
   const [custom, setCustom] = useState('');
   const [savingCustom, setSavingCustom] = useState(false);
+  // Two-step on purpose: the first press explains, the second commits.
+  const [confirmSlug, setConfirmSlug] = useState(false);
+  const [changingSlug, setChangingSlug] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -206,6 +209,29 @@ export default function DomainSettings() {
     }
   }, [custom]);
 
+  const changeSlug = async () => {
+    if (!confirmSlug) {
+      setConfirmSlug(true);
+      toast('Press again to confirm — the old address stops working immediately.',
+            { icon: '⚠️' });
+      return;
+    }
+    try {
+      setChangingSlug(true);
+      const res = await settingsService.changeSlug(getAccessToken(), {
+        slug: slug.trim(), confirm: true,
+      });
+      setGeneral((g) => ({ ...g, slug: res.slug, account_address: res.account_address }));
+      setConfirmSlug(false);
+      toast.success(res.message);
+      toast(res.warning, { icon: '🛠️', duration: 8000 });
+    } catch (e) {
+      toast.error(e.message || 'Could not change the account address');
+    } finally {
+      setChangingSlug(false);
+    }
+  };
+
   if (loading || !general) return <LoadingBlock />;
 
   const previewAddress = slug ? `${slug}.${baseDomain}` : '';
@@ -288,13 +314,32 @@ export default function DomainSettings() {
 
                   <SlugStatus state={slugState} address={previewAddress} onPick={setSlug} />
 
-                  <NotWired>
-                    Account addresses are issued once at signup and stay put — welcome emails,
-                    support tickets and provisioned router configs all point at{' '}
-                    <span className="font-mono">{currentSlug || 'this name'}</span>. Moving one is
-                    not something the server can do yet, so the field above only tells you what is
-                    free. To change the address subscribers use today, add your own domain instead.
-                  </NotWired>
+                  <Note title="Changing this breaks the old address immediately" tone="warn">
+                    <p className="mt-1">
+                      Welcome emails, support threads and any hotspot files already pushed to a
+                      router all point at{' '}
+                      <span className="font-mono">{currentSlug || 'your current address'}</span>.
+                      After a change you must re-run &quot;Configure services&quot; on each hotspot
+                      router so it fetches portal files from the new one. Only an administrator
+                      can do this.
+                    </p>
+                  </Note>
+
+                  {slugState.status === 'available' && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/40">
+                      <p className="text-sm text-slate-600 dark:text-slate-300">
+                        Move this workspace to{' '}
+                        <span className="font-mono font-semibold">{previewAddress}</span>?
+                      </p>
+                      <PrimaryButton
+                        onClick={changeSlug}
+                        loading={changingSlug}
+                        className="px-4 py-2"
+                      >
+                        {confirmSlug ? 'Yes — change it' : 'Change address'}
+                      </PrimaryButton>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-4">

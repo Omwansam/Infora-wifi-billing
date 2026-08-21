@@ -1380,6 +1380,111 @@ class PaymentSettings(db.Model):
         return f"<PaymentSettings isp={self.isp_id} route={self.collection_route}>"
 
 
+class LoyaltySettings(db.Model):
+    """Per-ISP loyalty scheme rules (Settings > Loyalty points). One row per ISP.
+
+    Rules only; balances live in :class:`LoyaltyLedger` so a rule change can
+    never silently rewrite what a subscriber has already earned.
+    """
+    __tablename__ = 'loyalty_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, unique=True, index=True)
+
+    enabled = db.Column(db.Boolean, default=False, nullable=False)
+    # "points_earned points per earn_per of spend."
+    points_earned = db.Column(db.Integer, default=1, nullable=False)
+    earn_per = db.Column(db.Numeric(10, 2), default=10, nullable=False)
+    # Rounding for a part-earned point: floor never over-awards.
+    rounding = db.Column(db.String(10), default='floor', nullable=False)  # floor | nearest
+    # What one point is worth as a renewal discount.
+    point_value = db.Column(db.Numeric(10, 2), default=1, nullable=False)
+    min_redeem = db.Column(db.Integer, default=50, nullable=False)
+    expiry_months = db.Column(db.Integer, nullable=True)  # NULL = never expire
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    def __repr__(self):
+        return f"<LoyaltySettings isp={self.isp_id} enabled={self.enabled}>"
+
+
+class LoyaltyLedger(db.Model):
+    """Append-only points movement for one subscriber.
+
+    A ledger rather than a balance column on purpose: "why do I have 40 points"
+    is the question subscribers actually ask, and a running total cannot answer
+    it. The balance is the sum of these rows, and expiry is a row too, so
+    nothing ever silently rewrites history.
+    """
+    __tablename__ = 'loyalty_ledger'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
+
+    # Positive = earned, negative = redeemed or expired.
+    points = db.Column(db.Integer, nullable=False)
+    reason = db.Column(db.String(30), nullable=False)  # payment | redemption | expiry | adjustment
+    description = db.Column(db.String(200), nullable=True)
+
+    payment_id = db.Column(db.Integer, db.ForeignKey('payments.id'), nullable=True)
+    # When this batch of earned points lapses. NULL = never.
+    expires_at = db.Column(db.DateTime, nullable=True)
+    # Set on an earning row once its points have been consumed or expired, so
+    # redemption can spend the oldest live batch first without re-deriving it.
+    consumed_points = db.Column(db.Integer, default=0, nullable=False)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), index=True)
+
+    customer = db.relationship('Customer')
+
+    __table_args__ = (
+        db.Index('ix_loyalty_ledger_customer_created', 'customer_id', 'created_at'),
+    )
+
+    def __repr__(self):
+        return f"<LoyaltyLedger c={self.customer_id} {self.points:+d} {self.reason}>"
+
+
+class DeviceOutage(db.Model):
+    """One period a router was unreachable, and what it cost subscribers.
+
+    Written by the liveness monitor. ``compensated_at`` is what stops a
+    recovering router from crediting the same downtime twice — the credit runs
+    once, on the transition back to online, and the row records that it did.
+    """
+    __tablename__ = 'device_outages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=False, index=True)
+
+    started_at = db.Column(db.DateTime, nullable=False, index=True)
+    ended_at = db.Column(db.DateTime, nullable=True)
+
+    compensated_at = db.Column(db.DateTime, nullable=True)
+    compensated_customers = db.Column(db.Integer, default=0, nullable=False)
+    compensated_minutes = db.Column(db.Integer, default=0, nullable=False)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    device = db.relationship('MikrotikDevice')
+
+    @property
+    def is_open(self):
+        return self.ended_at is None
+
+    def duration_minutes(self, now=None):
+        end = self.ended_at or (now or datetime.utcnow())
+        if not self.started_at:
+            return 0
+        return max(0, int((end - self.started_at).total_seconds() // 60))
+
+    def __repr__(self):
+        return f"<DeviceOutage device={self.device_id} {self.started_at} -> {self.ended_at}>"
+
+
 class RadiusConfig(db.Model):
     """Per-ISP RADIUS server configuration (Settings > RADIUS). One row per ISP."""
     __tablename__ = 'radius_config'
@@ -1961,6 +2066,26 @@ class ISP(db.Model):
     # atomically incremented per issued number (see radius_provisioning).
     account_number_prefix = db.Column(db.String(12), nullable=True)
     account_number_seq = db.Column(db.Integer, default=100000, nullable=True)
+
+    # --- Operator automation (Settings > Operator alerts) ---
+    # Crediting downtime back to subscribers, and the revenue digest. Both are
+    # scalars rather than their own table because they are per-ISP switches with
+    # no history of their own — the history lives in device_outages.
+    outage_compensation_enabled = db.Column(db.Boolean, default=False, nullable=True)
+    # Outages shorter than this are ignored; a 30-second blip is not worth a
+    # credit and would bury the real ones in noise.
+    outage_min_minutes = db.Column(db.Integer, default=15, nullable=True)
+    sales_digest_enabled = db.Column(db.Boolean, default=False, nullable=True)
+    sales_digest_frequency = db.Column(db.String(10), default='daily', nullable=True)  # daily | weekly
+    sales_digest_recipients = db.Column(db.Text, nullable=True)  # comma-separated
+    sales_digest_last_sent_at = db.Column(db.DateTime, nullable=True)
+
+    # --- AI assistant (Settings > AI Assistant) ---
+    # `internal` runs on our account against the plan allowance; anything else
+    # uses the tenant's own key from integration_settings['ai'].
+    ai_enabled = db.Column(db.Boolean, default=False, nullable=True)
+    ai_provider = db.Column(db.String(20), default='internal', nullable=True)
+    ai_model = db.Column(db.String(60), nullable=True)
 
     # --- Messaging gateways (Settings > Communications / WhatsApp) ---
     # The provider id this tenant sends on; NULL means "use the platform's own
