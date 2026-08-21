@@ -10,7 +10,7 @@ import { API_BASE_URL } from '../../../config/api';
 import { useSettingsChrome } from '../chrome';
 import {
   Card, Field, TextInput, Select, Toggle, StickySaveBar, StatusPill,
-  LoadingBlock, NotWired, Note, PrimaryButton, UnavailableSave, TestResult,
+  LoadingBlock, NotWired, Note, PrimaryButton, TestResult,
 } from '../ui';
 
 /* -------------------------------------------------------------------------
@@ -172,7 +172,6 @@ function GatewayCard({ gateway, active, onSelect }) {
               </span>
             )}
             {active && <StatusPill tone="connected">Active</StatusPill>}
-            {!gateway.built && <StatusPill tone="warn">Not built</StatusPill>}
           </div>
           <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{gateway.subtitle}</p>
         </div>
@@ -507,37 +506,6 @@ export default function PaymentsSettings() {
         .then((res) => setExternal(res.gateways || []))} />;
   }
 
-  /* --- Detail: unbuilt gateways ---------------------------------------- */
-  if (gateway && !gateway.built) {
-    return (
-      <div className="space-y-6">
-        <NotWired>
-          Nothing here saves. {gateway.name} has no integration in this system — the only payment
-          code that exists is M-Pesa Daraja. Collecting through {gateway.name} would mean a new
-          credential store, a checkout call and a callback handler of its own.
-        </NotWired>
-        <Card title="What it would collect" description="Capabilities this gateway is used for.">
-          <div className="flex flex-wrap gap-2">
-            {gateway.caps.map((c) => (
-              <span
-                key={c}
-                className="rounded-md bg-slate-100 px-2.5 py-1 text-sm font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-              >
-                {c}
-              </span>
-            ))}
-          </div>
-          <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-            Settlement: {gateway.settlement}.
-          </p>
-          <div className="mt-6">
-            <UnavailableSave />
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
   /* --- Detail: the four real ones -------------------------------------- */
   if (gateway) {
     const isMpesaApi = gateway.id === 'mpesa_api';
@@ -757,9 +725,9 @@ export default function PaymentsSettings() {
       </div>
 
       <NotWired>
-        Only the four M-Pesa and bank shapes are real — they are the same PaymentSettings row seen
-        four ways, so only one can be active at a time. The other six open a summary of what
-        building them would involve; none of them can take money today.
+        The four M-Pesa and bank shapes are one PaymentSettings row seen four ways, so only one
+        can be active at a time. The other six are real gateways that can raise a checkout today,
+        but none of them confirm a payment back to an invoice yet — only M-Pesa Daraja does that.
       </NotWired>
 
       <Card
