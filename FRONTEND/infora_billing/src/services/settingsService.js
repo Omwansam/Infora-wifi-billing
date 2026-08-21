@@ -163,6 +163,22 @@ const settingsService = {
       method: 'PUT', headers: json(token), body: JSON.stringify(payload),
     }));
   },
+  async getCopilotThreads(token) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_AI_THREADS, { headers: json(token) }));
+  },
+  async getCopilotThread(token, id) {
+    return handle(await fetch(API_ENDPOINTS.settingsAiThread(id), { headers: json(token) }));
+  },
+  async deleteCopilotThread(token, id) {
+    return handle(await fetch(API_ENDPOINTS.settingsAiThread(id), {
+      method: 'DELETE', headers: json(token),
+    }));
+  },
+  async askCopilot(token, payload) {
+    return handle(await fetch(API_ENDPOINTS.SETTINGS_AI_THREAD_ASK, {
+      method: 'POST', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
   async askAi(token, payload) {
     return handle(await fetch(API_ENDPOINTS.SETTINGS_AI_ASK, {
       method: 'POST', headers: json(token), body: JSON.stringify(payload),

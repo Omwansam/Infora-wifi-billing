@@ -16,11 +16,15 @@ import { BRAND } from '../../lib/brand';
  * the model a snapshot of this operator's figures, so this component only has
  * to own the conversation.
  *
- * Threads live in localStorage, not on the server. That is a deliberate v1
- * limit with a real consequence — history does not follow you to another
- * machine — and it is said out loud in the History menu rather than left for
- * someone to discover when they switch laptops. Moving it server-side is a
- * table and two routes whenever that trade stops being worth it.
+ * Threads are stored server-side, scoped to the signed-in user, so history
+ * follows an operator between machines and two people sharing a tenant do not
+ * read each other's chats.
+ *
+ * The conversation handed to the model is rebuilt from the database rather than
+ * posted up by this component — the client cannot replay, reorder or invent
+ * turns the assistant would then treat as its own words. That also means a
+ * failed answer stays in the transcript: the server saves the question before
+ * it calls the model, so nothing typed disappears when a call fails.
  *
  * The panel is rendered whatever the AI settings say. When the assistant is
  * off or unconfigured it explains which, and links to the panel that fixes it;
@@ -28,42 +32,12 @@ import { BRAND } from '../../lib/brand';
  * question.
  * ---------------------------------------------------------------------- */
 
-const STORE_KEY = 'lumen-copilot-threads';
-const MAX_THREADS = 20;
-// The API is given the last 10 turns; keeping the same ceiling here means the
-// transcript on screen is the transcript the model saw.
-const HISTORY_TURNS = 10;
-
 const SUGGESTIONS = [
   'How many subscribers are past expiry?',
   'How much did we collect this week?',
   'Which routers are offline right now?',
   'How do I issue a hotspot voucher?',
 ];
-
-function loadThreads() {
-  try {
-    const raw = window.localStorage.getItem(STORE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];   // private mode, cleared storage, or a shape we no longer read
-  }
-}
-
-function saveThreads(threads) {
-  try {
-    window.localStorage.setItem(STORE_KEY, JSON.stringify(threads.slice(0, MAX_THREADS)));
-  } catch {
-    /* storage unavailable — the thread still works for this session */
-  }
-}
-
-function threadTitle(messages) {
-  const first = messages.find((m) => m.role === 'user');
-  if (!first) return 'New chat';
-  return first.content.length > 48 ? `${first.content.slice(0, 48)}…` : first.content;
-}
 
 function Bubble({ message }) {
   const mine = message.role === 'user';
@@ -140,32 +114,56 @@ function Unavailable({ reason }) {
 }
 
 export default function CopilotPanel({ open, onClose }) {
-  const [threads, setThreads] = useState(loadThreads);
-  // Resume the most recent chat rather than opening blank. Reopening the panel
-  // is usually "carry on with what I just asked"; starting fresh is one click
-  // on New, whereas recovering a conversation you just lost is not.
-  const [activeId, setActiveId] = useState(() => loadThreads()[0]?.id ?? null);
+  const [threads, setThreads] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [loadingThread, setLoadingThread] = useState(false);
   const [status, setStatus] = useState({ loading: true, ready: false, reason: '' });
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
 
-  const active = useMemo(
-    () => threads.find((t) => t.id === activeId) || null,
-    [threads, activeId],
-  );
-  const messages = active?.messages || [];
+  const refreshThreads = useCallback(async () => {
+    try {
+      const res = await settingsService.getCopilotThreads(getAccessToken());
+      const list = res.threads || [];
+      setThreads(list);
+      return list;
+    } catch {
+      return [];   // the chat still works; only the history list is unavailable
+    }
+  }, []);
 
-  // Check readiness each time the drawer opens — an operator who just saved a
-  // key expects it to work without a page reload.
+  const openThread = useCallback(async (id) => {
+    if (!id) {
+      setActiveId(null);
+      setMessages([]);
+      return;
+    }
+    setLoadingThread(true);
+    try {
+      const res = await settingsService.getCopilotThread(getAccessToken(), id);
+      setActiveId(res.id);
+      setMessages(res.messages || []);
+    } catch (e) {
+      toast.error(e.message || 'Could not open that chat');
+      setActiveId(null);
+      setMessages([]);
+    } finally {
+      setLoadingThread(false);
+    }
+  }, []);
+
+  // Check readiness and load history each time the drawer opens — an operator
+  // who just saved a key expects it to work without a page reload.
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
     let cancelled = false;
     (async () => {
-      setStatus((s) => ({ ...s, loading: true }));
+      setStatus((s2) => ({ ...s2, loading: true }));
       try {
         const res = await settingsService.getAi(getAccessToken());
         if (cancelled) return;
@@ -178,12 +176,20 @@ export default function CopilotPanel({ open, onClose }) {
         });
       } catch (e) {
         if (!cancelled) {
-          setStatus({ loading: false, ready: false, reason: e.message || 'Could not reach the server.' });
+          setStatus({ loading: false, ready: false,
+                      reason: e.message || 'Could not reach the server.' });
         }
+        return;
       }
+      const list = await refreshThreads();
+      // Resume the most recent chat rather than opening blank. Reopening is
+      // usually "carry on with what I just asked"; a fresh start is one click
+      // on New, whereas a conversation you just lost is not recoverable.
+      if (!cancelled && list.length && !activeId) openThread(list[0].id);
     })();
     return () => { cancelled = true; };
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, refreshThreads, openThread]);
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 220);
@@ -201,13 +207,9 @@ export default function CopilotPanel({ open, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  const persist = useCallback((next) => {
-    setThreads(next);
-    saveThreads(next);
-  }, []);
-
   const startNew = () => {
     setActiveId(null);
+    setMessages([]);
     setDraft('');
     setHistoryOpen(false);
     setTimeout(() => inputRef.current?.focus(), 50);
@@ -217,45 +219,45 @@ export default function CopilotPanel({ open, onClose }) {
     const question = (text ?? draft).trim();
     if (!question || sending) return;
 
-    const now = Date.now();
-    const id = active?.id || `t${now}`;
-    const priorMessages = active?.messages || [];
-    const withUser = [...priorMessages, { role: 'user', content: question }];
-
     // Show the question immediately; the answer lands when it lands.
-    const optimistic = threads.some((t) => t.id === id)
-      ? threads.map((t) => (t.id === id ? { ...t, messages: withUser, updated: now } : t))
-      : [{ id, messages: withUser, updated: now }, ...threads];
-    persist(optimistic);
-    setActiveId(id);
+    setMessages((m) => [...m, { role: 'user', content: question }]);
     setDraft('');
     setSending(true);
 
     try {
-      const res = await settingsService.askAi(getAccessToken(), {
-        question,
-        // Only completed exchanges are context; the pending question is sent
-        // separately, so echoing it here would duplicate it for the model.
-        history: priorMessages
-          .filter((m) => !m.error)
-          .slice(-HISTORY_TURNS)
-          .map(({ role, content }) => ({ role, content })),
+      const res = await settingsService.askCopilot(getAccessToken(), {
+        question, thread_id: activeId,
       });
-      const answered = [...withUser, {
-        role: 'assistant', content: res.answer,
-        meta: `${res.model} · ${res.source === 'tenant' ? 'your key' : 'platform key'}`,
-      }];
-      persist(threads.some((t) => t.id === id)
-        ? optimistic.map((t) => (t.id === id ? { ...t, messages: answered, updated: Date.now() } : t))
-        : [{ id, messages: answered, updated: Date.now() }, ...threads]);
+      setActiveId(res.thread_id);
+      setMessages((m) => [...m, {
+        role: 'assistant', content: res.answer, meta: res.meta,
+      }]);
+      refreshThreads();
     } catch (e) {
-      const failed = [...withUser, {
+      // The server already saved the question and the error before answering
+      // this request, so re-reading the thread is what keeps the panel and the
+      // stored transcript identical.
+      setMessages((m) => [...m, {
         role: 'assistant', error: true,
         content: e.message || 'The assistant could not answer that.',
-      }];
-      persist(optimistic.map((t) => (t.id === id ? { ...t, messages: failed } : t)));
+      }]);
+      const list = await refreshThreads();
+      if (!activeId && list.length) setActiveId(list[0].id);
     } finally {
       setSending(false);
+    }
+  };
+
+  const removeThread = async (id) => {
+    try {
+      await settingsService.deleteCopilotThread(getAccessToken(), id);
+      const list = await refreshThreads();
+      if (id === activeId) {
+        if (list.length) openThread(list[0].id);
+        else startNew();
+      }
+    } catch (e) {
+      toast.error(e.message || 'Could not delete that chat');
     }
   };
 
@@ -347,24 +349,21 @@ export default function CopilotPanel({ open, onClose }) {
                             >
                               <button
                                 type="button"
-                                onClick={() => { setActiveId(t.id); setHistoryOpen(false); }}
+                                onClick={() => { openThread(t.id); setHistoryOpen(false); }}
                                 className="min-w-0 flex-1 px-3.5 py-2.5 text-left"
                               >
                                 <span className="block truncate text-sm text-slate-700 dark:text-slate-200">
-                                  {threadTitle(t.messages)}
+                                  {t.title}
                                 </span>
                                 <span className="block text-[11px] text-slate-400 dark:text-slate-500">
-                                  {new Date(t.updated).toLocaleString()}
+                                  {new Date(t.updated_at).toLocaleString()} · {t.message_count} message
+                                  {t.message_count === 1 ? '' : 's'}
                                 </span>
                               </button>
                               <button
                                 type="button"
                                 aria-label="Delete chat"
-                                onClick={() => {
-                                  const next = threads.filter((x) => x.id !== t.id);
-                                  persist(next);
-                                  if (t.id === activeId) setActiveId(null);
-                                }}
+                                onClick={() => removeThread(t.id)}
                                 className="mr-2 rounded-md p-1.5 text-slate-300 transition hover:text-rose-600 dark:text-slate-600 dark:hover:text-rose-400"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -374,8 +373,8 @@ export default function CopilotPanel({ open, onClose }) {
                         </div>
                       )}
                       <p className="border-t border-slate-100 px-3.5 py-2 text-[11px] leading-relaxed text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                        Chats are kept in this browser only — they will not follow you to another
-                        device.
+                        Your chats are saved to your account, so they follow you between devices.
+                        Nobody else on this workspace can read them.
                       </p>
                     </div>
                   )}
@@ -400,11 +399,15 @@ export default function CopilotPanel({ open, onClose }) {
                 </div>
               ) : !status.ready ? (
                 <Unavailable reason={status.reason} />
+              ) : loadingThread ? (
+                <div className="flex h-full items-center justify-center text-slate-400">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
               ) : messages.length === 0 ? (
                 <EmptyState onPick={(s) => send(s)} />
               ) : (
                 <div className="space-y-3 px-4 py-5">
-                  {messages.map((m, i) => <Bubble key={i} message={m} />)}
+                  {messages.map((m, i) => <Bubble key={m.id ?? `p${i}`} message={m} />)}
                   {sending && (
                     <div className="flex justify-start">
                       <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-400 dark:border-slate-800 dark:bg-slate-900">

@@ -1485,6 +1485,65 @@ class DeviceOutage(db.Model):
         return f"<DeviceOutage device={self.device_id} {self.started_at} -> {self.ended_at}>"
 
 
+class CopilotThread(db.Model):
+    """One conversation with the network copilot.
+
+    Scoped to a **user**, not just an ISP: a conversation is personal, and two
+    operators sharing a tenant should not read each other's chats. ``isp_id`` is
+    carried alongside so a thread can never outlive or leak across a tenant.
+
+    The title is stored rather than derived on read — it comes from the first
+    question, and recomputing it every list call would mean loading every
+    thread's messages to render a sidebar.
+    """
+    __tablename__ = 'copilot_threads'
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+
+    title = db.Column(db.String(120), nullable=False, default='New chat')
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(),
+                           onupdate=db.func.current_timestamp(), index=True)
+
+    messages = db.relationship(
+        'CopilotMessage', back_populates='thread', cascade='all, delete-orphan',
+        order_by='CopilotMessage.id',
+    )
+
+    def __repr__(self):
+        return f"<CopilotThread {self.id} user={self.user_id}>"
+
+
+class CopilotMessage(db.Model):
+    """One turn in a copilot conversation.
+
+    Errors are stored like any other assistant turn (``is_error``) so reloading
+    a thread shows what actually happened rather than a transcript with the
+    failures quietly edited out.
+    """
+    __tablename__ = 'copilot_messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    thread_id = db.Column(db.Integer, db.ForeignKey('copilot_threads.id'),
+                          nullable=False, index=True)
+
+    role = db.Column(db.String(12), nullable=False)   # user | assistant
+    content = db.Column(db.Text, nullable=False)
+    # Which model and whose key answered, shown under the bubble.
+    meta = db.Column(db.String(120), nullable=True)
+    is_error = db.Column(db.Boolean, default=False, nullable=False)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+    thread = db.relationship('CopilotThread', back_populates='messages')
+
+    def __repr__(self):
+        return f"<CopilotMessage {self.id} {self.role}>"
+
+
 class RadiusConfig(db.Model):
     """Per-ISP RADIUS server configuration (Settings > RADIUS). One row per ISP."""
     __tablename__ = 'radius_config'

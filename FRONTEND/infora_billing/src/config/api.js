@@ -180,6 +180,10 @@ export const API_ENDPOINTS = {
   SETTINGS_DIGEST_SEND: `${API_BASE_URL}/api/settings/automation/digest/send`,
   SETTINGS_AI: `${API_BASE_URL}/api/settings/ai`,
   SETTINGS_AI_ASK: `${API_BASE_URL}/api/settings/ai/ask`,
+  // Copilot conversations — stored server-side, scoped to the signed-in user.
+  SETTINGS_AI_THREADS: `${API_BASE_URL}/api/settings/ai/threads`,
+  SETTINGS_AI_THREAD_ASK: `${API_BASE_URL}/api/settings/ai/threads/ask`,
+  settingsAiThread: (id) => `${API_BASE_URL}/api/settings/ai/threads/${id}`,
   SETTINGS_PAYMENT_GATEWAYS: `${API_BASE_URL}/api/settings/payment-gateways`,
   settingsPaymentGatewayTest: (id) =>
     `${API_BASE_URL}/api/settings/payment-gateways/${encodeURIComponent(id)}/test`,

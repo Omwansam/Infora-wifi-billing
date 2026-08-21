@@ -1241,6 +1241,71 @@ def update_ai():
     return jsonify({'message': 'AI settings saved'}), 200
 
 
+@settings_bp.route('/ai/threads', methods=['GET'])
+@jwt_required()
+def list_copilot_threads():
+    from services import copilot_threads as ct
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    user = get_current_user()
+    return jsonify({'threads': [ct.serialize_thread(t) for t in ct.list_threads(user)]}), 200
+
+
+@settings_bp.route('/ai/threads/<int:thread_id>', methods=['GET'])
+@jwt_required()
+def get_copilot_thread(thread_id):
+    from services import copilot_threads as ct
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    thread = ct.get_thread(get_current_user(), thread_id)
+    if thread is None:
+        return jsonify({'error': 'Chat not found'}), 404
+    return jsonify(ct.serialize_thread(thread, with_messages=True)), 200
+
+
+@settings_bp.route('/ai/threads/<int:thread_id>', methods=['DELETE'])
+@jwt_required()
+def delete_copilot_thread(thread_id):
+    from services import copilot_threads as ct
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    if not ct.delete_thread(get_current_user(), thread_id):
+        return jsonify({'error': 'Chat not found'}), 404
+    return jsonify({'message': 'Chat deleted'}), 200
+
+
+@settings_bp.route('/ai/threads/ask', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=40, window=300, scope='copilot-ask')
+def ask_in_copilot_thread():
+    """Ask inside a stored conversation, creating it on the first question.
+
+    Returns 502 with the thread id on a model failure — the question and the
+    error are already saved by then, so the panel reloads into the same
+    transcript rather than losing what was typed.
+    """
+    from services import ai_assistant, copilot_threads as ct
+
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+    data = request.get_json() or {}
+    try:
+        result = ct.ask_in_thread(
+            isp, get_current_user(), data.get('question'), data.get('thread_id'))
+    except ai_assistant.AiNotConfigured as exc:
+        return jsonify({'error': str(exc)}), 400
+    except ai_assistant.AiError as exc:
+        return jsonify({'error': str(exc)}), 502
+    return jsonify(result), 200
+
+
 @settings_bp.route('/ai/ask', methods=['POST'])
 @jwt_required()
 @rate_limit(limit=30, window=300, scope='settings-ai-ask')
