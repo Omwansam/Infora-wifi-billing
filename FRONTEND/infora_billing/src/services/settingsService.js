@@ -129,6 +129,12 @@ const settingsService = {
   async getIntegrations(token) {
     return handle(await fetch(API_ENDPOINTS.SETTINGS_INTEGRATIONS, { headers: json(token) }));
   },
+  /** Fire a real test send. Rejects with the gateway's own words on failure. */
+  async testIntegration(token, key, payload) {
+    return handle(await fetch(API_ENDPOINTS.settingsIntegrationTest(key), {
+      method: 'POST', headers: json(token), body: JSON.stringify(payload),
+    }));
+  },
   async saveIntegration(token, key, payload) {
     return handle(await fetch(API_ENDPOINTS.settingsIntegration(key), {
       method: 'PUT', headers: json(token), body: JSON.stringify(payload),

@@ -164,6 +164,10 @@ export const API_ENDPOINTS = {
   SETTINGS_RADIUS: `${API_BASE_URL}/api/settings/radius`,
   SETTINGS_RADIUS_NAS: `${API_BASE_URL}/api/settings/radius/nas`,
   SETTINGS_INTEGRATIONS: `${API_BASE_URL}/api/settings/integrations`,
+  // Test sends: resolve exactly what a real notification resolves, so a pass
+  // here means the next receipt leaves the same way.
+  settingsIntegrationTest: (key) =>
+    `${API_BASE_URL}/api/settings/integrations/${encodeURIComponent(key)}/test`,
   SETTINGS_API_KEYS: `${API_BASE_URL}/api/settings/api-keys`,
   SETTINGS_WEBHOOK_SECRET: `${API_BASE_URL}/api/settings/api-keys/webhook-secret`,
   settingsRouterTheme: (deviceId) => `${API_BASE_URL}/api/settings/portal/router/${deviceId}`,

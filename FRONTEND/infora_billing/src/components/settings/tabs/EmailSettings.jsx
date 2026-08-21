@@ -6,7 +6,7 @@ import settingsService from '../../../services/settingsService';
 import { useSettingsChrome } from '../chrome';
 import {
   Card, Field, TextInput, Select, ToggleRow, StickySaveBar, StatusPill,
-  LoadingBlock, NotWired,
+  LoadingBlock, Note, PrimaryButton, TestResult,
 } from '../ui';
 
 /* -------------------------------------------------------------------------
@@ -17,11 +17,10 @@ import {
  * or still-masked value on save as "keep what is stored". That is why the
  * password field can be left empty without wiping the saved one.
  *
- * The delivery half is not. services/mailer.py resolves MAIL_* from Flask
- * config and never looks at this row, and the only caller is the provisioning
- * welcome email — so today every message goes out on the platform default no
- * matter what is saved here. A form that saves successfully into something
- * nothing reads is worse than one that admits it, so the panel says so.
+ * The delivery half is wired too: services/mailer.resolve_smtp_config prefers
+ * this row over the platform's MAIL_* config, all-or-nothing, so switching
+ * Custom SMTP off really does put delivery back on the platform default
+ * without anyone having to clear the fields.
  * ---------------------------------------------------------------------- */
 
 const KEY = 'smtp';
@@ -42,6 +41,8 @@ export default function EmailSettings() {
   const [saving, setSaving] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [testTo, setTestTo] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -116,6 +117,25 @@ export default function EmailSettings() {
       toast.error(e.message || 'Save failed');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setTestResult(null);
+    try {
+      setTesting(true);
+      const res = await settingsService.testIntegration(getAccessToken(), 'smtp', {
+        email: testTo.trim(),
+      });
+      setTestResult({
+        ok: true,
+        detail: res.message,
+        via: `${res.host}${res.source === 'platform' ? ' (platform default)' : ''}`,
+      });
+    } catch (e) {
+      setTestResult({ ok: false, detail: e.message || 'Send failed' });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -200,12 +220,14 @@ export default function EmailSettings() {
                 </Field>
               </div>
 
-              <NotWired>
-                These credentials save and encrypt correctly, but nothing sends through them yet.
-                Delivery still resolves the platform&apos;s own <span className="font-mono">MAIL_*</span>{' '}
-                settings, so switching this on changes what is stored, not where mail leaves from.
-                Pointing the mailer at this row is a small backend change — ask and it gets done.
-              </NotWired>
+              <Note title="This is live once you save" tone="success">
+                <p className="mt-1">
+                  Receipts, invoices and account email leave through this server as soon as the
+                  credentials are saved. Switch Custom SMTP off and delivery goes straight back to
+                  the platform default — the fields stay put. Send a test below before trusting it
+                  with a real receipt.
+                </p>
+              </Note>
             </div>
           )}
         </ToggleRow>
@@ -213,15 +235,9 @@ export default function EmailSettings() {
 
       <Card
         title="Test delivery"
-        description="Send a one-off email through your saved credentials to confirm they work."
+        description="Send a one-off email through the credentials that are saved right now."
       >
         <div className="space-y-4">
-          <NotWired>
-            No test endpoint exists. It would need a route that builds a connection from the row
-            above and reports the SMTP server&apos;s actual reply — the useful part is the error
-            text, which is what tells you whether it is the port, the password or the sender
-            address.
-          </NotWired>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <Field label="Email address" hint="Where the test message is sent." className="flex-1">
               <TextInput
@@ -232,16 +248,25 @@ export default function EmailSettings() {
                 onChange={(e) => setTestTo(e.target.value)}
               />
             </Field>
-            <button
-              type="button"
-              disabled
-              title="Not available yet"
-              className="inline-flex shrink-0 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+            <PrimaryButton
+              onClick={sendTest}
+              loading={testing}
+              disabled={!testTo.trim()}
+              className="shrink-0"
             >
               <Send className="h-4 w-4" />
               Send test email
-            </button>
+            </PrimaryButton>
           </div>
+
+          {dirty && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              You have unsaved changes — the test uses what is saved, not what is on screen. Save
+              first to test the new values.
+            </p>
+          )}
+
+          <TestResult result={testResult} />
         </div>
       </Card>
 

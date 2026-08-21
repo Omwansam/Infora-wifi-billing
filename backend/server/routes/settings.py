@@ -980,6 +980,111 @@ def get_integrations():
     return jsonify({'integrations': integrations}), 200
 
 
+# ---------------------------------------------------------------------------
+# Gateway test sends
+#
+# Both routes resolve exactly what a real notification would resolve, so a pass
+# here means the next receipt goes out the same way. They ask their service to
+# raise rather than swallow, because the gateway's own refusal ("Invalid sender
+# id", "535 authentication failed") is the only part an operator can act on —
+# a bare "failed" sends them to us instead of to their provider.
+#
+# Rate-limited: these cost real money per press and hit a third party.
+# ---------------------------------------------------------------------------
+
+@settings_bp.route('/integrations/smtp/test', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=5, window=300, scope='settings-smtp-test')
+def test_smtp():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+
+    recipient = ((request.get_json() or {}).get('email') or '').strip()
+    if not recipient or '@' not in recipient:
+        return jsonify({'error': 'Enter an email address to send the test to'}), 400
+
+    from services import mailer
+
+    config = mailer.resolve_smtp_config(isp)
+    if config is None:
+        return jsonify({
+            'error': 'No SMTP server is configured. Switch on Custom SMTP and save your '
+                     'credentials first, or ask whoever runs this deployment to set MAIL_SERVER.',
+        }), 400
+
+    brand = isp.name or isp.company_name or 'your network'
+    try:
+        mailer.send_email(
+            recipient,
+            f'{brand} — SMTP test',
+            'This is a test message from your billing dashboard.\n\n'
+            'If you are reading it, the SMTP credentials saved under '
+            'Settings > Email work and receipts will go out through them.',
+            isp=isp,
+            sender_name=brand,
+            raise_errors=True,
+        )
+    except Exception as exc:
+        return jsonify({
+            'error': f'{type(exc).__name__}: {exc}',
+            'source': config['source'],
+            'host': config['host'],
+        }), 502
+
+    return jsonify({
+        'message': f'Test email sent to {recipient}.',
+        'source': config['source'],
+        'host': config['host'],
+        'from': config.get('sender') or '',
+    }), 200
+
+
+@settings_bp.route('/integrations/africastalking/test', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=5, window=300, scope='settings-sms-test')
+def test_sms():
+    isp, err, status = _current_isp()
+    if err:
+        return err, status
+
+    phone = ((request.get_json() or {}).get('phone') or '').strip()
+    if not phone:
+        return jsonify({'error': 'Enter a phone number to send the test to'}), 400
+
+    from services import notification_dispatch as nd
+
+    config = nd.resolve_sms_config(isp)
+    if config is None:
+        return jsonify({
+            'error': 'No SMS gateway is configured. Save your provider credentials first, or '
+                     'ask whoever runs this deployment to enable the platform gateway.',
+        }), 400
+
+    brand = isp.name or isp.company_name or 'your network'
+    try:
+        nd.send_sms(
+            phone,
+            f'{brand}: test message from your billing dashboard. '
+            'Your SMS gateway is working.',
+            isp=isp,
+            raise_errors=True,
+        )
+    except Exception as exc:
+        return jsonify({
+            'error': f'{type(exc).__name__}: {exc}',
+            'source': config['source'],
+            'environment': config.get('environment') or '',
+        }), 502
+
+    return jsonify({
+        'message': f'Test SMS sent to {phone}.',
+        'source': config['source'],
+        'sender_id': config.get('sender_id') or '',
+        'environment': config.get('environment') or '',
+    }), 200
+
+
 @settings_bp.route('/integrations/<key>', methods=['PUT'])
 @jwt_required()
 def update_integration(key):

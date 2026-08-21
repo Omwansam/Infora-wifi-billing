@@ -462,3 +462,43 @@ export function ProviderTile({ mark, markClass, name, category, onSelect, active
     </button>
   );
 }
+
+/**
+ * Result of a test send, shown where the button is.
+ *
+ * The failure text is the gateway's own — "535 authentication failed",
+ * "Invalid Sender Id" — because that is the part an operator can act on. A
+ * bare "failed" sends them to us instead of to their provider, so the raw
+ * string is rendered verbatim in monospace rather than reworded.
+ */
+export function TestResult({ result }) {
+  if (!result) return null;
+  const ok = result.ok;
+  return (
+    <div
+      className={`mt-4 rounded-xl border px-4 py-3 ${
+        ok
+          ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/40'
+          : 'border-rose-200 bg-rose-50 dark:border-rose-900/60 dark:bg-rose-950/40'
+      }`}
+    >
+      <p
+        className={`text-sm font-semibold ${
+          ok ? 'text-emerald-800 dark:text-emerald-200' : 'text-rose-800 dark:text-rose-200'
+        }`}
+      >
+        {ok ? 'Sent' : 'The gateway refused it'}
+      </p>
+      <p
+        className={`mt-1 break-words font-mono text-xs leading-relaxed ${
+          ok ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'
+        }`}
+      >
+        {result.detail}
+      </p>
+      {result.via && (
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Sent via {result.via}.</p>
+      )}
+    </div>
+  );
+}

@@ -1,12 +1,28 @@
-"""Dispatch SMS/email notifications using per-ISP NotificationSetting overrides."""
+"""Dispatch SMS/email notifications using per-ISP NotificationSetting overrides.
+
+Credentials resolve tenant-first: a gateway configured under Settings >
+Communications (SMS) or Settings > Email wins, and the platform's own env
+config is the fallback. ``services/tenant_integrations`` explains why that
+choice is all-or-nothing rather than per-field.
+
+Africa's Talking is called over plain HTTP rather than through their SDK. The
+SDK was never in requirements, so the old ``import africastalking`` branch
+could not succeed on any deployment we have; ``requests`` is already a
+dependency, and going direct also means the gateway's own response text can be
+handed back to the Settings test button, which is the part an operator can
+actually act on.
+"""
 import logging
 import os
 from datetime import datetime
+
+import requests
 
 from extensions import db
 from models import Customer, ISP, Notification, NotificationPriority, NotificationSetting
 from services import notification_events as nev
 from services.portal_urls import portal_entry_url
+from services.mailer import send_email
 from services.radius_provisioning import get_customer_radius_password, radius_username
 
 logger = logging.getLogger(__name__)
@@ -37,37 +53,151 @@ def _render(template, variables):
     return text
 
 
-def send_sms(phone, message):
-    """Send SMS via configured provider. Logs-only when SMS is disabled."""
+AT_HOSTS = {
+    'sandbox': 'https://api.sandbox.africastalking.com',
+    'production': 'https://api.africastalking.com',
+}
+
+# Africa's Talking per-recipient codes: 100 processed, 101 sent, 102 queued.
+# Anything else is a refusal we should surface rather than swallow.
+AT_ACCEPTED = (100, 101, 102)
+
+
+class SmsNotConfigured(RuntimeError):
+    """Raised only when a caller asked for errors and no gateway is set up."""
+
+
+class SmsSendFailed(RuntimeError):
+    """Carries the gateway's own words, which is the part worth showing."""
+
+
+def _platform_sms_config():
+    """The deployment's own gateway, from the environment."""
+    provider = (os.environ.get('SMS_PROVIDER') or 'log').lower()
+    if provider == 'log' or os.environ.get('SMS_ENABLED', 'false').lower() != 'true':
+        return None
+    if provider != 'africastalking':
+        logger.warning('Unknown SMS_PROVIDER=%s — logging only', provider)
+        return None
+    username = os.environ.get('AT_USERNAME', '').strip()
+    api_key = os.environ.get('AT_API_KEY', '').strip()
+    if not (username and api_key):
+        return None
+    return {
+        'source': 'platform',
+        'provider': 'africastalking',
+        'username': username,
+        'api_key': api_key,
+        'sender_id': os.environ.get('AT_SENDER_ID', '').strip(),
+        'environment': os.environ.get('AT_ENVIRONMENT', 'production').strip().lower(),
+    }
+
+
+def _tenant_sms_config(isp):
+    """The tenant's own gateway row, or ``None`` to mean "use the platform"."""
+    if isp is None:
+        return None
+    try:
+        from services.tenant_integrations import integration_config
+    except Exception:  # pragma: no cover - import guard for partial installs
+        return None
+
+    config = integration_config(isp, 'africastalking', required=('username', 'api_key'))
+    if not config:
+        return None
+    return {
+        'source': 'tenant',
+        'provider': 'africastalking',
+        'username': (config.get('username') or '').strip(),
+        'api_key': (config.get('api_key') or '').strip(),
+        'sender_id': (config.get('sender_id') or '').strip(),
+        'environment': (config.get('environment') or 'production').strip().lower(),
+    }
+
+
+def resolve_sms_config(isp=None):
+    """Effective SMS gateway for this send: tenant first, then platform."""
+    return _tenant_sms_config(isp) or _platform_sms_config()
+
+
+def _send_africastalking(config, phone, message):
+    """POST one message. Returns the parsed body; raises SmsSendFailed."""
+    env = 'sandbox' if config.get('environment') == 'sandbox' else 'production'
+    url = f"{AT_HOSTS[env]}/version1/messaging"
+    payload = {'username': config['username'], 'to': phone, 'message': message}
+    if config.get('sender_id'):
+        payload['from'] = config['sender_id']
+
+    response = requests.post(
+        url,
+        data=payload,
+        headers={'apiKey': config['api_key'], 'Accept': 'application/json'},
+        timeout=20,
+    )
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+
+    if response.status_code >= 400 or body is None:
+        raise SmsSendFailed(
+            f'Gateway returned HTTP {response.status_code}: {response.text[:300].strip()}'
+        )
+
+    recipients = (body.get('SMSMessageData') or {}).get('Recipients') or []
+    if not recipients:
+        # AT reports "Sent to 0/1" style refusals in Message rather than per
+        # recipient — invalid sender ID and out-of-credit both land here.
+        summary = (body.get('SMSMessageData') or {}).get('Message') or str(body)[:300]
+        raise SmsSendFailed(f'Gateway accepted nothing: {summary}')
+
+    rejected = [r for r in recipients if int(r.get('statusCode') or 0) not in AT_ACCEPTED]
+    if rejected:
+        first = rejected[0]
+        raise SmsSendFailed(
+            f"{first.get('number') or phone}: {first.get('status') or 'rejected'} "
+            f"(code {first.get('statusCode')})"
+        )
+    return body
+
+
+def send_sms(phone, message, isp=None, raise_errors=False):
+    """Send one SMS. Returns True on success, or on the log-only fallback.
+
+    ``isp`` selects that tenant's own gateway when they have one configured.
+    ``raise_errors`` is for the Settings test button, which needs the gateway's
+    actual refusal; every other caller keeps the best-effort contract.
+    """
     phone = (phone or '').strip()
     if not phone:
         return False
-    provider = (os.environ.get('SMS_PROVIDER') or 'log').lower()
-    if provider == 'log' or os.environ.get('SMS_ENABLED', 'false').lower() != 'true':
+
+    config = resolve_sms_config(isp)
+    if config is None:
+        if raise_errors:
+            raise SmsNotConfigured(
+                'No SMS gateway is configured. Add your own under Settings > '
+                'Communications, or ask whoever runs this deployment to set '
+                'SMS_ENABLED and the provider credentials.'
+            )
         logger.info('SMS [%s]: %s', phone, message[:160])
         return True
-    # Africa's Talking (common in Kenya)
-    if provider == 'africastalking':
-        try:
-            import africastalking
-            africastalking.initialize(
-                os.environ.get('AT_USERNAME', ''),
-                os.environ.get('AT_API_KEY', ''),
-            )
-            africastalking.SMS.send(message, [phone])
-            return True
-        except Exception as exc:
-            logger.error('SMS send failed: %s', exc)
-            return False
-    logger.warning('Unknown SMS_PROVIDER=%s — logging only', provider)
-    logger.info('SMS [%s]: %s', phone, message[:160])
-    return True
+
+    try:
+        _send_africastalking(config, phone, message)
+        return True
+    except Exception as exc:
+        logger.error('SMS to %s failed (%s gateway): %s', phone, config['source'], exc)
+        if raise_errors:
+            raise
+        return False
 
 
-def _log_notification(customer, message, title='SMS'):
+def _log_notification(customer, message, title='SMS', channel='sms'):
     db.session.add(Notification(
         customer_id=customer.id,
-        notification_type='sms',
+        notification_type=channel,
         title=title,
         message=message,
         priority=NotificationPriority.MEDIUM,
@@ -85,11 +215,20 @@ def dispatch_event(isp, customer, event_key, channel, variables, default_enabled
     body = _render(template, variables)
     if channel == 'sms':
         phone = customer.phone or variables.get('phone')
-        if send_sms(phone, body):
+        if send_sms(phone, body, isp=isp):
             _log_notification(customer, body, title=event_key)
-    # Email channel: log for now; wire SMTP later
-    elif channel == 'sms' is False and channel == 'email':
-        logger.info('Email [%s] %s: %s', customer.email, event_key, body[:200])
+    elif channel == 'email':
+        # This branch used to read `elif channel == 'sms' is False and ...`,
+        # which Python evaluates as a chained comparison — `'sms' is False` is
+        # always False, so the email channel never ran at all, not even the log
+        # line it claimed to write. Every email template in Settings was inert.
+        recipient = customer.email or variables.get('email')
+        if not recipient:
+            return
+        subject = catalogue.get('label') or event_key.replace('_', ' ').title()
+        if send_email(recipient, subject, body, isp=isp,
+                      sender_name=isp.name or isp.company_name):
+            _log_notification(customer, body, title=event_key, channel='email')
 
 
 def dispatch_hotspot_payment_success(payment):

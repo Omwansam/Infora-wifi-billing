@@ -6,8 +6,8 @@ import settingsService from '../../../services/settingsService';
 import { BRAND } from '../../../lib/brand';
 import { useSettingsChrome } from '../chrome';
 import {
-  Card, Field, TextInput, StickySaveBar, StatusPill, ProviderTile,
-  LoadingBlock, NotWired, Note, UnavailableSave,
+  Card, Field, TextInput, Select, StickySaveBar, StatusPill, ProviderTile,
+  LoadingBlock, NotWired, Note, UnavailableSave, PrimaryButton, TestResult,
 } from '../ui';
 
 /* -------------------------------------------------------------------------
@@ -16,12 +16,11 @@ import {
  * What is actually true underneath, and why this panel is shaped the way it is:
  *
  *   · services/notification_dispatch.send_sms knows exactly one provider,
- *     africastalking, and reads SMS_PROVIDER / AT_USERNAME / AT_API_KEY from
- *     the environment. It falls back to logging. So the platform default is a
- *     real, always-present route, not a marketing card.
- *   · the africastalking *integration row* stores credentials properly
- *     (encrypted, masked, blank-keeps-existing) but nothing reads it, so
- *     saving here does not yet change where SMS leaves from.
+ *     africastalking, called over plain HTTP. It resolves this tenant's own
+ *     row first and the platform's env config second, so the platform default
+ *     is a real always-present route, not a marketing card.
+ *   · Africa's Talking is fully wired: credentials saved here are what the
+ *     next receipt actually goes out on.
  *   · every other vendor has no code at all.
  *
  * Credential shapes are marked `verified` only where the vendor's API is one
@@ -47,7 +46,14 @@ const PROVIDERS = [
     id: 'africastalking', name: "Africa's Talking", region: 'Pan-African',
     mark: 'AT', markClass: 'bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300',
     verified: true, wired: true,
-    fields: [F.username, F.apiKey, F.senderId],
+    fields: [
+      F.username, F.apiKey, F.senderId,
+      {
+        name: 'environment', label: 'Environment', select: true,
+        options: [['production', 'Production'], ['sandbox', 'Sandbox']],
+        hint: 'Sandbox only delivers to numbers registered in your AT simulator.',
+      },
+    ],
   },
   {
     id: 'twilio', name: 'Twilio', region: 'Global',
@@ -128,6 +134,12 @@ function CredentialFields({ fields, values, onChange }) {
               placeholder="••••••••"
               onChange={(e) => onChange(f.name, e.target.value)}
             />
+          ) : f.select ? (
+            <Select value={values[f.name] || f.options[0][0]} onChange={(e) => onChange(f.name, e.target.value)}>
+              {f.options.map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </Select>
           ) : (
             <TextInput
               value={values[f.name] || ''}
@@ -142,18 +154,38 @@ function CredentialFields({ fields, values, onChange }) {
 }
 
 /** Test delivery — designed, but there is no send-test route to call. */
-function TestDelivery() {
+function TestDelivery({ dirty }) {
   const [phone, setPhone] = useState('');
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const send = async () => {
+    setResult(null);
+    try {
+      setSending(true);
+      const res = await settingsService.testIntegration(getAccessToken(), 'africastalking', {
+        phone: phone.trim(),
+      });
+      setResult({
+        ok: true,
+        detail: res.message,
+        via: `${res.source === 'platform' ? 'the platform gateway' : 'your gateway'}${
+          res.sender_id ? ` as ${res.sender_id}` : ''
+        }`,
+      });
+    } catch (e) {
+      setResult({ ok: false, detail: e.message || 'Send failed' });
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <Card
       title="Test delivery"
-      description="Send a one-off SMS through the saved credentials to confirm they work."
+      description="Send a one-off SMS through the credentials that are saved right now."
     >
       <div className="space-y-4">
-        <NotWired>
-          No send-test route exists. The useful part would be the gateway&apos;s raw reply — that
-          is what tells you whether it is the key, the sender ID or an unregistered shortcode.
-        </NotWired>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Field label="Phone number" hint="Where the test SMS is sent." className="flex-1">
             <TextInput
@@ -163,16 +195,20 @@ function TestDelivery() {
               onChange={(e) => setPhone(e.target.value)}
             />
           </Field>
-          <button
-            type="button"
-            disabled
-            title="Not available yet"
-            className="inline-flex shrink-0 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
-          >
+          <PrimaryButton onClick={send} loading={sending} disabled={!phone.trim()} className="shrink-0">
             <Send className="h-4 w-4" />
             Send test SMS
-          </button>
+          </PrimaryButton>
         </div>
+
+        {dirty && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            You have unsaved changes — the test uses what is saved, not what is on screen. Save
+            first to test the new values.
+          </p>
+        )}
+
+        <TestResult result={result} />
       </div>
     </Card>
   );
@@ -180,7 +216,7 @@ function TestDelivery() {
 
 /* --- Africa's Talking: the one provider whose credentials really save ----- */
 function AfricasTalkingDetail({ row, onSaved }) {
-  const blank = { username: '', api_key: '', sender_id: '' };
+  const blank = { username: '', api_key: '', sender_id: '', environment: 'production' };
   const initial = useMemo(() => {
     const next = { ...blank, ...(row?.config || {}) };
     if (next.api_key === MASK) next.api_key = '';
@@ -216,19 +252,18 @@ function AfricasTalkingDetail({ row, onSaved }) {
       <Card title="Credentials" description="Stored encrypted. Edit a field and save to update it.">
         <CredentialFields fields={PROVIDERS[0].fields} values={form} onChange={set} />
         <div className="mt-5">
-          <NotWired>
-            These credentials save and encrypt correctly, but nothing sends through them yet.
-            <span className="font-mono"> send_sms</span> still reads{' '}
-            <span className="font-mono">SMS_PROVIDER</span> /{' '}
-            <span className="font-mono">AT_USERNAME</span> /{' '}
-            <span className="font-mono">AT_API_KEY</span> from the server environment, so this
-            changes what is stored, not what is used. Pointing the dispatcher at this row is a
-            small backend change.
-          </NotWired>
+          <Note title="This is live once you save" tone="success">
+            <p className="mt-1">
+              Receipts, expiry reminders and vouchers go out on this account as soon as the
+              credentials are saved, with your sender ID on them. Clear the username or key and
+              everything falls back to the platform gateway. Send a test below before trusting it
+              with a real receipt.
+            </p>
+          </Note>
         </div>
       </Card>
 
-      <TestDelivery />
+      <TestDelivery dirty={dirty} />
 
       <StickySaveBar dirty={dirty} saving={saving} onSave={save} onReset={() => setForm(initial)} />
     </div>
@@ -404,9 +439,9 @@ export default function CommunicationsSettings() {
       </div>
 
       <NotWired>
-        Only Africa&apos;s Talking has any code behind it, and even that reads its credentials from
-        the server environment rather than from what you save here. Every other card opens the
-        credential shape that building it would need. Until one is wired, everything sends on the{' '}
+        Africa&apos;s Talking is the only vendor with code behind it — connect it and your messages
+        really do leave on your own account. Every other card opens the credential shape that
+        building it would need, but cannot send. Anything not connected falls back to the{' '}
         {BRAND.name} default above.
       </NotWired>
     </div>
