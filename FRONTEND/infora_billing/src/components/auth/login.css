@@ -287,3 +287,85 @@
   .auth__card { padding: 26px 20px 24px; border-radius: 14px; }
   .auth__title { font-size: 24px; }
 }
+
+/* --- Forgot / reset password ------------------------------------------- */
+
+.auth__label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth__error {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--auth-req);
+}
+
+.auth__centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18px 0 6px;
+  color: var(--auth-text-dim);
+}
+
+.auth__icon-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 52px;
+  width: 52px;
+  margin: 0 auto 16px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--auth-accent-hi);
+}
+.auth__icon-circle--warn {
+  background: rgba(245, 158, 11, 0.14);
+  color: #fbbf24;
+}
+
+/* Strength meter — same scoring as the account settings page, so the bar
+   someone sees here is the bar they see next time they change it. */
+.auth__strength { margin-top: 10px; }
+
+.auth__strength-bars { display: flex; gap: 5px; }
+
+.auth__strength-bar {
+  height: 4px;
+  flex: 1;
+  border-radius: 999px;
+  background: var(--auth-line);
+  transition: background-color 0.2s;
+}
+
+.auth__strength-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.auth__strength-reqs { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.auth__req-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--auth-line);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--auth-text-faint);
+}
+.auth__req-chip.is-met {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--auth-accent-hi);
+}

@@ -55,6 +55,8 @@ import VpnPage from './components/network/VpnPage';
 import WireGuardPage from './components/network/WireGuardPage';
 import EapPage from './components/network/EapPage';
 import TicketsPage from './components/tickets/TicketsPage';
+import ForgotPasswordPage from './components/auth/ForgotPassword';
+import ResetPasswordPage from './components/auth/ResetPassword';
 import SettingsPage from './components/settings/SettingsPage';
 import TwoFactorAuthPage from './components/settings/TwoFactorAuthPage';
 import BillingSubscriptionPage from './components/settings/BillingSubscriptionPage';
@@ -127,6 +129,8 @@ function AppRoutes() {
     <Routes>
       {/* Public Routes */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       {/* Self-serve ISP signup — provisions a real tenant (ISP + admin user).
           See ONBOARDING.md. */}
       <Route path="/signup" element={<OnboardingWizard />} />

@@ -1485,6 +1485,42 @@ class DeviceOutage(db.Model):
         return f"<DeviceOutage device={self.device_id} {self.started_at} -> {self.ended_at}>"
 
 
+class PasswordResetToken(db.Model):
+    """A single-use link that lets someone set a new password without the old one.
+
+    Only the SHA-256 of the token is stored. The token is 32 random bytes, so a
+    fast digest is the right primitive here — it is not a password and needs no
+    stretching, and a digest is what lets the lookup be an indexed equality
+    check rather than a scan-and-compare over every outstanding row.
+
+    A read-only leak of this table therefore hands an attacker nothing usable:
+    the digests cannot be reversed, and the plaintext only ever exists in the
+    email that was sent.
+    """
+    __tablename__ = 'password_reset_tokens'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+
+    # Kept for the audit trail — a burst of requests for one account is the
+    # signal worth being able to look back at.
+    requested_ip = db.Column(db.String(45), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), index=True)
+
+    user = db.relationship('User')
+
+    def is_usable(self, now=None):
+        now = now or datetime.utcnow()
+        return self.used_at is None and self.expires_at > now
+
+    def __repr__(self):
+        return f"<PasswordResetToken user={self.user_id} used={bool(self.used_at)}>"
+
+
 class CopilotThread(db.Model):
     """One conversation with the network copilot.
 

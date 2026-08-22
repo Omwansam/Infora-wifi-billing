@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import (
     jwt_required,
     get_jwt,
@@ -245,6 +245,84 @@ def update_profile():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to update profile: {str(e)}'}), 500
+
+# ---------------------------------------------------------------------------
+# Forgot / reset password
+#
+# The request endpoint answers identically whether or not the address exists.
+# That is the whole point of it: a forgot-password form is otherwise the
+# cheapest way to find out who has an account here.
+# ---------------------------------------------------------------------------
+
+@auth_bp.route('/forgot-password', methods=['POST'])
+@rate_limit(limit=5, window=900, scope='auth-forgot-password')
+def forgot_password():
+    from services import password_reset
+
+    data = request.get_json() or {}
+    email = (data.get('email') or '').strip()
+    if not email or '@' not in email:
+        return jsonify({'error': 'Enter the email address on your account'}), 400
+
+    ip = (request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()
+    try:
+        sent, detail = password_reset.request_reset(email, ip=ip)
+    except Exception as exc:  # noqa: BLE001 — never let a mail failure leak state
+        current_app.logger.error('Password reset request failed: %s', exc)
+        sent, detail = False, 'error'
+
+    record_system_log('auth', f'Password reset requested for {email} ({detail})',
+                      'INFO', commit=True)
+
+    # Same body either way. Do not add a "check your spam" only-on-success
+    # branch here, however tempting — it is exactly the tell this prevents.
+    return jsonify({'success': True, 'message': password_reset.GENERIC_RESPONSE}), 200
+
+
+@auth_bp.route('/reset-password', methods=['GET'])
+@rate_limit(limit=20, window=300, scope='auth-reset-check')
+def check_reset_token():
+    """Is this link still good?
+
+    Lets the page say "expired" before someone types a new password twice.
+    Returns only a boolean and a masked address — enough to reassure the right
+    person they are on their own account, useless to anyone else.
+    """
+    from services import password_reset
+
+    row = password_reset.lookup(request.args.get('token'))
+    if row is None:
+        return jsonify({'valid': False}), 200
+
+    email = row.user.email or ''
+    name, _, domain = email.partition('@')
+    masked = f"{name[:2]}{'•' * max(len(name) - 2, 2)}@{domain}" if domain else ''
+    return jsonify({'valid': True, 'email_hint': masked,
+                    'expires_at': row.expires_at.isoformat()}), 200
+
+
+@auth_bp.route('/reset-password', methods=['POST'])
+@rate_limit(limit=10, window=900, scope='auth-reset-password')
+def reset_password():
+    from services import password_reset
+
+    data = request.get_json() or {}
+    try:
+        user = password_reset.consume(
+            data.get('token'), data.get('password'), data.get('confirm_password'))
+    except password_reset.ResetError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    record_system_log('auth', f'{user.email} reset their password via email link',
+                      'INFO', user_id=user.id, commit=True)
+    return jsonify({
+        'success': True,
+        'message': 'Password updated. Sign in with your new password.',
+        # Sessions elsewhere are stateless JWTs and cannot be revoked from here;
+        # say so rather than implying the reset kicked everyone out.
+        'note': 'Any device already signed in stays signed in until its session expires.',
+    }), 200
+
 
 @auth_bp.route('/change-password', methods=['POST'])
 @rate_limit(limit=5, window=60, scope='auth-change-password')

@@ -195,10 +195,15 @@ export default function LoginPage() {
                 </div>
 
                 <div className="auth__field">
-                  <label htmlFor="password" className="auth__label">
-                    Password
-                    <span className="auth__req">*</span>
-                  </label>
+                  <div className="auth__label-row">
+                    <label htmlFor="password" className="auth__label">
+                      Password
+                      <span className="auth__req">*</span>
+                    </label>
+                    <Link to="/forgot-password" className="auth__link">
+                      Forgot password?
+                    </Link>
+                  </div>
                   <div className="auth__control">
                     <input
                       id="password"

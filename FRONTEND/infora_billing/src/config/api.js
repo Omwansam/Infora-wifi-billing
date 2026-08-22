@@ -173,6 +173,10 @@ export const API_ENDPOINTS = {
     `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}`,
   settingsMessagingActive: (channel) =>
     `${API_BASE_URL}/api/settings/messaging/${encodeURIComponent(channel)}/active`,
+  FORGOT_PASSWORD: `${API_BASE_URL}/api/auth/forgot-password`,
+  RESET_PASSWORD: `${API_BASE_URL}/api/auth/reset-password`,
+  resetPasswordCheck: (token) =>
+    `${API_BASE_URL}/api/auth/reset-password?token=${encodeURIComponent(token)}`,
   SETTINGS_LOYALTY: `${API_BASE_URL}/api/settings/loyalty`,
   settingsLoyaltyCustomer: (id) => `${API_BASE_URL}/api/settings/loyalty/customers/${id}`,
   settingsLoyaltyRedeem: (id) => `${API_BASE_URL}/api/settings/loyalty/customers/${id}/redeem`,
