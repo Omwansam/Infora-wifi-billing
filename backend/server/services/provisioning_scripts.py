@@ -170,7 +170,7 @@ def build_radius_script(device, snmp_community='infora'):
         f'# ISP: {isp.name if isp else "n/a"}  Generated for RouterOS v6/v7',
         '',
         '# --- 0. Connectivity pre-check (abort if no internet) ---',
-        ':if ([:len [/ping 8.8.8.8 count=3]] = 0) do={',
+        ':if ([/ping 8.8.8.8 count=3] = 0) do={',
         '    :log error "Infora: no internet connectivity, aborting"',
         '    :error "Infora provisioning aborted: no connectivity"',
         '}',
@@ -218,11 +218,19 @@ def build_radius_script(device, snmp_community='infora'):
         # bring the management tunnel up itself. It stays "offline" until the
         # server happens to initiate, which is exactly the failure this fixes.
         # Setting the clock forward once also unblocks the peer immediately.
-        ':do { /system ntp client set enabled=yes mode=unicast '
-        'servers=time.google.com,time.cloudflare.com,pool.ntp.org } on-error={ '
-        # RouterOS 6 has no `servers=` on the client; fall back to its own syntax.
-        ':do { /system ntp client set enabled=yes primary-ntp=216.239.35.0 '
-        'secondary-ntp=162.159.200.1 } on-error={} }',
+        # v6 and v7 spell the NTP client differently: v7 takes `servers=`, v6
+        # takes `primary-ntp=`/`secondary-ntp=`. The two dialects cannot both
+        # appear as literal commands, because RouterOS parses a whole line
+        # before it runs any of it — the foreign parameter name is a SYNTAX
+        # error, and `:do ... on-error` only catches RUNTIME errors, so the
+        # fallback block aborted the entire import on v7 routers. Handing each
+        # dialect to `:parse` as a string keeps the foreign spelling invisible
+        # to the parser and moves the failure to runtime, where on-error can
+        # actually swallow it.
+        ':do { :local ntp [:parse "/system ntp client set enabled=yes mode=unicast '
+        'servers=time.google.com,time.cloudflare.com,pool.ntp.org"]; $ntp } on-error={ '
+        ':do { :local ntp6 [:parse "/system ntp client set enabled=yes mode=unicast '
+        'primary-ntp=216.239.35.0 secondary-ntp=162.159.200.1"]; $ntp6 } on-error={} }',
     ]
 
     # --- 7. Billing management user + remote access ---
