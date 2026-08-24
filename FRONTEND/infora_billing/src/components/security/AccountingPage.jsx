@@ -6,6 +6,8 @@ import radiusService from '../../services/radiusService';
 import { getAccessToken } from '../../utils/authToken';
 import { formatBytes, formatDuration } from '../../lib/networkUtils';
 import { formatDateTime } from '../../lib/utils';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 const STATUS_TABS = [
   { key: 'active', label: 'Active' },
@@ -36,22 +38,26 @@ export default function AccountingPage() {
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState(null);
 
+  const pager = useServerPagination({ storageKey: 'accounting', defaultPageSize: 25, resetOn: [status, search] });
+  const { page, pageSize, setTotals } = pager;
+
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const token = getAccessToken();
       const [sesRes, statRes] = await Promise.all([
-        radiusService.getRadiusSessions(token, { per_page: 100, status: status || undefined, search: search || undefined }),
+        radiusService.getRadiusSessions(token, { page, per_page: pageSize, status: status || undefined, search: search || undefined }),
         radiusService.getRadiusStats(token),
       ]);
       setSessions(sesRes?.data?.sessions || []);
+      setTotals(sesRes?.data);
       setStats(statRes?.data || {});
     } catch (e) {
       toast.error(e.message || 'Failed to load accounting');
     } finally {
       setLoading(false);
     }
-  }, [status, search]);
+  }, [status, search, page, pageSize, setTotals]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -136,6 +142,8 @@ export default function AccountingPage() {
               </table>
             </div>
           )}
+
+          <TablePagination {...pager.paginationProps} loading={loading} noun="session" />
         </div>
       </div>
     </div>

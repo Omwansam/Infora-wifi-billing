@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { toQueryString } from '../lib/queryString';
 
 class SNMPService {
   constructor() {
@@ -169,7 +170,7 @@ class SNMPService {
   // SNMP Traps
   async getSNMPTraps(token, deviceId, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams 
         ? `${API_ENDPOINTS.SNMP_TRAPS}/${deviceId}?${queryParams}` 
         : `${API_ENDPOINTS.SNMP_TRAPS}/${deviceId}`;

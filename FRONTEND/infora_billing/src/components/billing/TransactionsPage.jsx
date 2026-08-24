@@ -17,6 +17,8 @@ import { formatPaymentMethod, getMethodStyle, customerInitials } from '../../lib
 import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
 import { getAccessToken } from '../../utils/authToken';
 import PaymentStatusBadge from './PaymentStatusBadge';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -75,6 +77,16 @@ export default function TransactionsPage() {
       return matchesSearch && matchesStatus && matchesType;
     });
   }, [transactions, searchTerm, statusFilter, typeFilter]);
+
+  // Filters run in the browser over the fetched batch, so the page is sliced
+  // here rather than requested. Export still writes every filtered row, not
+  // just the visible page.
+  const { pageItems, paginationProps } = useClientPagination(filteredTransactions, {
+    storageKey: 'transactions',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, statusFilter, typeFilter],
+    filteredFrom: transactions.length,
+  });
 
   const totalVolume = transactions.reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
   const completedCount = transactions.filter((t) => t.status === 'completed').length;
@@ -264,7 +276,7 @@ export default function TransactionsPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredTransactions.map((txn) => (
+                  pageItems.map((txn) => (
                     <tr
                       key={txn.id}
                       className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
@@ -305,11 +317,7 @@ export default function TransactionsPage() {
             </table>
           </div>
 
-          {!loading && filteredTransactions.length > 0 && (
-            <div className="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
-              Showing {filteredTransactions.length} of {transactions.length} transactions
-            </div>
-          )}
+          <TablePagination {...paginationProps} loading={loading} noun="transaction" />
         </motion.div>
       </div>
 

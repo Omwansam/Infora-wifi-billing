@@ -9,6 +9,8 @@ import radiusService from '../../services/radiusService';
 import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const CLIENT_FORM = { name: '', host: '', secret: '', auth_port: 1812, acct_port: 1813, nas_type: 'other' };
 const VIEW_TABS = [
@@ -70,6 +72,21 @@ export default function RadiusPage() {
     () => clients.filter((c) => c.name?.toLowerCase().includes(searchTerm.toLowerCase()) || c.host?.includes(searchTerm)),
     [clients, searchTerm]
   );
+
+  // Both views hold their whole list in memory, so each gets its own slice and
+  // its own remembered page — switching tabs must not carry page 4 of the NAS
+  // list over to the session list.
+  const clientPager = useClientPagination(filteredClients, {
+    storageKey: 'radius-clients',
+    defaultPageSize: 10,
+    resetOn: [searchTerm],
+    filteredFrom: clients.length,
+  });
+  const sessionPager = useClientPagination(sessions, {
+    storageKey: 'radius-sessions',
+    defaultPageSize: 25,
+    resetOn: [searchTerm],
+  });
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -195,8 +212,9 @@ export default function RadiusPage() {
       {loading ? (
         <div className="py-16 text-center"><div className="animate-spin rounded-full h-10 w-10 border-2 border-indigo-600 border-t-transparent mx-auto" /></div>
       ) : view === 'clients' ? (
+        <div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {filteredClients.map((client, index) => (
+          {clientPager.pageItems.map((client, index) => (
             <motion.div key={client.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3 mb-4">
                 <div>
@@ -217,6 +235,10 @@ export default function RadiusPage() {
             </motion.div>
           ))}
         </div>
+        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <TablePagination {...clientPager.paginationProps} loading={loading} noun="NAS client" nounPlural="NAS clients" divider={false} />
+        </div>
+        </div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
@@ -232,7 +254,7 @@ export default function RadiusPage() {
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((session) => (
+                {sessionPager.pageItems.map((session) => (
                   <tr key={session.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                     <td className="px-5 py-4"><div className="font-medium">{session.username}</div><div className="text-xs text-slate-500">{session.customer_name || '—'}</div></td>
                     <td className="px-5 py-4">{session.device_name || '—'}</td>
@@ -251,6 +273,8 @@ export default function RadiusPage() {
               </tbody>
             </table>
           </div>
+
+          <TablePagination {...sessionPager.paginationProps} loading={loading} noun="session" />
         </div>
       )}
 

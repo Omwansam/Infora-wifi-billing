@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { toQueryString } from '../lib/queryString';
 
 class VPNService {
   constructor() {
@@ -284,7 +285,7 @@ class VPNService {
   // VPN Logs
   async getVPNLogs(token, configId, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams 
         ? `${this.baseURL}/${configId}/logs?${queryParams}` 
         : `${this.baseURL}/${configId}/logs`;

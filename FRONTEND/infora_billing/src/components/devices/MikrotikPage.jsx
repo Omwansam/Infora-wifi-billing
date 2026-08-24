@@ -30,6 +30,8 @@ import { useConfirm } from '../../contexts/ConfirmContext';
 import DevicesLayout from './DevicesLayout';
 import DeviceStatusBadge from './DeviceStatusBadge';
 import AddDeviceWizard from './AddDeviceWizard';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -92,6 +94,13 @@ export default function MikrotikPage() {
       }),
     [devices, searchTerm, statusFilter]
   );
+
+  const { pageItems, paginationProps } = useClientPagination(filteredDevices, {
+    storageKey: 'mikrotik-devices',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, statusFilter],
+    filteredFrom: devices.length,
+  });
 
   const statsCards = useMemo(
     () => [
@@ -361,8 +370,9 @@ export default function MikrotikPage() {
           </button>
         </div>
       ) : (
+        <div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {filteredDevices.map((device, index) => (
+          {pageItems.map((device, index) => (
             <motion.div
               key={device.id}
               initial={{ opacity: 0, y: 16 }}
@@ -467,6 +477,10 @@ export default function MikrotikPage() {
               </div>
             </motion.div>
           ))}
+        </div>
+        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <TablePagination {...paginationProps} loading={loading} noun="router" divider={false} />
+        </div>
         </div>
       )}
 

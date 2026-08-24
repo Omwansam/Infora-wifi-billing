@@ -16,6 +16,8 @@ import {
   Wand2,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 import toast from 'react-hot-toast';
 
 function StatCard({ label, value, tone = 'slate' }) {
@@ -156,6 +158,14 @@ export default function ImportClients() {
   };
 
   const summary = result || preview;
+
+  // A CSV can carry thousands of rows; the preview shows a page of them at a
+  // time. Switching between the dry run and the committed result starts over.
+  const previewPager = useClientPagination(summary?.rows, {
+    storageKey: 'import-preview',
+    defaultPageSize: 50,
+    resetOn: [Boolean(result)],
+  });
 
   const rowTone = (status) =>
     status === 'error'
@@ -379,7 +389,8 @@ export default function ImportClients() {
               );
             })()}
 
-            <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <div className="rounded-xl border border-slate-100 dark:border-slate-800">
+              <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
@@ -392,7 +403,7 @@ export default function ImportClients() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(summary.rows || []).map((r) => (
+                  {previewPager.pageItems.map((r) => (
                     <tr key={r.row} className={rowTone(r.status)}>
                       <td className="px-3 py-2 text-slate-400">{r.row}</td>
                       <td className="px-3 py-2 font-medium text-slate-900">{r.data?.name}</td>
@@ -424,6 +435,9 @@ export default function ImportClients() {
                   ))}
                 </tbody>
               </table>
+              </div>
+
+              <TablePagination {...previewPager.paginationProps} noun="row" />
             </div>
 
             <div className="mt-6 flex items-center justify-end gap-3">

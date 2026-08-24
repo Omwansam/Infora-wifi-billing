@@ -22,6 +22,8 @@ import { customerInitials } from '../../lib/billingFormatters';
 import { isSubscriptionExpired } from '../../lib/subscriptionUtils';
 import PaymentStatusBadge from '../billing/PaymentStatusBadge';
 import KycStatusBadge from './KycStatusBadge';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 import toast from 'react-hot-toast';
 
 const STATUS_TABS = [
@@ -37,9 +39,6 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalCustomers, setTotalCustomers] = useState(0);
   const [stats, setStats] = useState({});
   const [statsLoading, setStatsLoading] = useState(true);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -47,19 +46,25 @@ export default function CustomersPage() {
   const [deleting, setDeleting] = useState(false);
   const [actionId, setActionId] = useState(null);
 
+  const pager = useServerPagination({
+    storageKey: 'customers',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, statusFilter],
+  });
+  const { page, pageSize, setTotals } = pager;
+
   const loadCustomers = useCallback(async () => {
     try {
       setLoading(true);
       const result = await customerService.getCustomers({
-        page: currentPage,
-        per_page: 20,
+        page,
+        per_page: pageSize,
         search: searchTerm || undefined,
         status: statusFilter !== 'all' ? statusFilter : undefined,
       });
       if (result.success) {
         setCustomers(result.data.customers || []);
-        setTotalPages(result.data.pages || 1);
-        setTotalCustomers(result.data.total || 0);
+        setTotals(result.data);
       } else {
         toast.error(result.error || 'Failed to load customers');
       }
@@ -68,7 +73,7 @@ export default function CustomersPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchTerm, statusFilter]);
+  }, [page, pageSize, searchTerm, statusFilter, setTotals]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -245,10 +250,7 @@ export default function CustomersPage() {
                 type="text"
                 placeholder="Search by name, email, or phone..."
                 value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentPage(1);
-                }}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -256,10 +258,7 @@ export default function CustomersPage() {
               {STATUS_TABS.map((tab) => (
                 <button
                   key={tab.value}
-                  onClick={() => {
-                    setStatusFilter(tab.value);
-                    setCurrentPage(1);
-                  }}
+                  onClick={() => setStatusFilter(tab.value)}
                   className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
                     statusFilter === tab.value
                       ? 'bg-slate-900 text-white'
@@ -401,34 +400,9 @@ export default function CustomersPage() {
               </table>
             </div>
           )}
-        </div>
 
-        {!loading && totalPages > 1 && (
-          <div className="flex items-center justify-between bg-white rounded-2xl border border-slate-200 p-4 mt-6">
-            <p className="text-sm text-slate-600">
-              Showing {(currentPage - 1) * 20 + 1}–{Math.min(currentPage * 20, totalCustomers)} of {totalCustomers}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="px-3 py-2 rounded-lg border border-slate-200 text-sm disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <span className="px-3 py-2 text-sm text-slate-600">
-                Page {currentPage} of {totalPages}
-              </span>
-              <button
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="px-3 py-2 rounded-lg border border-slate-200 text-sm disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
+          <TablePagination {...pager.paginationProps} loading={loading} noun="customer" />
+        </div>
 
         <AnimatePresence>
           {deleteModalOpen && (

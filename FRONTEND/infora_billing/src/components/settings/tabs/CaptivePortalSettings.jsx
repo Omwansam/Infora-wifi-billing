@@ -8,6 +8,8 @@ import { themeBackground } from '../../../lib/portalThemePreviews';
 import { resolvePortalOpenUrl } from '../../../lib/portalUrl';
 import PortalLivePreview from '../PortalLivePreview';
 import { Card, Field, TextInput, Textarea, PrimaryButton, Toggle, LoadingBlock } from '../ui';
+import TablePagination from '../../ui/TablePagination';
+import { useClientPagination } from '../../../hooks/usePagination';
 
 function ThemeCard({ theme, selected, accentColor, onSelect }) {
   const meta = themeBackground(theme.key);
@@ -70,6 +72,12 @@ export default function CaptivePortalSettings() {
   const [savingRedirect, setSavingRedirect] = useState(false);
   const [ann, setAnn] = useState({ title: '', type: 'info', expires_at: '', message: '' });
   const [postingAnn, setPostingAnn] = useState(false);
+
+  // Above the loading early-return below, so the hook order never changes.
+  const routerPager = useClientPagination(data?.routers, {
+    storageKey: 'portal-routers',
+    defaultPageSize: 10,
+  });
 
   const load = async () => {
     try {
@@ -310,7 +318,7 @@ export default function CaptivePortalSettings() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {data.routers.map((r) => (
+                {routerPager.pageItems.map((r) => (
                   <tr key={r.id}>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2">
@@ -351,6 +359,8 @@ export default function CaptivePortalSettings() {
                 ))}
               </tbody>
             </table>
+
+            <TablePagination {...routerPager.paginationProps} noun="router" divider={false} className="px-0" />
           </div>
         )}
       </Card>

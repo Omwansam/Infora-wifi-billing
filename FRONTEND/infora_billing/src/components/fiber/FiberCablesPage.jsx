@@ -7,6 +7,8 @@ import FiberLayout from './FiberLayout';
 import { CABLE_TYPES, formatLength, nodeMeta } from './fiberMeta';
 import fiberService from '../../services/fiberService';
 import { useConfirm } from '../../contexts/ConfirmContext';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 export default function FiberCablesPage() {
   const confirm = useConfirm();
@@ -36,6 +38,13 @@ export default function FiberCablesPage() {
     () => cables.filter((c) => type === 'all' || c.cable_type === type),
     [cables, type],
   );
+
+  const { pageItems, paginationProps } = useClientPagination(visible, {
+    storageKey: 'fiber-cables',
+    defaultPageSize: 25,
+    resetOn: [type],
+    filteredFrom: cables.length,
+  });
 
   // What an operator actually needs off this page: how much of each type is in
   // the ground, because that is what reorder decisions are made from.
@@ -112,7 +121,8 @@ export default function FiberCablesPage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-800/50">
               <tr>
@@ -123,7 +133,7 @@ export default function FiberCablesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {visible.map((cable) => {
+              {pageItems.map((cable) => {
                 const meta = CABLE_TYPES[cable.cable_type] || CABLE_TYPES.distribution;
                 const from = byId[cable.from_node_id];
                 const to = cable.to_node_id ? byId[cable.to_node_id] : null;
@@ -159,6 +169,9 @@ export default function FiberCablesPage() {
               })}
             </tbody>
           </table>
+          </div>
+
+          <TablePagination {...paginationProps} loading={loading} noun="cable" />
         </div>
       )}
     </FiberLayout>

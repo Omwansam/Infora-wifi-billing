@@ -9,6 +9,8 @@ import vpnService from '../../services/vpnService';
 import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const CONFIG_FORM = { name: '', vpn_type: 'wireguard', server_endpoint: '', server_port: 51820, allowed_ips: '10.0.0.0/24', dns_servers: '8.8.8.8' };
 const VIEW_TABS = [{ value: 'configs', label: 'Servers' }, { value: 'clients', label: 'Clients' }];
@@ -48,6 +50,17 @@ export default function VpnPage() {
     () => configs.filter((c) => c.name?.toLowerCase().includes(searchTerm.toLowerCase())),
     [configs, searchTerm]
   );
+
+  const configPager = useClientPagination(filteredConfigs, {
+    storageKey: 'vpn-configs',
+    defaultPageSize: 10,
+    resetOn: [searchTerm],
+    filteredFrom: configs.length,
+  });
+  const clientPager = useClientPagination(clients, {
+    storageKey: 'vpn-clients',
+    defaultPageSize: 25,
+  });
 
   const handleSaveConfig = async (e) => {
     e.preventDefault();
@@ -162,8 +175,9 @@ export default function VpnPage() {
       {loading ? (
         <div className="py-16 text-center"><div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-600 border-t-transparent mx-auto" /></div>
       ) : view === 'configs' ? (
+        <div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {filteredConfigs.map((config, index) => (
+          {configPager.pageItems.map((config, index) => (
             <motion.div key={config.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3 mb-4">
                 <div>
@@ -183,6 +197,10 @@ export default function VpnPage() {
             </motion.div>
           ))}
         </div>
+        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <TablePagination {...configPager.paginationProps} loading={loading} noun="config" divider={false} />
+        </div>
+        </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="table-scroll">
@@ -197,7 +215,7 @@ export default function VpnPage() {
               </tr>
             </thead>
             <tbody>
-              {clients.map((client) => (
+              {clientPager.pageItems.map((client) => (
                 <tr key={client.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                   <td className="px-5 py-4 font-medium">{client.name}</td>
                   <td className="px-5 py-4">{configs.find((c) => c.id === client.vpn_config_id)?.name || client.vpn_config_id}</td>
@@ -211,6 +229,8 @@ export default function VpnPage() {
             </tbody>
           </table>
           </div>
+
+          <TablePagination {...clientPager.paginationProps} loading={loading} noun="VPN client" nounPlural="VPN clients" />
         </div>
       )}
 

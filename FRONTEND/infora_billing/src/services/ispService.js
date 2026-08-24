@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { toQueryString } from '../lib/queryString';
 
 class ISPService {
   constructor() {
@@ -7,7 +8,7 @@ class ISPService {
 
   async getISPs(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${this.baseURL}?${queryParams}` : this.baseURL;
       
       const response = await fetch(url, {

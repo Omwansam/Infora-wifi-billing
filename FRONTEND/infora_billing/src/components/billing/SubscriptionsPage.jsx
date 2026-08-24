@@ -18,6 +18,8 @@ import { customerInitials } from '../../lib/billingFormatters';
 import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
 import { getAccessToken } from '../../utils/authToken';
 import PaymentStatusBadge from './PaymentStatusBadge';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -35,11 +37,18 @@ export default function SubscriptionsPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(null);
 
+  const pager = useServerPagination({
+    storageKey: 'subscriptions',
+    defaultPageSize: 25,
+    resetOn: [statusFilter, searchTerm],
+  });
+  const { page, pageSize, setTotals } = pager;
+
   const loadSubscriptions = useCallback(async () => {
     try {
       setLoading(true);
       const token = getAccessToken();
-      const params = new URLSearchParams({ per_page: '100' });
+      const params = new URLSearchParams({ page: String(page), per_page: String(pageSize) });
       if (statusFilter !== 'all') params.set('status', statusFilter);
       if (searchTerm) params.set('search', searchTerm);
       const response = await fetch(`${API_ENDPOINTS.BILLING_SUBSCRIPTIONS}?${params}`, {
@@ -49,6 +58,7 @@ export default function SubscriptionsPage() {
       if (response.ok) {
         setSubscriptions(data.subscriptions || []);
         setStats(data.stats || {});
+        setTotals(data);
       } else {
         toast.error(data.message || 'Failed to load subscriptions');
       }
@@ -58,7 +68,7 @@ export default function SubscriptionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, searchTerm]);
+  }, [statusFilter, searchTerm, page, pageSize, setTotals]);
 
   useEffect(() => {
     const timer = setTimeout(loadSubscriptions, searchTerm ? 300 : 0);
@@ -253,11 +263,7 @@ export default function SubscriptionsPage() {
             </table>
           </div>
 
-          {!loading && filtered.length > 0 && (
-            <div className="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
-              Showing {filtered.length} subscriptions
-            </div>
-          )}
+          <TablePagination {...pager.paginationProps} loading={loading} noun="subscription" />
         </motion.div>
       </div>
 

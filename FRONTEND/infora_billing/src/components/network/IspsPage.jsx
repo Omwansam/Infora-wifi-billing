@@ -8,6 +8,8 @@ import ispService from '../../services/ispService';
 import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 const EMPTY_FORM = {
   name: '',
@@ -31,15 +33,19 @@ export default function IspsPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
+  const pager = useServerPagination({ storageKey: 'isps', defaultPageSize: 25, resetOn: [searchTerm] });
+  const { page, pageSize, setTotals } = pager;
+
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const token = getAccessToken();
       const [listRes, statsRes] = await Promise.all([
-        ispService.getISPs(token, { per_page: 100, search: searchTerm || undefined }),
+        ispService.getISPs(token, { page, per_page: pageSize, search: searchTerm || undefined }),
         ispService.getAllISPStats(token).catch(() => ({})),
       ]);
       setIsps(listRes.isps || []);
+      setTotals(listRes);
       setStats(statsRes);
     } catch {
       toast.error('Failed to load ISPs');
@@ -47,7 +53,7 @@ export default function IspsPage() {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm]);
+  }, [searchTerm, page, pageSize, setTotals]);
 
   useEffect(() => {
     const timer = setTimeout(loadData, searchTerm ? 300 : 0);
@@ -199,6 +205,8 @@ export default function IspsPage() {
             </table>
           </div>
         )}
+
+        <TablePagination {...pager.paginationProps} loading={loading} noun="ISP" nounPlural="ISPs" />
       </div>
 
       <AnimatePresence>

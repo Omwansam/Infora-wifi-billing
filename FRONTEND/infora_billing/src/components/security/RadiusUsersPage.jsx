@@ -1,38 +1,39 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Users, Search, Loader2, RefreshCw, Gauge, Clock, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
+import { Users, Search, Loader2, RefreshCw, Gauge, Clock, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 import radiusService from '../../services/radiusService';
 import { getAccessToken } from '../../utils/authToken';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 export default function RadiusUsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  const [total, setTotal] = useState(0);
+
+  const pager = useServerPagination({ storageKey: 'radius-users', defaultPageSize: 25, resetOn: [search] });
+  const { page, pageSize, setTotals, total } = pager;
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const res = await radiusService.getRadiusUsers(getAccessToken(), { page, per_page: 25, search: search || undefined });
+      const res = await radiusService.getRadiusUsers(getAccessToken(), { page, per_page: pageSize, search: search || undefined });
       const data = res?.data ?? res;
       setUsers(data?.users || []);
-      setPages(data?.pages || 1);
-      setTotal(data?.total || 0);
+      setTotals(data);
     } catch (e) {
       toast.error(e.message || 'Failed to load RADIUS users');
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [page, pageSize, search, setTotals]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const t = setTimeout(() => { setPage(1); setSearch(searchInput.trim()); }, searchInput ? 350 : 0);
+    const t = setTimeout(() => setSearch(searchInput.trim()), searchInput ? 350 : 0);
     return () => clearTimeout(t);
   }, [searchInput]);
 
@@ -95,15 +96,7 @@ export default function RadiusUsersPage() {
               </table>
             </div>
           )}
-          {!loading && users.length > 0 && (
-            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <span>{total} user{total === 1 ? '' : 's'} · page {page} of {pages}</span>
-              <div className="flex gap-1">
-                <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-lg border border-slate-200 p-1.5 disabled:opacity-40 dark:border-slate-700"><ChevronLeft className="h-4 w-4" /></button>
-                <button disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))} className="rounded-lg border border-slate-200 p-1.5 disabled:opacity-40 dark:border-slate-700"><ChevronRight className="h-4 w-4" /></button>
-              </div>
-            </div>
-          )}
+          <TablePagination {...pager.paginationProps} loading={loading} noun="user" />
         </div>
       </div>
     </div>

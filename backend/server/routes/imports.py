@@ -115,8 +115,20 @@ def list_runs():
     query = ImportRun.query
     if user.isp_id:
         query = query.filter_by(isp_id=user.isp_id)
-    runs = query.order_by(ImportRun.id.desc()).limit(50).all()
-    return jsonify({'runs': [serialize_run(r) for r in runs]}), 200
+    # Was a hard limit(50) with no way to reach anything older; the console
+    # now pages through the history like every other list.
+    page = max(1, request.args.get('page', 1, type=int) or 1)
+    per_page = min(200, max(1, request.args.get('per_page', 25, type=int) or 25))
+    runs = query.order_by(ImportRun.id.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    return jsonify({
+        'runs': [serialize_run(r) for r in runs.items],
+        'total': runs.total,
+        'pages': runs.pages,
+        'current_page': page,
+        'per_page': per_page,
+    }), 200
 
 
 @imports_bp.route('/runs/<int:run_id>', methods=['GET'])

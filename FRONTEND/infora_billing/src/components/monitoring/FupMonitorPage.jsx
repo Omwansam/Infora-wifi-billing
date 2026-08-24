@@ -21,6 +21,8 @@ import toast from 'react-hot-toast';
 import { getFupMonitor } from '../../services/fupService';
 import { formatBytes } from '../../lib/networkUtils';
 import { customerInitials } from '../../lib/billingFormatters';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const REFRESH_SECONDS = 60;
 
@@ -189,6 +191,14 @@ export default function FupMonitorPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The monitor returns every account in one shot and refreshes on a timer, so
+  // the page is sliced here and only a filter change sends it back to page 1.
+  const { pageItems, paginationProps } = useClientPagination(accounts, {
+    storageKey: 'fup-monitor',
+    defaultPageSize: 25,
+    resetOn: [typeTab, statusTab, search],
+  });
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -417,7 +427,7 @@ export default function FupMonitorPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {accounts.map((account) => {
+                  {pageItems.map((account) => {
                     const usedLabel = formatBytes(account.bytes_used || 0);
                     const limitLabel = account.threshold_bytes
                       ? formatBytes(account.threshold_bytes)
@@ -489,6 +499,8 @@ export default function FupMonitorPage() {
               </table>
             </div>
           )}
+
+          <TablePagination {...paginationProps} loading={loading} noun="account" />
         </div>
       </div>
     </div>

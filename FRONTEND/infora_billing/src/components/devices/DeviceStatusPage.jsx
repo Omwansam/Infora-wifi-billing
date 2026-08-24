@@ -17,6 +17,8 @@ import deviceService from '../../services/deviceService';
 import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
 import DevicesLayout from './DevicesLayout';
 import DeviceStatusBadge from './DeviceStatusBadge';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -68,6 +70,13 @@ export default function DeviceStatusPage() {
       }),
     [devices, searchTerm, statusFilter]
   );
+
+  const { pageItems, paginationProps } = useClientPagination(filtered, {
+    storageKey: 'device-status',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, statusFilter],
+    filteredFrom: devices.length,
+  });
 
   const summary = useMemo(
     () => ({
@@ -227,7 +236,7 @@ export default function DeviceStatusPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((device) => (
+                {pageItems.map((device) => (
                   <tr key={device.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                     <td className="px-5 py-4">
                       <div className="font-semibold text-slate-900">{device.name}</div>
@@ -274,6 +283,8 @@ export default function DeviceStatusPage() {
             </table>
           </div>
         )}
+
+        <TablePagination {...paginationProps} loading={loading} noun="device" />
       </div>
     </DevicesLayout>
   );

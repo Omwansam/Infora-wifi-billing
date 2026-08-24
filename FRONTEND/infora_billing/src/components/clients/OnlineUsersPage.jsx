@@ -21,6 +21,8 @@ import { customerService } from '../../services/customerService';
 import { formatBytes, formatDuration } from '../../lib/networkUtils';
 import { customerInitials } from '../../lib/billingFormatters';
 import { formatDateTime } from '../../lib/utils';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 import toast from 'react-hot-toast';
 
 const REFRESH_SECONDS = 30;
@@ -130,6 +132,15 @@ export default function OnlineUsersPage() {
     const t = setTimeout(() => setSearch(searchInput.trim()), searchInput ? 350 : 0);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  // The API answers with every live session at once, so the page is sliced
+  // here. It deliberately does not reset on the 30s refresh — only on a filter
+  // change — or the operator would be thrown back to page 1 twice a minute.
+  const { pageItems, paginationProps } = useClientPagination(sessions, {
+    storageKey: 'online-users',
+    defaultPageSize: 25,
+    resetOn: [typeTab, search, routerId],
+  });
 
   // Kick just this live session (account stays active — they can reconnect).
   const handleKick = async (session) => {
@@ -399,7 +410,7 @@ export default function OnlineUsersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sessions.map((session) => {
+                  {pageItems.map((session) => {
                     const displayName = session.customer_name || session.username;
                     const isHotspot = session.connection_type === 'hotspot';
                     const avatarClass = isHotspot
@@ -505,20 +516,17 @@ export default function OnlineUsersPage() {
             </div>
           )}
 
+          <TablePagination
+            {...paginationProps}
+            loading={loading}
+            noun="open session"
+            nounPlural="open sessions"
+          />
+
           {!loading && (
-            <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/60 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
-              <span>
-                {sessions.length > 0 ? (
-                  <>
-                    <strong className="font-semibold text-slate-700">{sessions.length}</strong> open{' '}
-                    {sessions.length === 1 ? 'session' : 'sessions'}
-                    {typeTab !== 'all' && ` · ${TYPE_FILTERS.find((t) => t.key === typeTab)?.label} only`}
-                  </>
-                ) : (
-                  'No open sessions'
-                )}
-              </span>
-              <span>FreeRADIUS radacct · refreshes every 30s</span>
+            <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-2 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400">
+              FreeRADIUS radacct · refreshes every 30s
+              {typeTab !== 'all' && ` · ${TYPE_FILTERS.find((t) => t.key === typeTab)?.label} only`}
             </div>
           )}
         </motion.div>

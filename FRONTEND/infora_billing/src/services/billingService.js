@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { toQueryString } from '../lib/queryString';
 
 class BillingService {
   constructor() {
@@ -8,7 +9,7 @@ class BillingService {
   // Billing Subscriptions
   async getSubscriptions(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${this.baseURL}?${queryParams}` : this.baseURL;
       
       const response = await fetch(url, {
@@ -109,7 +110,7 @@ class BillingService {
   // Billing Payments
   async getPayments(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${API_ENDPOINTS.BILLING_PAYMENTS}?${queryParams}` : API_ENDPOINTS.BILLING_PAYMENTS;
       
       const response = await fetch(url, {
@@ -211,7 +212,7 @@ class BillingService {
   // Billing Transactions
   async getTransactions(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${API_ENDPOINTS.BILLING_TRANSACTIONS}?${queryParams}` : API_ENDPOINTS.BILLING_TRANSACTIONS;
       
       const response = await fetch(url, {
@@ -253,7 +254,7 @@ class BillingService {
   // Billing Reports
   async getBillingReports(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${API_ENDPOINTS.BILLING_REPORTS}?${queryParams}` : API_ENDPOINTS.BILLING_REPORTS;
       
       const response = await fetch(url, {
@@ -315,7 +316,7 @@ class BillingService {
   // Billing Vouchers
   async getVouchers(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${API_ENDPOINTS.BILLING_VOUCHERS}?${queryParams}` : API_ENDPOINTS.BILLING_VOUCHERS;
       
       const response = await fetch(url, {
@@ -436,7 +437,7 @@ class BillingService {
   // Billing Statistics
   async getBillingStats(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${this.baseURL}/stats?${queryParams}` : `${this.baseURL}/stats`;
       
       const response = await fetch(url, {

@@ -14,6 +14,8 @@ import {
 import { importService } from '../../services/importService';
 import RouterProfileCard from './RouterProfileCard';
 import RunStatusPill from './RunStatusPill';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 const ANCHORS = [
   {
@@ -55,11 +57,18 @@ export default function ImportRunDetail() {
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [progress, setProgress] = useState(null);
+  // How many rows the commit will actually create. It has to come from the
+  // server: the table only holds the page in front of you.
+  const [newCount, setNewCount] = useState(0);
+
+  const pager = useServerPagination({ storageKey: 'import-candidates', defaultPageSize: 50 });
+  const { page, pageSize, setTotals } = pager;
 
   const load = useCallback(async () => {
-    const [runResponse, candidateResponse] = await Promise.all([
+    const [runResponse, candidateResponse, newResponse] = await Promise.all([
       importService.getRun(runId),
-      importService.getCandidates(runId, { perPage: 200 }),
+      importService.getCandidates(runId, { page, perPage: pageSize }),
+      importService.getCandidates(runId, { status: 'new', perPage: 1 }),
     ]);
 
     if (runResponse.success) {
@@ -72,9 +81,13 @@ export default function ImportRunDetail() {
     }
     if (candidateResponse.success) {
       setCandidates(candidateResponse.data.candidates || []);
+      setTotals(candidateResponse.data);
+    }
+    if (newResponse.success) {
+      setNewCount(newResponse.data.total || 0);
     }
     setLoading(false);
-  }, [runId]);
+  }, [runId, page, pageSize, setTotals]);
 
   useEffect(() => {
     load();
@@ -499,6 +512,8 @@ export default function ImportRunDetail() {
             </table>
           </div>
 
+          <TablePagination {...pager.paginationProps} loading={loading} noun="row" />
+
           {!committed && (
             <div className="mt-6 flex justify-end gap-3">
               {expiry?.blocking && (
@@ -518,7 +533,7 @@ export default function ImportRunDetail() {
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                {progress || `Import ${candidates.filter((c) => c.status === 'new').length} clients`}
+                {progress || `Import ${newCount} clients`}
               </button>
             </div>
           )}

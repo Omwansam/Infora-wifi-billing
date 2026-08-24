@@ -7,6 +7,8 @@ import {
 import { getAccessToken } from '../../../utils/authToken';
 import settingsService from '../../../services/settingsService';
 import { Card, Field, TextInput, Toggle, PrimaryButton, SaveBar, LoadingBlock } from '../ui';
+import TablePagination from '../../ui/TablePagination';
+import { useClientPagination } from '../../../hooks/usePagination';
 
 export default function RadiusSettings() {
   const [loading, setLoading] = useState(true);
@@ -24,6 +26,7 @@ export default function RadiusSettings() {
   const [accounting, setAccounting] = useState({ interim: true, coa: true, dataUsage: true });
 
   const [nasClients, setNasClients] = useState([]);
+  const nasPager = useClientPagination(nasClients, { storageKey: 'radius-nas', defaultPageSize: 10 });
   const [newNas, setNewNas] = useState({ name: '', ip: '', secret: '' });
 
   useEffect(() => {
@@ -255,7 +258,7 @@ export default function RadiusSettings() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {nasClients.map((n) => (
+                {nasPager.pageItems.map((n) => (
                   <tr key={n.id}>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2">
@@ -280,6 +283,8 @@ export default function RadiusSettings() {
                 ))}
               </tbody>
             </table>
+
+            <TablePagination {...nasPager.paginationProps} noun="NAS client" nounPlural="NAS clients" divider={false} className="px-0" />
           </div>
         )}
 

@@ -18,6 +18,8 @@ import {
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
 import { getAccessToken } from '../../utils/authToken';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 export default function VouchersPage() {
   const [vouchers, setVouchers] = useState([]);
@@ -52,6 +54,15 @@ export default function VouchersPage() {
     const matchesStatus = statusFilter === 'all' || voucher.status === statusFilter;
     const matchesType = typeFilter === 'all' || voucher.type === typeFilter;
     return matchesSearch && matchesStatus && matchesType;
+  });
+
+  // Status and type filters run in the browser over the fetched batch, so the
+  // page is sliced here rather than requested.
+  const { pageItems, paginationProps } = useClientPagination(filteredVouchers, {
+    storageKey: 'vouchers',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, statusFilter, typeFilter],
+    filteredFrom: vouchers.length,
   });
 
   const getStatusBadge = (status) => {
@@ -254,7 +265,7 @@ export default function VouchersPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredVouchers.map((voucher) => (
+                {pageItems.map((voucher) => (
                   <tr key={voucher.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center space-x-2">
@@ -306,38 +317,8 @@ export default function VouchersPage() {
               </tbody>
             </table>
           </div>
-        </motion.div>
 
-        {/* Pagination */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.4 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-4 mt-6"
-        >
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-700">
-              Showing <span className="font-medium">1</span> to <span className="font-medium">{filteredVouchers.length}</span> of{' '}
-              <span className="font-medium">{vouchers.length}</span> results
-            </div>
-            <div className="flex items-center space-x-2">
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                Previous
-              </button>
-              <button className="px-3 py-2 border border-blue-500 rounded-lg text-sm font-medium text-blue-600 bg-blue-50">
-                1
-              </button>
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                2
-              </button>
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                3
-              </button>
-              <button className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                Next
-              </button>
-            </div>
-          </div>
+          <TablePagination {...paginationProps} loading={loading} noun="voucher" />
         </motion.div>
       </div>
     </div>

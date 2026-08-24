@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { toQueryString } from '../lib/queryString';
 
 class EAPService {
   constructor() {
@@ -307,7 +308,7 @@ class EAPService {
   // EAP Profile Logs
   async getEAPProfileLogs(token, profileId, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams 
         ? `${this.baseURL}/${profileId}/logs?${queryParams}` 
         : `${this.baseURL}/${profileId}/logs`;

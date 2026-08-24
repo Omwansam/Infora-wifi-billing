@@ -6,6 +6,8 @@ import {
 import toast from 'react-hot-toast';
 import { userService } from '../../services/userService';
 import { useAuth } from '../../contexts/AuthContext';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const ROLES = [
   { value: 'admin', label: 'Admin' },
@@ -169,6 +171,15 @@ export default function SystemUsersPage() {
     });
   }, [users, search, roleFilter]);
 
+  // The whole staff list arrives in one call, so the page is sliced here rather
+  // than refetched.
+  const { pageItems, paginationProps } = useClientPagination(filtered, {
+    storageKey: 'system-users',
+    defaultPageSize: 25,
+    resetOn: [search, roleFilter],
+    filteredFrom: users.length,
+  });
+
   const isSelf = (u) => String(u.id) === String(currentUser?.id);
 
   const toggleActive = async (u) => {
@@ -235,7 +246,7 @@ export default function SystemUsersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {filtered.map((u) => (
+                  {pageItems.map((u) => (
                     <tr key={u.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
@@ -266,6 +277,8 @@ export default function SystemUsersPage() {
               </table>
             </div>
           )}
+
+          <TablePagination {...paginationProps} loading={loading} noun="user" />
         </div>
       </div>
       <UserModal open={modalOpen} onClose={() => setModalOpen(false)} onSaved={load} editing={editing} />

@@ -24,6 +24,8 @@ import {
 import { formatCurrency } from '../../lib/utils';
 import { useConfirm } from '../../contexts/ConfirmContext';
 import PackageTableRow from './PackageTableRow';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 const TYPE_TABS = [
   { key: 'all', label: 'All Packages', icon: Layers },
@@ -51,11 +53,19 @@ export default function ServicePlansPage() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
 
+  const pager = useServerPagination({
+    storageKey: 'plans',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, typeFilter, statusFilter],
+  });
+  const { page, pageSize, setTotals } = pager;
+
   const loadPlans = useCallback(async () => {
     try {
       setLoading(true);
       const params = {
-        per_page: 50,
+        page,
+        per_page: pageSize,
         search: searchTerm || undefined,
         plan_type: typeFilter !== 'all' ? typeFilter : undefined,
         is_active: statusFilter === 'active' ? true : statusFilter === 'inactive' ? false : undefined,
@@ -69,13 +79,14 @@ export default function ServicePlansPage() {
         return;
       }
       setPlans(response.data.plans || []);
+      setTotals(response.data);
     } catch (error) {
       toast.error(error?.message || 'Failed to load packages');
       setPlans([]);
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, typeFilter, statusFilter]);
+  }, [searchTerm, typeFilter, statusFilter, page, pageSize, setTotals]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -327,12 +338,7 @@ export default function ServicePlansPage() {
             </table>
           </div>
 
-          {!loading && plans.length > 0 && (
-            <div className="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
-              {plans.length} package{plans.length !== 1 ? 's' : ''}
-              {typeFilter !== 'all' ? ` · ${typeFilter}` : ''}
-            </div>
-          )}
+          <TablePagination {...pager.paginationProps} loading={loading} noun="package" />
         </motion.div>
       </div>
     </div>

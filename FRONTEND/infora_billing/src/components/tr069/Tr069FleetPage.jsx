@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   Activity, CheckCircle2, Clock, Cpu, Inbox, LayoutGrid, Link2Off, Loader2, Plus,
-  RefreshCw, List, Search, ShieldQuestion, Trash2, Users, Wifi, X,
+  RefreshCw, List, Search, ShieldQuestion, Trash2, Wifi, X,
 } from 'lucide-react';
 
 import Tr069Layout from './Tr069Layout';
@@ -13,6 +13,8 @@ import { LiveDot, OpticalMeter, formatUptime, relativeTime } from './tr069Meta';
 import cpeService from '../../services/cpeService';
 import { getAccessToken } from '../../utils/authToken';
 import { useConfirm } from '../../contexts/ConfirmContext';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 /**
  * Segments are filters, not statuses — "optical issues" cuts across active and
@@ -238,6 +240,15 @@ export default function Tr069FleetPage() {
       .slice()
       .sort(SORTS[sort].compare);
   }, [devices, segment, search, sort]);
+
+  // One pager drives both the grid and the list, so switching view keeps the
+  // operator on the same slice of the fleet.
+  const { pageItems, paginationProps } = useClientPagination(visible, {
+    storageKey: 'tr069-fleet',
+    defaultPageSize: 25,
+    resetOn: [segment, search, sort],
+    filteredFrom: devices.length,
+  });
 
   const pending = useMemo(() => devices.filter((d) => d.status === 'pending'), [devices]);
 
@@ -471,7 +482,7 @@ export default function Tr069FleetPage() {
             </div>
           ) : view === 'grid' ? (
             <motion.div layout className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {visible.map((device) => (
+              {pageItems.map((device) => (
                 <DeviceCard
                   key={device.id}
                   device={device}
@@ -496,7 +507,7 @@ export default function Tr069FleetPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {visible.map((device) => (
+                  {pageItems.map((device) => (
                     <DeviceRow
                       key={device.id}
                       device={device}
@@ -510,12 +521,9 @@ export default function Tr069FleetPage() {
             </div>
           )}
 
-          {!loading && visible.length > 0 && (
-            <p className="flex items-center gap-1.5 text-xs text-slate-400">
-              <Users className="h-3.5 w-3.5" />
-              Showing {visible.length} of {devices.length} devices
-            </p>
-          )}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <TablePagination {...paginationProps} loading={loading} noun="device" divider={false} />
+          </div>
         </div>
       </div>
 

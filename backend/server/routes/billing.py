@@ -757,8 +757,17 @@ def list_subscriptions():
         )
 
         subscriptions = [_serialize_subscription(c) for c in results.items]
-        active = sum(1 for s in subscriptions if s['status'] == 'active')
-        mrr = sum(s['monthlyAmount'] for s in subscriptions if s['status'] == 'active')
+
+        # Count and total over everything the filter matched, not over the page
+        # that happens to be on screen — otherwise MRR shrinks as soon as the
+        # operator turns the page size down.
+        active_query = query.filter(Customer.status == CustomerStatus.ACTIVE)
+        active = active_query.count()
+        mrr = float(
+            active_query.join(ServicePlan, Customer.service_plan_id == ServicePlan.id)
+            .with_entities(db.func.coalesce(db.func.sum(ServicePlan.price), 0))
+            .scalar() or 0
+        )
 
         return jsonify({
             'ok': True,

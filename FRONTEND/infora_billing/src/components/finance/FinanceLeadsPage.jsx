@@ -16,6 +16,8 @@ import { formatCurrency, formatDate } from '../../lib/utils';
 import { customerInitials } from '../../lib/billingFormatters';
 import PaymentStatusBadge from '../billing/PaymentStatusBadge';
 import { getFinanceLeads } from '../../services/financeService';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 export default function FinanceLeadsPage() {
   const navigate = useNavigate();
@@ -41,6 +43,12 @@ export default function FinanceLeadsPage() {
       setLoading(false);
     }
   }, [searchTerm]);
+
+  const { pageItems, paginationProps } = useClientPagination(leads, {
+    storageKey: 'finance-leads',
+    defaultPageSize: 25,
+    resetOn: [searchTerm],
+  });
 
   useEffect(() => {
     const timer = setTimeout(loadLeads, searchTerm ? 300 : 0);
@@ -157,7 +165,7 @@ export default function FinanceLeadsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {leads.map((lead) => (
+                  {pageItems.map((lead) => (
                     <tr key={lead.id} className="hover:bg-slate-50/80">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -200,6 +208,8 @@ export default function FinanceLeadsPage() {
               </table>
             </div>
           )}
+
+          <TablePagination {...paginationProps} loading={loading} noun="lead" />
         </div>
       </div>
     </div>

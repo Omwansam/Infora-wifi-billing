@@ -31,6 +31,8 @@ import {
   verifyKycDocument,
 } from '../../services/kycService';
 import KycStatusBadge from './KycStatusBadge';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -61,6 +63,13 @@ export default function CustomerKycPage() {
   const [reviewNotes, setReviewNotes] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
+  const pager = useServerPagination({
+    storageKey: 'kyc',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, statusFilter],
+  });
+  const { page, pageSize, setTotals } = pager;
+
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
@@ -68,11 +77,15 @@ export default function CustomerKycPage() {
         getKycRecords({
           search: searchTerm || undefined,
           status: statusFilter !== 'all' ? statusFilter : undefined,
-          per_page: 50,
+          page,
+          per_page: pageSize,
         }),
         getKycStats(),
       ]);
-      if (recordsRes.success) setRecords(recordsRes.data.records || []);
+      if (recordsRes.success) {
+        setRecords(recordsRes.data.records || []);
+        setTotals(recordsRes.data);
+      }
       if (statsRes.success) setStats(statsRes.data || {});
     } catch {
       toast.error('Failed to load KYC records');
@@ -80,7 +93,7 @@ export default function CustomerKycPage() {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, statusFilter]);
+  }, [searchTerm, statusFilter, page, pageSize, setTotals]);
 
   useEffect(() => {
     const timer = setTimeout(loadData, searchTerm ? 300 : 0);
@@ -322,6 +335,8 @@ export default function CustomerKycPage() {
               </table>
             </div>
           )}
+
+          <TablePagination {...pager.paginationProps} loading={loading} noun="KYC record" nounPlural="KYC records" />
         </div>
 
         <AnimatePresence>

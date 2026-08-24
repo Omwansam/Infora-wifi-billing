@@ -8,6 +8,8 @@ import FiberLayout from './FiberLayout';
 import { NODE_KINDS, NODE_STATUS, nodeMeta } from './fiberMeta';
 import fiberService from '../../services/fiberService';
 import { useConfirm } from '../../contexts/ConfirmContext';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const inputCls = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/25 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
 const labelCls = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500';
@@ -153,6 +155,13 @@ export default function FiberNodesPage() {
       .filter((n) => !needle || `${n.name} ${n.code || ''} ${n.address || ''}`.toLowerCase().includes(needle));
   }, [nodes, kind, search]);
 
+  const { pageItems, paginationProps } = useClientPagination(visible, {
+    storageKey: 'fiber-nodes',
+    defaultPageSize: 25,
+    resetOn: [kind, search],
+    filteredFrom: nodes.length,
+  });
+
   const remove = async (node) => {
     const ok = await confirm({
       title: `Delete ${node.name}?`,
@@ -217,7 +226,8 @@ export default function FiberNodesPage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-800/50">
               <tr>
@@ -228,7 +238,7 @@ export default function FiberNodesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {visible.map((node) => {
+              {pageItems.map((node) => {
                 const meta = nodeMeta(node.kind);
                 const parent = node.parent_id ? byId[node.parent_id] : null;
                 return (
@@ -269,6 +279,9 @@ export default function FiberNodesPage() {
               })}
             </tbody>
           </table>
+          </div>
+
+          <TablePagination {...paginationProps} loading={loading} noun="node" />
         </div>
       )}
 

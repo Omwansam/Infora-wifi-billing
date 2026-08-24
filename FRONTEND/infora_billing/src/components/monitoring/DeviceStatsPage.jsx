@@ -5,6 +5,8 @@ import { Server, Loader2, RefreshCw, Cpu, MemoryStick, Wifi, WifiOff, ExternalLi
 import toast from 'react-hot-toast';
 import { getReport } from '../../services/reportsService';
 import { formatBytes } from '../../lib/networkUtils';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const REFRESH_SECONDS = 30;
 
@@ -49,6 +51,12 @@ export default function DeviceStatsPage() {
 
   const { kpis, devices } = data;
 
+  // Refreshes on a timer, so the pager holds its page across reloads.
+  const { pageItems, paginationProps } = useClientPagination(devices, {
+    storageKey: 'device-stats',
+    defaultPageSize: 25,
+  });
+
   return (
     <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
       <div className="mx-auto max-w-6xl">
@@ -82,7 +90,7 @@ export default function DeviceStatsPage() {
                   <tr><th className="px-4 py-3">Device</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">CPU</th><th className="px-4 py-3">Memory</th><th className="px-4 py-3">Last synced</th><th className="px-4 py-3 text-right"></th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {devices.map((d) => {
+                  {pageItems.map((d) => {
                     const mp = memPct(d);
                     const online = d.status === 'online';
                     return (
@@ -104,6 +112,8 @@ export default function DeviceStatsPage() {
               </table>
             </div>
           )}
+
+          <TablePagination {...paginationProps} loading={loading} noun="device" />
         </div>
       </div>
     </div>

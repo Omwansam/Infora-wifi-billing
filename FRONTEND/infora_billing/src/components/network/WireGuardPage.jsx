@@ -11,6 +11,8 @@ import wireguardService from '../../services/wireguardService';
 import { useConfirm } from '../../contexts/ConfirmContext';
 import NetworkLayout from './NetworkLayout';
 import ActiveBadge from './ActiveBadge';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const SERVER_FORM = {
   name: '',
@@ -83,6 +85,18 @@ export default function WireGuardPage() {
     () => servers.filter((s) => s.name?.toLowerCase().includes(searchTerm.toLowerCase())),
     [servers, searchTerm],
   );
+
+  const serverPager = useClientPagination(filteredServers, {
+    storageKey: 'wireguard-servers',
+    defaultPageSize: 25,
+    resetOn: [searchTerm],
+    filteredFrom: servers.length,
+  });
+  const peerPager = useClientPagination(peers, {
+    storageKey: 'wireguard-peers',
+    defaultPageSize: 25,
+    resetOn: [selectedServer],
+  });
 
   const stats = useMemo(() => ({
     servers: servers.length,
@@ -201,7 +215,7 @@ export default function WireGuardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredServers.map((s) => (
+              {serverPager.pageItems.map((s) => (
                 <tr key={s.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{s.name}</td>
                   <td className="px-4 py-3 text-sm text-slate-600">{s.endpoint}:{s.port}</td>
@@ -254,6 +268,8 @@ export default function WireGuardPage() {
           {!loading && filteredServers.length === 0 && (
             <p className="p-8 text-center text-slate-500">No WireGuard servers — create one per ISP.</p>
           )}
+
+          <TablePagination {...serverPager.paginationProps} loading={loading} noun="server" />
         </div>
       )}
 
@@ -280,7 +296,7 @@ export default function WireGuardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {peers.map((p) => (
+                {peerPager.pageItems.map((p) => (
                   <tr key={p.id}>
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-900">{p.customer_name}</p>
@@ -326,6 +342,8 @@ export default function WireGuardPage() {
             {selectedServer && peers.length === 0 && (
               <p className="p-8 text-center text-slate-500">No peers on this server. Provision from customer detail.</p>
             )}
+
+            <TablePagination {...peerPager.paginationProps} loading={loading} noun="peer" />
           </div>
         </div>
       )}

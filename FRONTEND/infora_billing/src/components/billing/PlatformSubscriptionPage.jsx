@@ -9,6 +9,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useSubscription } from '../../contexts/SubscriptionContext';
 import platformSubscriptionService from '../../services/platformSubscriptionService';
 import { BRAND } from '../../lib/brand';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const STATUS_TONE = {
   paid: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
@@ -155,6 +157,10 @@ export default function PlatformSubscriptionPage() {
 
   const subscription = data?.subscription;
   const invoices = data?.invoices || [];
+  const invoicePager = useClientPagination(invoices, {
+    storageKey: 'platform-invoices',
+    defaultPageSize: 25,
+  });
   const currency = subscription?.currency || 'KES';
   const canPay = Boolean(data?.can_pay);
   const platformName = subscription?.platform_name || BRAND.companyName;
@@ -333,7 +339,7 @@ export default function PlatformSubscriptionPage() {
                             No invoices yet.
                           </td>
                         </tr>
-                      ) : invoices.map((invoice) => (
+                      ) : invoicePager.pageItems.map((invoice) => (
                         <tr key={invoice.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
                           <td className="px-5 py-4 font-mono text-[13px] font-medium text-slate-900 dark:text-white">
                             {invoice.number}
@@ -387,11 +393,7 @@ export default function PlatformSubscriptionPage() {
                     </tbody>
                   </table>
                 </div>
-                {invoices.length > 0 && (
-                  <div className="border-t border-slate-100 py-3.5 text-center text-sm text-slate-400 dark:border-slate-800">
-                    {invoices.length} invoice{invoices.length === 1 ? '' : 's'}
-                  </div>
-                )}
+                <TablePagination {...invoicePager.paginationProps} noun="invoice" />
               </div>
             </motion.section>
 

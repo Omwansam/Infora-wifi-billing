@@ -25,6 +25,8 @@ import { formatDate } from '../../lib/utils';
 import { customerInitials } from '../../lib/billingFormatters';
 import { clientSpeedLabel, isClientConnected } from '../../lib/clientUtils';
 import ClientConnectionBadge from './ClientConnectionBadge';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 import toast from 'react-hot-toast';
 
 const TYPE_TABS = [
@@ -90,8 +92,14 @@ export default function ClientsPage() {
   // True once the operator escalates from "the rows on this page" to "every
   // subscriber matching the current filter", which may exceed what is loaded.
   const [selectAllMatching, setSelectAllMatching] = useState(false);
-  const [totalMatching, setTotalMatching] = useState(0);
   const [bulkBusy, setBulkBusy] = useState(false);
+
+  const pager = useServerPagination({
+    storageKey: 'clients',
+    defaultPageSize: 25,
+    resetOn: [search, connectionType, statusFilter],
+  });
+  const { page, pageSize, setTotals, total: totalMatching } = pager;
 
   const loadStats = useCallback(async () => {
     try {
@@ -106,14 +114,15 @@ export default function ClientsPage() {
     try {
       setLoading(true);
       const result = await customerService.getCustomers({
-        per_page: 50,
+        page,
+        per_page: pageSize,
         search: search || undefined,
         ...(connectionType !== 'all' ? { connection_type: connectionType } : {}),
         status: statusFilter === 'connected' ? 'active' : statusFilter === 'offline' ? 'suspended' : statusFilter !== 'all' ? statusFilter : undefined,
       });
       if (result.success) {
         setClients(result.data.customers || []);
-        setTotalMatching(result.data.total ?? (result.data.customers || []).length);
+        setTotals(result.data);
       } else {
         toast.error(result.error || 'Failed to load clients');
       }
@@ -122,13 +131,15 @@ export default function ClientsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, connectionType, statusFilter]);
+  }, [search, connectionType, statusFilter, page, pageSize, setTotals]);
 
-  // Any change to what is being shown invalidates the selection.
+  // Any change to what is being shown invalidates the selection — a new page
+  // of rows included, since ids selected on page 1 are no longer on screen to
+  // be unticked.
   useEffect(() => {
     setSelectedIds(new Set());
     setSelectAllMatching(false);
-  }, [search, connectionType, statusFilter]);
+  }, [search, connectionType, statusFilter, page, pageSize]);
 
   useEffect(() => {
     const q = searchParams.get('search') || '';
@@ -159,6 +170,9 @@ export default function ClientsPage() {
     return clients;
   }, [clients, statusFilter]);
 
+  // Page-local, and only ever a fallback: once the table is paginated the
+  // cards have to read from the account-wide stats or they would count the 25
+  // rows in front of you and call it the subscriber base.
   const connectedCount = clients.filter((c) => isClientConnected(c)).length;
 
   const statsCards = useMemo(() => {
@@ -175,7 +189,7 @@ export default function ClientsPage() {
     return [
       {
         title: isAll ? 'All Clients' : isPppoe ? 'PPPoE Clients' : 'Hotspot Clients',
-        value: loading ? '—' : (clients.length || totalType || 0),
+        value: loading ? '—' : (totalType ?? totalMatching ?? 0),
         subtitle: isAll
           ? `${stats.pppoe_clients || 0} PPPoE · ${stats.hotspot_clients || 0} hotspot`
           : `${stats.total_clients || 0} subscribers across all types`,
@@ -184,14 +198,18 @@ export default function ClientsPage() {
       },
       {
         title: 'Connected',
-        value: loading ? '—' : connectedCount || activeType || 0,
+        value: loading ? '—' : (activeType ?? connectedCount),
         subtitle: 'Active RADIUS / internet access',
         icon: Signal,
         accent: 'from-emerald-500 to-teal-600',
       },
       {
         title: 'Offline',
-        value: loading ? '—' : Math.max(0, clients.length - connectedCount),
+        value: loading
+          ? '—'
+          : (totalType != null && activeType != null
+            ? Math.max(0, totalType - activeType)
+            : Math.max(0, clients.length - connectedCount)),
         subtitle: `${stats.suspended_customers || 0} suspended total`,
         icon: Unplug,
         accent: 'from-slate-500 to-slate-700',
@@ -204,7 +222,7 @@ export default function ClientsPage() {
         accent: 'from-violet-500 to-purple-600',
       },
     ];
-  }, [isAll, isPppoe, stats, clients.length, connectedCount, loading]);
+  }, [isAll, isPppoe, stats, clients.length, connectedCount, totalMatching, loading]);
 
   const toggleConnection = async (client, e) => {
     e?.stopPropagation();
@@ -746,12 +764,12 @@ export default function ClientsPage() {
             </table>
           </div>
 
-          {!loading && filteredClients.length > 0 && (
-            <div className="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
-              Showing {filteredClients.length} of {clients.length}{' '}
-              {isAll ? 'clients' : `${connectionType} clients`}
-            </div>
-          )}
+          <TablePagination
+            {...pager.paginationProps}
+            loading={loading}
+            noun={isAll ? 'client' : `${connectionType} client`}
+            nounPlural={isAll ? 'clients' : `${connectionType} clients`}
+          />
         </motion.div>
       </div>
     </div>

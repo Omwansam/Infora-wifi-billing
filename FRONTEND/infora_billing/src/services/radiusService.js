@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
+import { toQueryString } from '../lib/queryString';
 
 class RadiusService {
   constructor() {
@@ -87,7 +88,7 @@ class RadiusService {
   // RADIUS Users
   async getRadiusUsers(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${API_ENDPOINTS.RADIUS_USERS}?${queryParams}` : API_ENDPOINTS.RADIUS_USERS;
       
       const response = await fetch(url, {
@@ -209,7 +210,7 @@ class RadiusService {
   // RADIUS Accounting
   async getRadiusAccounting(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams ? `${API_ENDPOINTS.RADIUS_ACCOUNTING}?${queryParams}` : API_ENDPOINTS.RADIUS_ACCOUNTING;
       
       const response = await fetch(url, {
@@ -291,7 +292,7 @@ class RadiusService {
 
   async getRadiusSessions(token, params = {}) {
     try {
-      const queryParams = new URLSearchParams(params).toString();
+      const queryParams = toQueryString(params);
       const url = queryParams
         ? `${API_ENDPOINTS.RADIUS_ROUTES}/sessions?${queryParams}`
         : `${API_ENDPOINTS.RADIUS_ROUTES}/sessions`;

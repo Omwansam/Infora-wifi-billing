@@ -1,5 +1,6 @@
 import { API_ENDPOINTS, getAuthHeaders } from '../config/api';
 import { getAccessToken } from '../utils/authToken';
+import { toQueryString } from '../lib/queryString';
 
 async function request(path = '', options = {}) {
   const token = getAccessToken();
@@ -17,7 +18,7 @@ async function request(path = '', options = {}) {
 
 export const ticketService = {
   getTickets: (params = {}) => {
-    const query = new URLSearchParams(params).toString();
+    const query = toQueryString(params);
     return request(query ? `?${query}` : '');
   },
   getTicket: (ticketId) => request(`/${ticketId}`),

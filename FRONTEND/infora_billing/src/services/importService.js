@@ -1,6 +1,7 @@
 import { API_ENDPOINTS } from '../config/api';
 import { authenticatedApiCall } from '../utils/api';
 import { getAccessToken } from '../utils/authToken';
+import { toQueryString } from '../lib/queryString';
 
 /**
  * Router-scan import & live-system takeover.
@@ -11,8 +12,10 @@ import { getAccessToken } from '../utils/authToken';
  */
 export const importService = {
   /** Every run this ISP has ever made, newest first. */
-  async listRuns() {
-    return authenticatedApiCall(API_ENDPOINTS.IMPORT_RUNS, getAccessToken());
+  async listRuns(params = {}) {
+    const query = toQueryString(params);
+    const url = query ? `${API_ENDPOINTS.IMPORT_RUNS}?${query}` : API_ENDPOINTS.IMPORT_RUNS;
+    return authenticatedApiCall(url, getAccessToken());
   },
 
   /** One run: fingerprint, package drafts, existing packages to map onto. */

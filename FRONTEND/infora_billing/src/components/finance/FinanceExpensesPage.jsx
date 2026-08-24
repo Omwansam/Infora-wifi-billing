@@ -16,6 +16,8 @@ import {
   formatExpenseCategory,
   getFinanceExpenses,
 } from '../../services/financeService';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const EXPENSE_CATEGORIES = [
   'operating_expense',
@@ -59,6 +61,12 @@ export default function FinanceExpensesPage() {
       setLoading(false);
     }
   }, [categoryFilter]);
+
+  const { pageItems, paginationProps } = useClientPagination(expenses, {
+    storageKey: 'finance-expenses',
+    defaultPageSize: 25,
+    resetOn: [categoryFilter],
+  });
 
   useEffect(() => {
     loadExpenses();
@@ -222,7 +230,7 @@ export default function FinanceExpensesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {expenses.map((expense) => (
+                  {pageItems.map((expense) => (
                     <tr key={expense.id} className="hover:bg-slate-50/80">
                       <td className="px-6 py-4 text-sm text-slate-700">
                         {expense.date ? formatDate(expense.date) : '—'}
@@ -241,6 +249,8 @@ export default function FinanceExpensesPage() {
               </table>
             </div>
           )}
+
+          <TablePagination {...paginationProps} loading={loading} noun="expense" />
         </div>
 
         <AnimatePresence>

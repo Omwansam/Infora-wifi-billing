@@ -22,6 +22,8 @@ import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
 import { getAccessToken } from '../../utils/authToken';
 import PaymentStatusBadge from './PaymentStatusBadge';
 import MpesaPayModal from './MpesaPayModal';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const STATUS_TABS = [
   { value: 'all', label: 'All' },
@@ -85,6 +87,16 @@ export default function PaymentsPage() {
       );
     });
   }, [payments, searchTerm]);
+
+  // The search runs in the browser over the batch that was fetched, so the page
+  // is sliced here too — paging on the server would only ever search the rows
+  // already on screen.
+  const { pageItems, paginationProps } = useClientPagination(filteredPayments, {
+    storageKey: 'payments',
+    defaultPageSize: 25,
+    resetOn: [searchTerm, statusFilter],
+    filteredFrom: payments.length,
+  });
 
   const totalCollected = payments
     .filter((p) => p.status === 'completed')
@@ -249,7 +261,7 @@ export default function PaymentsPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredPayments.map((payment) => (
+                  pageItems.map((payment) => (
                     <tr
                       key={payment.id}
                       className="hover:bg-emerald-50/30 transition-colors cursor-pointer"
@@ -292,11 +304,7 @@ export default function PaymentsPage() {
             </table>
           </div>
 
-          {!loading && filteredPayments.length > 0 && (
-            <div className="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
-              Showing {filteredPayments.length} of {payments.length} payments
-            </div>
-          )}
+          <TablePagination {...paginationProps} loading={loading} noun="payment" />
         </motion.div>
       </div>
 

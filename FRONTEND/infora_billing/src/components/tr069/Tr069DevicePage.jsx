@@ -15,6 +15,8 @@ import {
 import cpeService from '../../services/cpeService';
 import { getAccessToken } from '../../utils/authToken';
 import { useConfirm } from '../../contexts/ConfirmContext';
+import TablePagination from '../ui/TablePagination';
+import { useClientPagination } from '../../hooks/usePagination';
 
 const TABS = [
   { key: 'overview', label: 'Overview', icon: Gauge },
@@ -172,6 +174,17 @@ export default function Tr069DevicePage() {
       .filter(([key, value]) => !needle || key.toLowerCase().includes(needle) || String(value).toLowerCase().includes(needle))
       .sort(([a], [b]) => a.localeCompare(b));
   }, [device, paramFilter]);
+
+  // Both pagers have to sit above the loading early-return below.
+  const sessionPager = useClientPagination(sessions, {
+    storageKey: 'tr069-sessions',
+    defaultPageSize: 25,
+  });
+  const paramPager = useClientPagination(parameters, {
+    storageKey: 'tr069-parameters',
+    defaultPageSize: 50,
+    resetOn: [paramFilter],
+  });
 
   const pendingTasks = tasks.filter((t) => ['queued', 'sent'].includes(t.status)).length;
 
@@ -472,7 +485,7 @@ export default function Tr069DevicePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {sessions.map((session) => (
+                    {sessionPager.pageItems.map((session) => (
                       <tr key={session.id}>
                         <td className="py-2 pr-4 text-slate-900 dark:text-white" title={absoluteTime(session.started_at)}>
                           {relativeTime(session.started_at)}
@@ -492,6 +505,8 @@ export default function Tr069DevicePage() {
                 </table>
               </div>
             )}
+
+            <TablePagination {...sessionPager.paginationProps} noun="session" divider={false} className="px-0" />
           </Card>
         )}
 
@@ -521,7 +536,7 @@ export default function Tr069DevicePage() {
               <div className="max-h-[28rem] overflow-auto rounded-xl border border-slate-100 dark:border-slate-800">
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {parameters.map(([key, value]) => (
+                    {paramPager.pageItems.map(([key, value]) => (
                       <tr key={key} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                         <td className="w-1/2 break-all px-3 py-2 font-mono text-slate-500">{key}</td>
                         <td className="break-all px-3 py-2 font-mono text-slate-900 dark:text-white">{String(value)}</td>
@@ -531,6 +546,8 @@ export default function Tr069DevicePage() {
                 </table>
               </div>
             )}
+
+            <TablePagination {...paramPager.paginationProps} noun="parameter" divider={false} className="px-0" />
           </Card>
         )}
       </motion.div>

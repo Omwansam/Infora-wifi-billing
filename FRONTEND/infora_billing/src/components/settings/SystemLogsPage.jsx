@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Search, Loader2, RefreshCw, ChevronLeft, ChevronRight, Info, AlertTriangle, XCircle } from 'lucide-react';
+import { FileText, Search, Loader2, RefreshCw, Info, AlertTriangle, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { logService } from '../../services/logService';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 const LEVELS = [
   { value: 'all', label: 'All levels' },
@@ -23,18 +25,17 @@ export default function SystemLogsPage() {
   const [level, setLevel] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  const [total, setTotal] = useState(0);
+
+  const pager = useServerPagination({ storageKey: 'system-logs', defaultPageSize: 25, resetOn: [level, search] });
+  const { page, pageSize, setTotals } = pager;
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const result = await logService.getLogs({ level, search: search || undefined, page, per_page: 25 });
+      const result = await logService.getLogs({ level, search: search || undefined, page, per_page: pageSize });
       if (result.success) {
         setLogs(result.data?.logs || []);
-        setPages(result.data?.pages || 1);
-        setTotal(result.data?.total || 0);
+        setTotals(result.data);
       } else {
         toast.error(result.error || 'Failed to load logs');
       }
@@ -43,11 +44,11 @@ export default function SystemLogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [level, search, page]);
+  }, [level, search, page, pageSize, setTotals]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const t = setTimeout(() => { setPage(1); setSearch(searchInput.trim()); }, searchInput ? 350 : 0);
+    const t = setTimeout(() => setSearch(searchInput.trim()), searchInput ? 350 : 0);
     return () => clearTimeout(t);
   }, [searchInput]);
 
@@ -72,7 +73,7 @@ export default function SystemLogsPage() {
           </div>
           <div className="flex gap-1">
             {LEVELS.map((l) => (
-              <button key={l.value} onClick={() => { setPage(1); setLevel(l.value); }} className={`rounded-lg px-3 py-2 text-sm font-medium ${level === l.value ? 'bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900' : 'bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>{l.label}</button>
+              <button key={l.value} onClick={() => setLevel(l.value)} className={`rounded-lg px-3 py-2 text-sm font-medium ${level === l.value ? 'bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900' : 'bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>{l.label}</button>
             ))}
           </div>
         </div>
@@ -106,15 +107,7 @@ export default function SystemLogsPage() {
               </table>
             </div>
           )}
-          {!loading && logs.length > 0 && (
-            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <span>{total} entr{total === 1 ? 'y' : 'ies'} · page {page} of {pages}</span>
-              <div className="flex gap-1">
-                <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-lg border border-slate-200 p-1.5 disabled:opacity-40 dark:border-slate-700"><ChevronLeft className="h-4 w-4" /></button>
-                <button disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))} className="rounded-lg border border-slate-200 p-1.5 disabled:opacity-40 dark:border-slate-700"><ChevronRight className="h-4 w-4" /></button>
-              </div>
-            </div>
-          )}
+          <TablePagination {...pager.paginationProps} loading={loading} noun="entry" nounPlural="entries" />
         </div>
       </div>
     </div>

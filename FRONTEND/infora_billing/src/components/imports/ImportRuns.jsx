@@ -5,19 +5,26 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 
 import { importService } from '../../services/importService';
 import RunStatusPill from './RunStatusPill';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 
 export default function ImportRuns() {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const pager = useServerPagination({ storageKey: 'import-runs', defaultPageSize: 25 });
+  const { page, pageSize, setTotals } = pager;
+
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     (async () => {
-      const response = await importService.listRuns();
+      const response = await importService.listRuns({ page, per_page: pageSize });
       if (cancelled) return;
       if (response.success) {
         setRuns(response.data?.runs || []);
+        setTotals(response.data);
         setError(null);
       } else {
         setError(response.error || 'Could not load import history');
@@ -27,7 +34,7 @@ export default function ImportRuns() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [page, pageSize, setTotals]);
 
   return (
     <div className="min-h-full bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
@@ -108,6 +115,8 @@ export default function ImportRuns() {
               </table>
             </div>
           )}
+
+          <TablePagination {...pager.paginationProps} loading={loading} noun="import run" nounPlural="import runs" />
         </section>
       </div>
     </div>

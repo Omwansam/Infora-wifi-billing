@@ -8,6 +8,8 @@ import { ticketService } from '../../services/ticketService';
 import { formatDate } from '../../lib/utils';
 import { StatusBadge, PriorityBadge, STATUS_META, PRIORITY_META, STATUS_OPTIONS, PRIORITY_OPTIONS } from './ticketMeta';
 import CreateTicketModal from './CreateTicketModal';
+import TablePagination from '../ui/TablePagination';
+import { useServerPagination } from '../../hooks/usePagination';
 import TicketDrawer from './TicketDrawer';
 
 function StatCard({ label, value, icon: Icon, tone }) {
@@ -45,17 +47,24 @@ export default function TicketsPage() {
     ticketService.getStats().then(setStats).catch(() => {});
   }, []);
 
+  const pager = useServerPagination({
+    storageKey: 'tickets',
+    defaultPageSize: 25,
+    resetOn: [search, status, priority],
+  });
+  const { page, pageSize, setTotals } = pager;
+
   const loadTickets = useCallback(() => {
     setLoading(true);
-    const params = { per_page: 100 };
+    const params = { page, per_page: pageSize };
     if (search.trim()) params.search = search.trim();
     if (status !== 'all') params.status = status;
     if (priority !== 'all') params.priority = priority;
     ticketService.getTickets(params)
-      .then((d) => setTickets(d.tickets || []))
+      .then((d) => { setTickets(d.tickets || []); setTotals(d); })
       .catch(() => setTickets([]))
       .finally(() => setLoading(false));
-  }, [search, status, priority]);
+  }, [search, status, priority, page, pageSize, setTotals]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => {
@@ -151,10 +160,9 @@ export default function TicketsPage() {
               ))}
             </ul>
           )}
+
+          <TablePagination {...pager.paginationProps} loading={loading} noun="ticket" />
         </div>
-        {!loading && tickets.length > 0 && (
-          <p className="mt-3 text-xs text-slate-400">Showing {tickets.length} ticket{tickets.length === 1 ? '' : 's'}.</p>
-        )}
       </div>
 
       {showCreate && <CreateTicketModal onClose={() => setShowCreate(false)} onCreated={refresh} />}
