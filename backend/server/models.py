@@ -1485,6 +1485,65 @@ class DeviceOutage(db.Model):
         return f"<DeviceOutage device={self.device_id} {self.started_at} -> {self.ended_at}>"
 
 
+class DeviceResourceSample(db.Model):
+    """One reading of a router's vitals, kept so the detail page can draw a trend.
+
+    The device row itself only ever holds the *latest* values, which answers
+    "how is it now" and nothing about "was it like this an hour ago". A router
+    that pins its CPU every evening at 8pm looks perfectly healthy in a
+    snapshot; it only shows up in a series.
+
+    Written by :mod:`services.device_resource_history` on every successful stat
+    sync, throttled so a burst of page loads cannot flood the table. Rows are
+    small and high-churn, so retention is enforced globally rather than per-ISP
+    (see ``DEVICE_SAMPLE_RETENTION_DAYS``).
+
+    Totals (``mem_total``/``hdd_total``) are stored alongside the free figures
+    on purpose: a board can be upgraded, and a percentage recomputed later
+    against today's total would silently rewrite last week's history.
+    """
+    __tablename__ = 'device_resource_samples'
+    __table_args__ = (
+        # Every read is "this device, this window, in time order".
+        db.Index('ix_device_resource_samples_device_time', 'device_id', 'sampled_at'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=False, index=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id'), nullable=False, index=True)
+
+    sampled_at = db.Column(db.DateTime, nullable=False, index=True)
+
+    cpu_load = db.Column(db.Float, nullable=True)          # percent
+    mem_total = db.Column(db.BigInteger, nullable=True)    # bytes
+    mem_free = db.Column(db.BigInteger, nullable=True)     # bytes
+    hdd_total = db.Column(db.BigInteger, nullable=True)    # bytes
+    hdd_free = db.Column(db.BigInteger, nullable=True)     # bytes
+    client_count = db.Column(db.Integer, nullable=True)
+    bandwidth_kbps = db.Column(db.Integer, nullable=True)  # rx+tx on the uplink
+    uptime = db.Column(db.Integer, nullable=True)          # seconds, as reported
+
+    device = db.relationship('MikrotikDevice')
+
+    @staticmethod
+    def _percent_used(total, free):
+        if not total or free is None:
+            return None
+        used = max(0, int(total) - int(free))
+        return round(used * 100.0 / int(total), 1)
+
+    @property
+    def memory_percent(self):
+        return self._percent_used(self.mem_total, self.mem_free)
+
+    @property
+    def disk_percent(self):
+        return self._percent_used(self.hdd_total, self.hdd_free)
+
+    def __repr__(self):
+        return f"<DeviceResourceSample device={self.device_id} at={self.sampled_at}>"
+
+
 class PasswordResetToken(db.Model):
     """A single-use link that lets someone set a new password without the old one.
 

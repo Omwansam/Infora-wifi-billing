@@ -156,8 +156,26 @@ def _apply_device_info(device, info):
         device.device_model = info.board_name
 
 
-def sync_device_stats(device, connection_type=None):
+def _persist_device_info(device, info):
+    """Apply a fresh snapshot, commit it, and add a point to the trend.
+
+    The sample is taken after the commit and never inside the caller's
+    transaction: history is a nicety, and a failure to record it must not roll
+    back the stats the rest of the console reads.
+    """
+    _apply_device_info(device, info)
+    db.session.commit()
+    from services.device_resource_history import record_sample
+    record_sample(device)
+
+
+def sync_device_stats(device, connection_type=None, lock_wait=20):
     """Sync a single MikroTik device and persist stats.
+
+    ``lock_wait`` is how long to queue behind another operation holding this
+    router's SSH lock. Operator-triggered syncs wait; the background poller
+    passes a small value and skips instead, so a routine trend sample can never
+    stall the onboarding wizard behind it.
 
     Management-tunnel routers go through the resilient, serialized SSH helper
     (retries the flaky MikroTik banner) so a router that just powered back up
@@ -200,10 +218,9 @@ def sync_device_stats(device, connection_type=None):
         _mark_online(device)
         db.session.commit()
         try:
-            with mikrotik_ssh(device, timeout=12, lock_wait=20) as client:
+            with mikrotik_ssh(device, timeout=12, lock_wait=lock_wait) as client:
                 info = client.get_device_info()
-                _apply_device_info(device, info)
-                db.session.commit()
+                _persist_device_info(device, info)
         except DeviceBusy:
             raise
         except Exception:
@@ -228,8 +245,7 @@ def sync_device_stats(device, connection_type=None):
             if not client.connect():
                 raise MikroTikAPIError('Failed to connect to device')
             info = client.get_device_info()
-            _apply_device_info(device, info)
-            db.session.commit()
+            _persist_device_info(device, info)
 
     return {
         'uptime': info.uptime,

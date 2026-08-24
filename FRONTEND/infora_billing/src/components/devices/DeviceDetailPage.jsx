@@ -15,6 +15,8 @@ import { formatDate } from '../../lib/utils';
 import DeviceStatusBadge from './DeviceStatusBadge';
 import ConfigureServicesPanel from './ConfigureServicesPanel';
 import DualWanPanel from './DualWanPanel';
+import DeviceResourceHistory from './DeviceResourceHistory';
+import DeviceDowntimeHistory from './DeviceDowntimeHistory';
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -107,6 +109,9 @@ export default function DeviceDetailPage() {
   const [tab, setTab] = useState('overview');
   const [syncing, setSyncing] = useState(false);
   const [showPw, setShowPw] = useState(false);
+  // Summary only — the full log lives in the Downtime tab. The header card used
+  // to read a hardcoded "None", which is the one answer that is never earned.
+  const [outageSummary, setOutageSummary] = useState({ loading: true, data: null });
 
   const load = async () => {
     try {
@@ -120,6 +125,36 @@ export default function DeviceDetailPage() {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOutageSummary({ loading: true, data: null });
+    deviceService.getOutages(getAccessToken(), id, 30)
+      .then((data) => { if (!cancelled) setOutageSummary({ loading: false, data }); })
+      // A failed summary must not shout: the tab itself reports the error.
+      .catch(() => { if (!cancelled) setOutageSummary({ loading: false, data: null }); });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const downtime = useMemo(() => {
+    const d = outageSummary.data;
+    if (outageSummary.loading) return { loading: true, label: '—', sub: null, tone: 'text-slate-400' };
+    if (!d) return { loading: false, label: '—', sub: 'unavailable', tone: 'text-slate-400' };
+    if (d.currently_down) {
+      return { loading: false, label: 'Down now', sub: 'outage in progress', tone: 'text-rose-500' };
+    }
+    if (!d.total_minutes) {
+      return { loading: false, label: 'None', sub: `${d.uptime_percent}% available`, tone: 'text-emerald-500' };
+    }
+    const hours = Math.floor(d.total_minutes / 60);
+    const mins = d.total_minutes % 60;
+    return {
+      loading: false,
+      label: hours ? `${hours}h ${mins}m` : `${mins}m`,
+      sub: `${d.total_outages} outage${d.total_outages === 1 ? '' : 's'} · ${d.uptime_percent}%`,
+      tone: 'text-amber-500',
+    };
+  }, [outageSummary]);
 
   const handleRefresh = async () => {
     setSyncing(true);
@@ -247,7 +282,13 @@ export default function DeviceDetailPage() {
           <StatCard icon={Network} label="PPPoE Users" value={device.pppoe_users ?? 0} sub="active" tone="text-violet-500" />
           <StatCard icon={Wifi} label="Hotspot Users" value={device.client_count ?? 0} sub="active" tone="text-emerald-500" />
           <StatCard icon={Clock} label="Uptime" value={uptimeLabel(device.uptime)} tone="text-amber-500" />
-          <StatCard icon={AlertTriangle} label="Downtime (month)" value="None" tone="text-slate-400" />
+          <StatCard
+            icon={AlertTriangle}
+            label="Downtime (30d)"
+            value={downtime.loading ? '—' : downtime.label}
+            sub={downtime.sub}
+            tone={downtime.tone}
+          />
         </div>
 
         {/* Tabs */}
@@ -426,39 +467,11 @@ export default function DeviceDetailPage() {
           </div>
         )}
 
-        {/* ---- Resource History (empty state) ---- */}
-        {tab === 'resources' && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">Resource History</h3>
-            <p className="text-sm text-slate-500">Last 4 hours · polled every 5 minutes</p>
-            <div className="flex flex-col items-center py-16 text-center">
-              <Cpu className="h-10 w-10 text-slate-200" />
-              <p className="mt-3 text-sm font-medium text-slate-600">No resource history yet</p>
-              <p className="text-xs text-slate-400">Data will appear after the first successful poll</p>
-            </div>
-          </div>
-        )}
+        {/* ---- Resource History ---- */}
+        {tab === 'resources' && <DeviceResourceHistory deviceId={id} />}
 
-        {/* ---- Downtime History (empty state) ---- */}
-        {tab === 'downtime' && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">Downtime History</h3>
-                <p className="text-sm text-slate-500">Last 30 days</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Total this month</p>
-                <p className="font-semibold text-emerald-600">None</p>
-              </div>
-            </div>
-            <div className="flex flex-col items-center py-16 text-center">
-              <Clock className="h-10 w-10 text-slate-200" />
-              <p className="mt-3 text-sm font-medium text-slate-600">No downtime recorded</p>
-              <p className="text-xs text-slate-400">Outages will be logged here once monitoring records them</p>
-            </div>
-          </div>
-        )}
+        {/* ---- Downtime History ---- */}
+        {tab === 'downtime' && <DeviceDowntimeHistory deviceId={id} />}
 
         {/* ---- Configure Services ---- */}
         {tab === 'configure' && (

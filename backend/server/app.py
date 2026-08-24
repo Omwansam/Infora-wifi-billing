@@ -252,12 +252,15 @@ def ensure_schema_upgrades():
         # boot. checkfirst=True makes this a no-op once they exist.
         from models import (
             CpeDevice, CpeFirmware, CpeSession, CpeTask, ImportCandidate, ImportRun,
+            DeviceOutage, DeviceResourceSample,
             FiberCable, FiberNode, FiberSplice,
             OnboardingSignup, PlatformInvoice,
         )
         for model in (ImportRun, ImportCandidate,
                       CpeDevice, CpeTask, CpeSession, CpeFirmware,
                       OnboardingSignup, PlatformInvoice,
+                      # The device detail page's two history tabs read these.
+                      DeviceOutage, DeviceResourceSample,
                       # Nodes first: cables and splices reference them.
                       FiberNode, FiberCable, FiberSplice):
             model.__table__.create(bind=db.engine, checkfirst=True)
@@ -577,6 +580,21 @@ def purge_retention_command(dry_run):
         click.echo(f"Retention purge: {summary}")
 
 
+@app.cli.command('poll-devices')
+@click.option('--limit', default=None, type=int, help='Poll at most this many devices')
+def poll_devices_command(limit):
+    """Sync every due router and record a resource sample (cron: */5 * * * *).
+
+    Only needed when DEVICE_POLL_INTERVAL is 0; otherwise the in-process poller
+    already does this and running both just doubles the SSH load.
+    """
+    from services.device_poller import poll_once
+    with app.app_context():
+        interval = int(app.config.get('DEVICE_POLL_INTERVAL', 300) or 300)
+        summary = poll_once(interval_seconds=interval, limit=limit)
+        click.echo(f'Device poll: {summary}')
+
+
 @app.cli.command('enforce-expiry')
 @click.option('--grace-hours', default=0, type=int, help='Grace period after subscription_end')
 def enforce_expiry_command(grace_hours):
@@ -769,6 +787,33 @@ def redirect_portal_to_frontend(path):
     if request.query_string:
         target = f'{target}?{request.query_string.decode()}'
     return redirect(target, code=302)
+
+
+_poller_started = False
+
+
+@app.before_request
+def _start_device_poller_once():
+    """Start the router poll loop in serving processes only.
+
+    Not at import: `flask db upgrade` and `flask initdb` import this module too,
+    and a poller opening SSH sessions during a migration is nobody's intent.
+    Not under ``__main__`` either — production execs gunicorn, which never runs
+    that block, which is why the expiry and FUP loops below have silently never
+    run in prod. The first request is the one moment we know we are serving.
+
+    Each gunicorn worker runs this once; the loop's flock keeps a tick to a
+    single worker, so four starts still mean one poll.
+    """
+    global _poller_started
+    if _poller_started:
+        return
+    _poller_started = True
+    try:
+        from services.device_poller import start_poller
+        start_poller(app)
+    except Exception as exc:  # noqa: BLE001 — never break a request over this
+        app.logger.warning('Device poller failed to start: %s', exc)
 
 
 if __name__ == "__main__":

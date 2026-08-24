@@ -83,6 +83,19 @@ class Config:
     DEVICE_RADIUS_EVIDENCE_SECONDS = int(os.getenv('DEVICE_RADIUS_EVIDENCE_SECONDS', '900'))
     DEVICE_PROVISION_EVIDENCE_SECONDS = int(os.getenv('DEVICE_PROVISION_EVIDENCE_SECONDS', '600'))
 
+    # How often the background poller sweeps every router (seconds; 0 disables).
+    # Nothing else syncs a device on a schedule, so this is what makes the
+    # resource trend continuous and lets an overnight outage be recorded at all.
+    DEVICE_POLL_INTERVAL = int(os.getenv('DEVICE_POLL_INTERVAL', '300') or '0')
+    # Floor between two stored samples. A sample is written on every successful
+    # sync, so without this several operators refreshing the device page would
+    # each add a row.
+    DEVICE_SAMPLE_MIN_INTERVAL = int(os.getenv('DEVICE_SAMPLE_MIN_INTERVAL', '60'))
+    # Trend rows are small but high-churn: one router at a 5-minute poll writes
+    # ~8.6k rows a month. Retention is global rather than per-ISP because the
+    # volume, not the tenant, is what makes them expensive.
+    DEVICE_SAMPLE_RETENTION_DAYS = int(os.getenv('DEVICE_SAMPLE_RETENTION_DAYS', '30'))
+
     # --- Platform subscription (what a tenant ISP pays us) -----------------
     # The console locks when subscription_expires_at + grace passes. Existing
     # tenants have no expiry set and are therefore never locked until one is.

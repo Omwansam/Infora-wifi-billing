@@ -28,6 +28,28 @@ class DeviceService {
     }
   }
 
+  /** Downsampled CPU / memory / disk / clients / throughput trend for one router. */
+  async getResourceHistory(token, deviceId, window = '6h') {
+    const response = await fetch(
+      `${this.baseURL}/${deviceId}/resource-history?${toQueryString({ window })}`,
+      { method: 'GET', headers: getAuthHeaders(token) },
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP error! status: ${response.status}`);
+    return data;
+  }
+
+  /** Outage log for one router, plus the availability it adds up to. */
+  async getOutages(token, deviceId, days = 30) {
+    const response = await fetch(
+      `${this.baseURL}/${deviceId}/outages?${toQueryString({ days })}`,
+      { method: 'GET', headers: getAuthHeaders(token) },
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP error! status: ${response.status}`);
+    return data;
+  }
+
   async getDevice(token, deviceId) {
     try {
       const response = await fetch(`${this.baseURL}/${deviceId}`, {

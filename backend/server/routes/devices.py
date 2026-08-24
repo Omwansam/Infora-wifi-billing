@@ -984,6 +984,91 @@ def device_provision_status(device_id):
     return jsonify(status), 200
 
 
+@devices_bp.route('/<int:device_id>/resource-history', methods=['GET'])
+@jwt_required()
+def device_resource_history(device_id):
+    """Downsampled CPU / memory / disk / clients / throughput trend for one router."""
+    from services.device_resource_history import DEFAULT_WINDOW, history
+
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    window = (request.args.get('window') or DEFAULT_WINDOW).strip()
+    payload = history(device, window=window)
+    # The poll cadence is what the empty state needs to explain itself: "no data
+    # yet" means something different when nothing is polling at all.
+    payload['poll_interval_seconds'] = int(
+        current_app.config.get('DEVICE_POLL_INTERVAL', 0) or 0)
+    payload['last_synced'] = device.last_synced.isoformat() + 'Z' if device.last_synced else None
+    return jsonify(payload), 200
+
+
+@devices_bp.route('/<int:device_id>/outages', methods=['GET'])
+@jwt_required()
+def device_outages(device_id):
+    """Outage log for one router, with the availability it adds up to."""
+    from models import DeviceOutage
+    from services.outage_compensation import serialize as serialize_outage
+
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    try:
+        days = max(1, min(365, int(request.args.get('days', 30))))
+    except (TypeError, ValueError):
+        days = 30
+
+    now = datetime.utcnow()
+    since = now - timedelta(days=days)
+
+    # Overlap, not containment: an outage that began before the window and is
+    # still open is the single most important row on this page.
+    outages = (DeviceOutage.query
+               .filter(DeviceOutage.device_id == device.id)
+               .filter(db.or_(DeviceOutage.ended_at.is_(None),
+                              DeviceOutage.ended_at >= since))
+               .order_by(DeviceOutage.started_at.desc())
+               .all())
+
+    # Clip each outage to the window before counting, or a week-long outage
+    # would report more downtime than the window itself contains.
+    total_minutes = 0
+    for outage in outages:
+        start = max(outage.started_at, since)
+        end = outage.ended_at or now
+        if end > start:
+            total_minutes += int((end - start).total_seconds() // 60)
+
+    window_minutes = int((now - since).total_seconds() // 60)
+    # Availability is measured from first contact, not from the start of the
+    # window: a router added yesterday is not 96% unavailable for the month.
+    measured_from = since
+    if device.created_at and device.created_at > since:
+        measured_from = device.created_at
+    measured_minutes = max(1, int((now - measured_from).total_seconds() // 60))
+    uptime_percent = round(
+        max(0.0, min(100.0, (measured_minutes - total_minutes) * 100.0 / measured_minutes)), 3)
+
+    return jsonify({
+        'days': days,
+        'since': since.isoformat() + 'Z',
+        'until': now.isoformat() + 'Z',
+        'outages': [serialize_outage(o) for o in outages],
+        'total_outages': len(outages),
+        'total_minutes': total_minutes,
+        'window_minutes': window_minutes,
+        'measured_minutes': measured_minutes,
+        'measured_from': measured_from.isoformat() + 'Z',
+        'uptime_percent': uptime_percent,
+        'currently_down': any(o.ended_at is None for o in outages),
+        'monitoring_enabled': int(current_app.config.get('DEVICE_POLL_INTERVAL', 0) or 0) > 0,
+    }), 200
+
+
 @devices_bp.route('/<int:device_id>/self-check', methods=['POST'])
 @jwt_required()
 def device_self_check(device_id):

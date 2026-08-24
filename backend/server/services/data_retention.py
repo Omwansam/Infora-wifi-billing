@@ -9,8 +9,15 @@ from services.radius_provisioning import deprovision_customer_radius, radius_use
 def purge_expired_data(dry_run=False):
     """Delete expired hotspot users and old paid records past each ISP's retention window."""
     isps = ISP.query.filter(ISP.data_retention_days.isnot(None)).all()
-    summary = {'customers': 0, 'invoices': 0, 'payments': 0, 'cpe_sessions': 0}
+    summary = {'customers': 0, 'invoices': 0, 'payments': 0, 'cpe_sessions': 0,
+               'device_samples': 0}
     now = datetime.utcnow()
+
+    # Router trend samples: one device at a 5-minute poll writes ~8.6k rows a
+    # month, so like CWMP sessions these are capped globally by volume rather
+    # than per-ISP by policy.
+    from services.device_resource_history import purge_old_samples
+    summary['device_samples'] = purge_old_samples(now=now, dry_run=dry_run)
 
     # CWMP session rows are high churn — every managed CPE opens one per
     # periodic inform interval (5 min by default), so a 1000-device fleet writes
