@@ -93,11 +93,14 @@ class DeviceService {
         headers: getAuthHeaders(token),
       });
 
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // The route explains *why* it refused in the body. Throwing the bare
+        // status instead turned "this device still has an outage recorded"
+        // into an unactionable "HTTP error! status: 500".
+        throw new Error(data.error || data.message || `HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
       return data;
     } catch (error) {
       console.error('Error deleting device:', error);

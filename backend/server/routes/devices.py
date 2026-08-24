@@ -359,6 +359,58 @@ def update_device(device_id):
         db.session.rollback()
         return jsonify({'error': f'Failed to update device: {str(e)}'}), 500
 
+# Every table that points at mikrotik_devices, and what to do with it when the
+# device goes. None of these FKs carry ON DELETE, so anything left pointing at a
+# deleted device raises IntegrityError and the delete 500s.
+#
+# The rule is decided by nullability, and the reason matters:
+#   NOT NULL -> the row cannot outlive the device, so it is deleted;
+#   nullable -> the row is history or hardware that outlives the router, so the
+#               reference is nulled and the row is kept.
+# Deleting an import run here would be wrong twice over: it is nullable, and it
+# would cascade away the candidate rows that are a migration's only provenance.
+#
+# test_device_delete.py fails if a new FK onto mikrotik_devices is added without
+# a decision here — the list had already drifted to 4 of 9 once.
+DEVICE_REFERENCE_CLEANUP = {
+    # table.column: 'delete' | 'null'
+    'device_backups.device_id': 'delete',      # + its file on disk, see below
+    'device_outages.device_id': 'delete',
+    'radius_sessions.mikrotik_device_id': 'delete',
+    'equipment.device_id': 'null',
+    'fiber_nodes.device_id': 'null',
+    'hotspot_access_codes.device_id': 'null',
+    'import_runs.device_id': 'null',
+    'radacct.mikrotik_device_id': 'null',
+    'wireguard_servers.mikrotik_device_id': 'null',
+}
+
+
+def detach_device_references(device):
+    """Clear every foreign key onto this device so it can actually be deleted."""
+    from models import (DeviceOutage, Equipment, FiberNode, HotspotAccessCode,
+                        ImportRun, RadAcct, RadiusSession, WireGuardServer)
+
+    # Backups first and separately: the row owns a file on disk, so dropping it
+    # with a bulk DELETE would leave the file orphaned forever.
+    for backup in DeviceBackup.query.filter_by(device_id=device.id).all():
+        delete_backup(backup)
+
+    DeviceOutage.query.filter_by(device_id=device.id).delete(synchronize_session=False)
+    RadiusSession.query.filter_by(mikrotik_device_id=device.id).delete(synchronize_session=False)
+
+    for model, column in (
+        (Equipment, 'device_id'),
+        (FiberNode, 'device_id'),
+        (HotspotAccessCode, 'device_id'),
+        (ImportRun, 'device_id'),
+        (RadAcct, 'mikrotik_device_id'),
+        (WireGuardServer, 'mikrotik_device_id'),
+    ):
+        model.query.filter_by(**{column: device.id}).update(
+            {column: None}, synchronize_session=False)
+
+
 @devices_bp.route('/<int:device_id>', methods=['DELETE'])
 @jwt_required()
 def delete_device(device_id):
@@ -369,18 +421,7 @@ def delete_device(device_id):
         if device.management_wg_enabled:
             deprovision_device_management_tunnel(device)
 
-        # Detach/clean rows that FK to this device without ON DELETE CASCADE, or
-        # the delete fails: radius_sessions.mikrotik_device_id is NOT NULL (so the
-        # rows must be removed); the rest are nullable history we keep by nulling
-        # the reference.
-        from models import RadiusSession, RadAcct, HotspotAccessCode, WireGuardServer
-        RadiusSession.query.filter_by(mikrotik_device_id=device.id).delete(synchronize_session=False)
-        RadAcct.query.filter_by(mikrotik_device_id=device.id).update(
-            {'mikrotik_device_id': None}, synchronize_session=False)
-        HotspotAccessCode.query.filter_by(device_id=device.id).update(
-            {'device_id': None}, synchronize_session=False)
-        WireGuardServer.query.filter_by(mikrotik_device_id=device.id).update(
-            {'mikrotik_device_id': None}, synchronize_session=False)
+        detach_device_references(device)
 
         db.session.delete(device)
         db.session.commit()
