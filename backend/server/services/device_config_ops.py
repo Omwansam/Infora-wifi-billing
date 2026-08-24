@@ -626,32 +626,63 @@ def _classify_interface(name, itype):
     return t or 'other'
 
 
+def _looks_like_ip(value):
+    try:
+        ipaddress.ip_address((value or '').strip())
+        return True
+    except ValueError:
+        return False
+
+
 def detect_uplink_interfaces(client):
     """Every interface that must never be bridged into a service bridge.
 
-    Returns a set holding the interface carrying the active default route, any
-    interface running a DHCP client, and — when either of those is a bridge —
-    that bridge's **member ports**.
+    Returns ``{name: reason}`` — a mapping so the guard can tell the operator
+    *which* signal matched, and so ``name in uplinks`` still reads naturally.
 
-    Resolving bridge members is the point. RouterOS boards commonly route the
-    WAN through a factory bridge (``bridgeLocal``), so ``immediate-gw`` names the
-    *bridge*, not the port. Guarding only that name leaves the actual physical
-    uplink (e.g. ether1) looking like a free port: the wizard offers it, the
-    operator assigns it a service, and the ISP's broadcast domain gets merged
-    into the subscriber one — the router loses its own internet and every port
-    flaps as two DHCP servers fight.
+    Four signals, because no single one is reliable on a real router:
+
+    * the interface carrying the active default route;
+    * any interface running a DHCP client;
+    * every member of the ``WAN`` interface list — the operator's own
+      declaration of what faces upstream, and the only signal that survives a
+      link being unplugged at the moment we look;
+    * the physical port underneath a PPPoE-client or VLAN uplink.
+
+    The last two were added after an RB3011 with two ISPs was provisioned live.
+    Its default route ran over ``pppoe-out-isp1``, so the route check named that
+    virtual interface and stopped there; ``ether1`` — the physical port the PPPoE
+    session runs on, and a declared ``WAN`` member — looked like a free port, was
+    offered by the wizard, and got bridged into the subscriber domain.
+
+    Bridge members are resolved for the same reason: boards commonly route the
+    WAN through a factory bridge, so ``immediate-gw`` names the *bridge* and the
+    real uplink port hides inside it.
 
     Our own bridges are never treated as uplinks, so a stray DHCP client on the
-    service bridge can't lock the operator out of assigning any port at all.
+    service bridge cannot lock the operator out of assigning any port at all.
     """
     ours = {BRIDGE_NAME, MGMT_BRIDGE_NAME}
-    names = set()
+    found = {}
 
-    def add_with_members(name):
+    # child interface -> the physical port it runs on
+    parents = {}
+    for menu in ('/interface pppoe-client print terse', '/interface vlan print terse'):
+        try:
+            out, _err = client.run_cli(menu)
+            for row in _parse_terse_rows(out):
+                child, parent = row.get('name'), row.get('interface')
+                if child and parent:
+                    parents[child] = parent
+        except Exception:  # noqa: BLE001 — detection is best-effort
+            pass
+
+    def add(name, reason, depth=0):
         name = (name or '').strip()
-        if not name or name in ours:
+        if not name or name in ours or depth > 4:
             return
-        names.add(name)
+        found.setdefault(name, reason)
+
         try:
             out, _err = client.run_cli(
                 f'/interface bridge port print terse where bridge={name}'
@@ -659,10 +690,15 @@ def detect_uplink_interfaces(client):
             for row in _parse_terse_rows(out):
                 member = row.get('interface')
                 if member and member not in ours:
-                    names.add(member)
-        except Exception:  # noqa: BLE001 — detection is best-effort
+                    found.setdefault(member, f'{reason}, via bridge {name}')
+        except Exception:  # noqa: BLE001
             pass
 
+        parent = parents.get(name)
+        if parent:
+            add(parent, f'{reason}, carries {name}', depth + 1)
+
+    # 1. The active default route.
     try:
         out, _err = client.run_cli(
             ':local r [/ip route find where dst-address="0.0.0.0/0" active=yes];'
@@ -670,18 +706,35 @@ def detect_uplink_interfaces(client):
         )
         value = (out or '').strip()
         if '%' in value:
-            add_with_members(value.split('%')[-1].strip().split(',')[0].split()[0])
+            add(value.split('%')[-1].strip().split(',')[0].split()[0],
+                'carries the active default route')
+        elif value and INTERFACE_NAME_RE.match(value) and not _looks_like_ip(value):
+            # A point-to-point uplink (pppoe-out, ovpn, l2tp) has no gateway
+            # address, so immediate-gw is the bare interface name. A bare IP
+            # here names no interface, and adding it would guard a port that
+            # does not exist.
+            add(value, 'carries the active default route')
     except Exception:  # noqa: BLE001
         pass
 
+    # 2. Anything running a DHCP client.
     try:
         out, _err = client.run_cli('/ip dhcp-client print terse')
         for row in _parse_terse_rows(out):
-            add_with_members(row.get('interface'))
+            add(row.get('interface'), 'runs a DHCP client')
     except Exception:  # noqa: BLE001
         pass
 
-    return names
+    # 3. The operator's own WAN interface list. Survives an unplugged link,
+    #    which neither of the checks above does.
+    try:
+        out, _err = client.run_cli('/interface list member print terse where list=WAN')
+        for row in _parse_terse_rows(out):
+            add(row.get('interface'), 'is a member of the WAN interface list')
+    except Exception:  # noqa: BLE001
+        pass
+
+    return found
 
 
 def list_interfaces(device):
@@ -976,6 +1029,27 @@ def derive_port_roles(opts):
     has_hotspot = bool(opts.get('hotspot'))
     role = 'both' if (has_pppoe and has_hotspot) else 'pppoe' if has_pppoe else 'hotspot' if has_hotspot else None
     return {p: role for p in ports} if role else {}
+
+
+def _join_interface_list(menu, setting):
+    """Add the management bridge to the interface list ``menu``'s ``setting`` names.
+
+    Skips the built-in ``all``/``none`` pseudo-lists (membership is meaningless
+    for the first and deliberate for the second) and any list that does not
+    exist. Idempotent, and wrapped so a RouterOS build without ``/interface
+    list`` (pre-6.41) simply does nothing.
+    """
+    return (
+        f':do {{'
+        f' :local l [{menu} get {setting}];'
+        f' :if ($l != "all" && $l != "none" && [:len [/interface list find name=$l]] > 0) do={{'
+        f'  :if ([:len [/interface list member find list=$l interface={MGMT_BRIDGE_NAME}]] = 0) do={{'
+        f'   /interface list member add list=$l interface={MGMT_BRIDGE_NAME} '
+        f'comment="{MGMT_PORT_COMMENT}"'
+        f'  }}'
+        f' }}'
+        f'}} on-error={{}}'
+    )
 
 
 def build_services_commands(opts):
@@ -1379,6 +1453,22 @@ def build_services_commands(opts):
                 ),
             ],
         ))
+        # Make the bridge discoverable, or the management port is only usable by
+        # someone who already knows its address — which is exactly the person who
+        # does not need it. Neighbour discovery and MAC-Winbox are both scoped to
+        # an interface *list*, and a brand-new bridge is in none of them, so the
+        # router simply never appears in Winbox's Neighbors tab and MAC-connect
+        # is refused. That is indistinguishable from "the port is dead".
+        #
+        # Join whichever list each feature already uses rather than forcing LAN:
+        # an operator who has scoped discovery to a custom list meant it, and one
+        # who set it to `none` or `all` needs nothing from us either way.
+        steps.append(_step('mgmt-discovery', [
+            _join_interface_list('/ip neighbor discovery-settings',
+                                 'discover-interface-list'),
+            _join_interface_list('/tool mac-server', 'allowed-interface-list'),
+            _join_interface_list('/tool mac-server mac-winbox', 'allowed-interface-list'),
+        ]))
 
     # 8. Hotspot anti-sharing: TTL=1 on traffic handed to hotspot clients, so a
     #    subscriber who re-shares through another router sees it die at that hop.
@@ -1739,10 +1829,9 @@ def configure_services(device, opts):
                     'step': 'uplink-guard',
                     'status': 'warn',
                     'detail': (
-                        f"{', '.join(sorted(blocked))} carries the internet feed "
-                        f"(active default route or DHCP client, including via a WAN "
-                        f"bridge) — skipped. Bridging the uplink merges the ISP's "
-                        f"network into the subscriber one and takes the router offline."
+                        '; '.join(f'{port} {uplinks[port]}' for port in sorted(blocked))
+                        + " — skipped. Bridging an uplink merges the ISP's network "
+                          "into the subscriber one and takes the router offline."
                     ),
                 })
 
