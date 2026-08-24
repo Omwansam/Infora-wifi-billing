@@ -112,6 +112,36 @@ export const importService = {
     });
   },
 
+  /** Where this migration stands: moved, remaining, verified, per package. */
+  async cutoverStatus(runId) {
+    return authenticatedApiCall(API_ENDPOINTS.importRunCutover(runId), getAccessToken());
+  },
+
+  /** Un-mark a batch that was generated but never pasted. */
+  async cutoverReset(runId, payload = {}) {
+    return authenticatedApiCall(API_ENDPOINTS.importRunCutoverReset(runId), getAccessToken(), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /**
+   * Pre-cutover verification. Resumable by design — the server works to a
+   * deadline and reports what is still pending, so the caller loops.
+   */
+  async verifyRun(runId, payload = {}) {
+    return authenticatedApiCall(API_ENDPOINTS.importRunVerify(runId), getAccessToken(), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Post-cutover watch: who was moved and has not come back. */
+  async cutoverWatch(runId, { router = true } = {}) {
+    const url = `${API_ENDPOINTS.importRunWatch(runId)}?router=${router ? 1 : 0}`;
+    return authenticatedApiCall(url, getAccessToken());
+  },
+
   /** The additive-only adoption script, as text (not JSON). */
   adoptionScriptUrl(runId, { interim = '5m', fasttrack = 'remove' } = {}) {
     return `${API_ENDPOINTS.importRunAdoptionScript(runId)}?interim=${interim}&fasttrack=${fasttrack}`;

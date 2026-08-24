@@ -13,6 +13,9 @@ Layered so the interesting part is testable without a router:
     scan.py       transports and ImportRun lifecycle (I/O)
     commit.py     candidates -> customers, via services.customer_import (I/O)
     adoption_script.py  the separate, additive-only cutover script
+    cutover.py    batch progress + the post-cutover watch (I/O)
+    radius_probe.py  a small RADIUS client: MS-CHAPv2 and PAP (pure)
+    verify.py     'would this subscriber authenticate right now?' (I/O)
 
 Nothing here modifies services.provisioning_scripts or the "link a MikroTik"
 onboarding flow — a takeover needs an additive script, not that one.
@@ -22,6 +25,21 @@ from .adoption_script import (  # noqa: F401
     build_canary_script,
     build_retire_secrets_script,
     build_rollback_script,
+)
+from .cutover import (  # noqa: F401
+    cutover_state,
+    mark_moved,
+    movable_candidates,
+    profile_breakdown,
+    reset_moved,
+    select_batch,
+    watch,
+)
+from .verify import (  # noqa: F401
+    resolve_probe,
+    verification_summary,
+    verifiable_candidates,
+    verify_run,
 )
 from .commands import (  # noqa: F401
     UnsafeCommand,

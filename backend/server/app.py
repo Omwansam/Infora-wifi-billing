@@ -185,6 +185,14 @@ def ensure_schema_upgrades():
             'longitude': 'DOUBLE PRECISION',
             'fiber_node_id': 'INTEGER',
         },
+        'import_candidates': {
+            # Cutover progress + pre-cutover RADIUS verification (§14-15 of
+            # ROUTER_SCAN_IMPORT_AND_TAKEOVER.md).
+            'cutover_at': 'TIMESTAMP',
+            'verify_state': 'VARCHAR(8)',
+            'verify_detail': 'TEXT',
+            'verified_at': 'TIMESTAMP',
+        },
         'users': {
             'two_factor_enabled': 'BOOLEAN DEFAULT FALSE NOT NULL',
             'two_factor_secret': 'TEXT',

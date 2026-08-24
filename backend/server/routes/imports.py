@@ -518,13 +518,31 @@ def adoption_script(run_id):
     )
 
 
-@imports_bp.route('/runs/<int:run_id>/cutover-script', methods=['POST'])
+@imports_bp.route('/runs/<int:run_id>/cutover', methods=['GET'])
 @jwt_required()
-def cutover_script(run_id):
-    """Batch-move imported subscribers onto Infora by disabling local secrets.
+def cutover_status(run_id):
+    """Where this migration actually stands — moved, remaining, verified."""
+    user, error = _require_admin()
+    if error:
+        return error
+    run, error = _run_or_404(run_id, user)
+    if error:
+        return error
+    state = router_scan.cutover_state(run)
+    last = state.get('last_moved_at')
+    state['last_moved_at'] = last.isoformat() if last else None
+    return jsonify(state), 200
 
-    Reversible per subscriber: the secret is disabled, never removed, so the
-    password stays on the router and rollback costs one command.
+
+@imports_bp.route('/runs/<int:run_id>/verify', methods=['POST'])
+@jwt_required()
+def verify_run_route(run_id):
+    """Pre-cutover check: send a real Access-Request per client and report.
+
+    Resumable rather than backgrounded: each call works until its deadline and
+    returns what is still pending, so the caller loops and shows progress. A
+    background thread would need shared state across four gunicorn workers to
+    say anything useful about progress, for no gain.
     """
     user, error = _require_admin()
     if error:
@@ -534,29 +552,80 @@ def cutover_script(run_id):
         return error
 
     data = request.get_json(silent=True) or {}
-    logins = data.get('logins')
-    if not logins:
-        query = ImportCandidate.query.filter_by(run_id=run.id, status='created')
-        if data.get('profile'):
-            query = query.filter_by(profile_name=data['profile'])
-        limit = int(data.get('limit') or 0)
-        if limit:
-            query = query.limit(limit)
-        logins = [c.login for c in query.all() if c.login]
-
-    if not logins:
-        return jsonify({'error': 'No imported subscribers to cut over'}), 400
-
+    isp = ISP.query.get(run.isp_id)
     try:
-        script = router_scan.build_retire_secrets_script(logins)
+        summary = router_scan.verify_run(
+            run, isp,
+            limit=data.get('limit'),
+            only_pending=bool(data.get('only_pending', True)),
+            logins=data.get('logins'),
+        )
+    except Exception as exc:  # noqa: BLE001 - a probe failure is a result, not a 500
+        current_app.logger.exception('verify run %s failed', run.id)
+        return jsonify({'error': f'Verification could not run: {exc}'}), 502
+    return jsonify(summary), 200
+
+
+@imports_bp.route('/runs/<int:run_id>/cutover-script', methods=['POST'])
+@jwt_required()
+def cutover_script(run_id):
+    """Batch-move imported subscribers onto Infora by disabling local credentials.
+
+    Reversible per subscriber: the credential is disabled, never removed, so the
+    password stays on the router and rollback costs one command.
+
+    Generating the script marks the batch as moved, which is what stops the next
+    click handing back the same people. ``dry_run`` previews without marking,
+    and /cutover-reset undoes a batch that was never pasted.
+    """
+    user, error = _require_admin()
+    if error:
+        return error
+    run, error = _run_or_404(run_id, user)
+    if error:
+        return error
+
+    data = request.get_json(silent=True) or {}
+    candidates = router_scan.select_batch(
+        run,
+        limit=data.get('limit'),
+        profile=data.get('profile'),
+        kind=data.get('kind'),
+        logins=data.get('logins'),
+        include_moved=bool(data.get('include_moved')),
+    )
+    if not candidates:
+        return jsonify({
+            'error': 'No subscribers left to cut over in this selection — '
+                     'everyone matching it has already been moved.'
+        }), 400
+
+    entries = [{'login': c.login, 'kind': c.kind or 'pppoe'} for c in candidates]
+    try:
+        script = router_scan.build_retire_secrets_script(entries)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
-    return jsonify({'script': script, 'count': len(logins), 'logins': logins}), 200
+
+    unverified = [c.login for c in candidates if c.verify_state in (None, 'fail')]
+    if not data.get('dry_run'):
+        router_scan.mark_moved(candidates)
+
+    return jsonify({
+        'script': script,
+        'count': len(entries),
+        'logins': [e['login'] for e in entries],
+        'entries': entries,
+        'marked': not data.get('dry_run'),
+        # Naming them is the point: moving a client whose credentials do not
+        # authenticate is how a cutover turns into an outage.
+        'unverified': unverified,
+    }), 200
 
 
-@imports_bp.route('/runs/<int:run_id>/rollback-script', methods=['POST'])
+@imports_bp.route('/runs/<int:run_id>/cutover-reset', methods=['POST'])
 @jwt_required()
-def rollback_script(run_id):
+def cutover_reset(run_id):
+    """Un-mark a batch — for a script that was generated but never pasted."""
     user, error = _require_admin()
     if error:
         return error
@@ -564,12 +633,56 @@ def rollback_script(run_id):
     if error:
         return error
     data = request.get_json(silent=True) or {}
-    logins = data.get('logins')
-    if not logins:
-        logins = [
-            c.login for c in ImportCandidate.query.filter_by(run_id=run.id).all() if c.login
-        ]
-    return jsonify({'script': router_scan.build_rollback_script(logins)}), 200
+    count = router_scan.reset_moved(run, logins=data.get('logins'))
+    return jsonify({'reset': count}), 200
+
+
+@imports_bp.route('/runs/<int:run_id>/watch', methods=['GET'])
+@jwt_required()
+def cutover_watch(run_id):
+    """Post-cutover watch: who did not come back."""
+    user, error = _require_admin()
+    if error:
+        return error
+    run, error = _run_or_404(run_id, user)
+    if error:
+        return error
+    include_router = request.args.get('router', '1') != '0'
+    return jsonify(router_scan.watch(run, include_router=include_router)), 200
+
+
+@imports_bp.route('/runs/<int:run_id>/rollback-script', methods=['POST'])
+@jwt_required()
+def rollback_script(run_id):
+    """Re-enable local credentials and drop our RADIUS entry.
+
+    Defaults to everyone this run moved, not everyone it imported: re-enabling a
+    secret nobody disabled is harmless, but the script an operator reads under
+    pressure should say exactly what it is undoing. Pass ``all: true`` for the
+    belt-and-braces version.
+    """
+    user, error = _require_admin()
+    if error:
+        return error
+    run, error = _run_or_404(run_id, user)
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+
+    if data.get('logins'):
+        candidates = router_scan.select_batch(run, logins=data['logins'], include_moved=True)
+    elif data.get('all'):
+        candidates = router_scan.movable_candidates(run).all()
+    else:
+        candidates = [c for c in router_scan.movable_candidates(run).all() if c.cutover_at]
+        if not candidates:
+            candidates = router_scan.movable_candidates(run).all()
+
+    entries = [{'login': c.login, 'kind': c.kind or 'pppoe'} for c in candidates]
+    script = router_scan.build_rollback_script(entries)
+    if data.get('reset', True):
+        router_scan.reset_moved(run, logins=[e['login'] for e in entries] or None)
+    return jsonify({'script': script, 'count': len(entries)}), 200
 
 
 # --- Comment mining preview ----------------------------------------------

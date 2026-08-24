@@ -675,15 +675,47 @@ stored credentials, and assert the reply carries the expected `Mikrotik-Rate-Lim
 `radreply`, the ISP's shared secret — and it catches the failures that otherwise show up as 400
 simultaneous auth rejects at 2am.
 
-Nothing like this exists yet (`flask verify-deployment` at [app.py:420](backend/server/app.py#L420)
-is deployment-level, not per-subscriber), so it's new work — a `flask verify-import <run_id>` command
-plus a UI panel, using `radclient` from the freeradius image or a small pure-Python RADIUS packet
-builder. Report as `387 of 400 would authenticate` with the 13 failures itemised and clickable.
+**Built 2026-08-24** as `services/router_scan/radius_probe.py` (a small pure-Python RADIUS client)
+plus `verify.py`, `POST /api/import/runs/<id>/verify`, and Step 2 of the cutover page. Reports
+`387 of 400 would authenticate` with every failure itemised and individually re-checkable.
+
+Three things it does that a naive version would not:
+
+- **MS-CHAPv2 for PPPoE, PAP for hotspot** — each subscriber is checked the way that subscriber
+  actually dials. A broken `rlm_mschap` or a stray `Auth-Type := Accept` rejects (or hollowly
+  accepts) every PPPoE dial while PAP hotspot logins keep working, so a PAP-only check would report
+  green during exactly that outage. MD4 is implemented in-repo because OpenSSL 3 dropped it; single
+  DES is `TripleDES(key*3)` from `cryptography.hazmat.decrepit`. Validated against the RFC 1320 and
+  RFC 2759 §9.2 vectors, not against our own output.
+- **An Accept without `MS-CHAP2-Success` is a FAILURE, not a pass** — that is the ~53-byte Accept an
+  `Auth-Type := Accept` row produces: the server says yes and the CPE still reports a login failure
+  (§7b). A healthy MS-CHAPv2 Accept is ~211 bytes with MS-CHAP2-Success plus MPPE keys.
+- **`Message-Authenticator` is mandatory** (RFC 2869 §5.14). Since the BlastRADIUS mitigation
+  (CVE-2024-3596) FreeRADIUS drops a request without it and answers *nothing* — indistinguishable
+  from an unreachable server. The same is true of a wrong shared secret, so the timeout text names
+  both causes.
+
+Verified end to end against a real FreeRADIUS 3.2 built from `config/freeradius`: correct password →
+Accept with the right `Mikrotik-Rate-Limit`; wrong password → Reject; a deliberately-deleted
+`radcheck` row → the failure named with its cause; a password containing a space → authenticates
+verbatim.
+
+**Watch out for `@example.com`.** Stock `proxy.conf` ships a live `realm example.com` pointed at a
+dead home server, so any login on that domain is proxied into a black hole and never reaches the SQL
+lookup. Other domains fall through untouched (there is no `realm DEFAULT` and `default_fallback = no`),
+so real email-style logins are fine — but test data on `example.com` will look like a total auth
+outage.
 
 Also worth having, and cheap:
-- **Post-cutover watch** — imported count vs live `/ppp active` count vs Infora session count on one
-  screen, with the auth-failure feed beside it. During the first hour that's the only screen anyone
-  wants.
+- **Post-cutover watch** — **built** as `cutover.watch()` + `GET /api/import/runs/<id>/watch` and
+  Step 4 of the page. Deliberately not "how many sessions exist" but **"which of the people I just
+  moved have not come back?"**, named individually, beside the router's own `/ppp active` and
+  remaining-enabled-secret counts. There is no `radpostauth` table in this schema, so the
+  auth-failure feed is served by the per-client verification verdict instead, which is more direct.
+- **Batch progress** — `ImportCandidate.cutover_at`, set when a batch script is generated. Before
+  this, the batch query had no offset and no state, so every click of "Move this batch" handed back
+  the *same* subscribers. `POST /cutover-reset` un-marks a batch that was generated but never
+  pasted.
 - **Keep the incumbent's export archived** and its server read-only for a soak week (§9 of the
   companion doc).
 

@@ -2389,6 +2389,18 @@ class ImportCandidate(db.Model):
     match_customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
     customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
 
+    # --- Cutover state (ROUTER_SCAN_IMPORT_AND_TAKEOVER.md 14-15) ---
+    # Set when a cutover script carrying this login is generated, so the next
+    # batch is the *next* subscribers rather than the same ones again, and the
+    # page can say "40 of 400 moved". Cleared by a rollback or a batch reset.
+    cutover_at = db.Column(db.DateTime, nullable=True)
+    # Result of the last pre-cutover RADIUS probe: 'pass' | 'warn' | 'fail'.
+    # NULL means never checked, which the UI reports as pending rather than OK -
+    # an unverified client is not a passing one.
+    verify_state = db.Column(db.String(8), nullable=True)
+    verify_detail = db.Column(db.Text, nullable=True)
+    verified_at = db.Column(db.DateTime, nullable=True)
+
     created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp())
 
     run = db.relationship('ImportRun', back_populates='candidates')

@@ -128,31 +128,69 @@ def build_canary_script(login):
     Disable, never remove: a removed secret takes the password with it, and the
     password is the thing that makes rollback free.
     """
-    safe = (login or '').replace('"', '').strip()
-    if not safe:
+    entries = _normalise([login])
+    if not entries:
         raise ValueError('login is required')
-    return (
-        f'# Move {safe} onto Infora (reversible: set disabled=no to undo)\n'
-        f'/ppp secret set [find name="{safe}"] disabled=yes\n'
-        f'# Then disconnect the live session so they redial via RADIUS:\n'
-        f':do {{/ppp active remove [find name="{safe}"]}} on-error={{}}\n'
-    )
+    safe, kind = entries[0]
+    lines = [f'# Move {safe} onto Infora (reversible: set disabled=no to undo)']
+    lines += _disable_lines(safe, kind, disabled=True)
+    lines.append('# Then disconnect the live session so they redial via RADIUS:')
+    lines += _kick_lines(safe, kind)
+    return '\n'.join(lines) + '\n' 
+
+
+def _normalise(entries):
+    """Accept either bare logins or ``{'login':…, 'kind':…}`` dicts.
+
+    Callers that predate hotspot support pass strings; those are treated as
+    PPPoE, which is what they always were.
+    """
+    out = []
+    for entry in entries or []:
+        if isinstance(entry, dict):
+            login, kind = entry.get('login'), entry.get('kind') or 'pppoe'
+        else:
+            login, kind = entry, 'pppoe'
+        # A quote would end the RouterOS string and let the rest of the value be
+        # read as commands; these names come off someone else's router.
+        safe = (login or '').replace('"', '').replace('\\', '').strip()
+        if safe:
+            out.append((safe, kind))
+    return out
+
+
+def _disable_lines(login, kind, disabled):
+    """The menu that owns this subscriber, and the session to drop."""
+    flag = 'yes' if disabled else 'no'
+    if kind == 'hotspot':
+        return [
+            f':do {{/ip hotspot user set [find name="{login}"] disabled={flag}}} on-error={{}}',
+        ]
+    return [
+        f':do {{/ppp secret set [find name="{login}"] disabled={flag}}} on-error={{}}',
+    ]
+
+
+def _kick_lines(login, kind):
+    if kind == 'hotspot':
+        return [f':do {{/ip hotspot active remove [find user="{login}"]}} on-error={{}}']
+    return [f':do {{/ppp active remove [find name="{login}"]}} on-error={{}}']
 
 
 def build_rollback_script(logins=None):
-    """Undo an adoption: re-enable local secrets and drop our RADIUS entry.
+    """Undo an adoption: re-enable local credentials and drop our RADIUS entry.
 
     Leaves ``use-radius`` alone — with the local database restored it is inert,
     and turning it off is the one step that could surprise a subscriber who has
     already been migrated.
     """
+    entries = _normalise(logins)
     lines = [
         '# Infora adoption rollback',
+        f'# Re-enables {len(entries)} local credential(s) and removes our RADIUS entry.',
     ]
-    for login in (logins or []):
-        safe = (login or '').replace('"', '').strip()
-        if safe:
-            lines.append(f':do {{/ppp secret set [find name="{safe}"] disabled=no}} on-error={{}}')
+    for login, kind in entries:
+        lines += _disable_lines(login, kind, disabled=False)
     lines += [
         f':do {{/radius remove [find comment="{ADOPTION_COMMENT}"]}} on-error={{}}',
         ':put "Infora adoption rolled back."',
@@ -161,22 +199,32 @@ def build_rollback_script(logins=None):
 
 
 def build_retire_secrets_script(logins):
-    """Disable a batch of local secrets once Infora is proven for them.
+    """Disable a batch of local credentials once Infora is proven for them.
 
     Batch form of :func:`build_canary_script` — the operator moves a profile or
     fifty subscribers at a time, watching Online Users fill up between batches.
+
+    PPPoE and hotspot live in different menus, so a hotspot subscriber sent
+    through the ``/ppp secret`` form would match nothing and be silently left
+    behind on the old system while the UI reported them moved. Each entry is
+    routed to the menu that actually owns it.
     """
-    safe_logins = [(l or '').replace('"', '').strip() for l in (logins or [])]
-    safe_logins = [l for l in safe_logins if l]
-    if not safe_logins:
+    entries = _normalise(logins)
+    if not entries:
         raise ValueError('no logins supplied')
+    kinds = sorted({kind for _, kind in entries})
     lines = [
-        f'# Infora cutover — move {len(safe_logins)} subscriber(s) onto RADIUS.',
-        '# Reversible: /ppp secret set [find name="<login>"] disabled=no',
+        f'# Infora cutover — move {len(entries)} subscriber(s) onto RADIUS.',
+        f'# Menus touched: {", ".join(kinds)}. Credentials are disabled, never',
+        '# removed — the password stays on the router, so rollback is one command:',
+        '#   /ppp secret set [find name="<login>"] disabled=no',
+        '#   /ip hotspot user set [find name="<login>"] disabled=no',
     ]
-    for login in safe_logins:
-        lines.append(f':do {{/ppp secret set [find name="{login}"] disabled=yes}} on-error={{}}')
-    for login in safe_logins:
-        lines.append(f':do {{/ppp active remove [find name="{login}"]}} on-error={{}}')
-    lines.append(f':put "Moved {len(safe_logins)} subscribers to Infora RADIUS."')
+    # Disable everyone first, then drop sessions. The other order would let a
+    # client redial into its still-enabled local secret before we got to it.
+    for login, kind in entries:
+        lines += _disable_lines(login, kind, disabled=True)
+    for login, kind in entries:
+        lines += _kick_lines(login, kind)
+    lines.append(f':put "Moved {len(entries)} subscribers to Infora RADIUS."')
     return '\n'.join(lines) + '\n'
