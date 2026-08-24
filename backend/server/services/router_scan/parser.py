@@ -222,6 +222,11 @@ EXPORT_MENU_TO_KEY = {
     '/queue simple': 'queues',
     '/system script': 'scripts',
     '/system scheduler': 'schedulers',
+    # An export carries the router's name, so the profile card can title itself
+    # for an uploaded file the same way it does for a live scan. `/system
+    # resource` and `/system routerboard` are deliberately absent: they are
+    # runtime state and never appear in an export at all.
+    '/system identity': 'system_identity',
     '/tool user-manager user': 'user_manager',
 }
 
