@@ -72,6 +72,41 @@ function planExpiry(plan) {
   return toLocalInput(now);
 }
 
+/**
+ * A button that lives inside a text field.
+ *
+ * Sized and surfaced deliberately: at 28px in a muted grey with a 2px gap these
+ * read as decoration on the field rather than controls, and the two of them sit
+ * close enough to mis-tap on a phone. 32px squares with a resting surface, a
+ * hairline separating them from the typed value, and a real focus ring make
+ * them look like — and behave like — the buttons they are.
+ */
+function InputAction({ icon: Icon, label, onClick, tone = 'neutral', pressed }) {
+  const tones = {
+    neutral:
+      'text-slate-500 hover:bg-slate-200 hover:text-slate-900 '
+      + 'dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white',
+    accent:
+      'text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900 '
+      + 'dark:text-emerald-300 dark:hover:bg-emerald-500/25 dark:hover:text-emerald-100',
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={pressed}
+      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 transition-colors
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1
+        focus-visible:ring-offset-white dark:bg-slate-800 dark:focus-visible:ring-offset-slate-900
+        ${tones[tone]}`}
+    >
+      <Icon className="h-4 w-4" />
+    </button>
+  );
+}
+
 function Section({ title, description, children }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -654,18 +689,23 @@ export default function ClientForm() {
                     onChange={onInput}
                     placeholder="Any length"
                     autoComplete="new-password"
-                    className={`${inputCls} pr-20 font-mono`}
+                    className={`${inputCls} pr-[5.75rem] font-mono`}
                   />
-                  <div className="absolute inset-y-0 right-2 flex items-center gap-0.5">
-                    <button type="button" onClick={generatePassword} title="Generate a password"
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
-                      <RefreshCw className="h-4 w-4" />
-                    </button>
-                    <button type="button" onClick={() => setShowPassword((v) => !v)}
-                            title={showPassword ? 'Hide password' : 'Show password'}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
+                  <div className="absolute inset-y-0 right-1.5 flex items-center gap-1.5">
+                    {/* Keeps the buttons from reading as part of the value. */}
+                    <span className="h-5 w-px bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
+                    <InputAction
+                      icon={RefreshCw}
+                      label="Generate a password"
+                      onClick={generatePassword}
+                      tone="accent"
+                    />
+                    <InputAction
+                      icon={showPassword ? EyeOff : Eye}
+                      label={showPassword ? 'Hide password' : 'Show password'}
+                      onClick={() => setShowPassword((v) => !v)}
+                      pressed={showPassword}
+                    />
                   </div>
                   <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
                     Any length, any characters except &lt; and &gt;.
