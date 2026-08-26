@@ -15,6 +15,11 @@ import {
   ShieldCheck,
   AtSign,
   KeyRound,
+  HelpCircle,
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  RefreshCw,
 } from 'lucide-react';
 import { customerService } from '../../services/customerService';
 import { getActivePlans } from '../../services/planService';
@@ -22,28 +27,85 @@ import { parseSpeedMbps } from '../../lib/clientUtils';
 import { formatCurrency } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
+/* Only the types the backend can actually provision. A fourth option that
+   fails on submit is worse than one that is not offered. */
 const CONNECTION_TYPES = [
-  {
-    key: 'pppoe',
-    label: 'PPPoE',
-    description: 'Monthly dial-up subscription',
-    icon: Router,
-    selectedRing: 'ring-violet-500 border-violet-500',
-    selectedBg: 'bg-violet-50',
-    iconBg: 'bg-violet-500',
-    enabled: true,
-  },
-  {
-    key: 'hotspot',
-    label: 'Hotspot',
-    description: 'Captive portal / voucher',
-    icon: Wifi,
-    selectedRing: 'ring-amber-400 border-amber-400',
-    selectedBg: 'bg-amber-50',
-    iconBg: 'bg-amber-500',
-    enabled: false,
-  },
+  { key: 'pppoe', label: 'PPPoE', description: 'fixed-line homes', icon: Router },
+  { key: 'hotspot', label: 'Hotspot', description: 'captive portal sign-in', icon: Wifi },
+  { key: 'wireguard', label: 'WireGuard', description: 'routed static IP over a tunnel', icon: ShieldCheck },
 ];
+
+const STATUSES = [
+  { key: 'active', label: 'Active' },
+  { key: 'suspended', label: 'Suspended' },
+];
+
+const inputCls =
+  'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none '
+  + 'transition-colors placeholder:text-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 '
+  + 'disabled:cursor-not-allowed disabled:opacity-60 '
+  + 'dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500';
+
+/** A login has to survive RADIUS and a router config, so keep it boring. */
+function sanitiseUsername(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9._-]/g, '');
+}
+
+/** `datetime-local` wants 'YYYY-MM-DDTHH:mm' in *local* time. */
+function toLocalInput(date) {
+  if (!date) return '';
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Expiry the package implies, so the field can be pre-filled and still edited. */
+function planExpiry(plan) {
+  if (!plan) return '';
+  const now = new Date();
+  if (plan.plan_type === 'hotspot' && plan.duration_hours) {
+    now.setHours(now.getHours() + Number(plan.duration_hours));
+  } else {
+    now.setDate(now.getDate() + Number(plan.billing_cycle_days || 30));
+  }
+  return toLocalInput(now);
+}
+
+function Section({ title, description, children }) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+        <h2 className="font-semibold text-slate-900 dark:text-white">{title}</h2>
+        {description && <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{description}</p>}
+      </div>
+      <div className="space-y-4 p-6">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * One labelled control.
+ *
+ * `required` / `note` / `hint` are separate on purpose: an operator scanning
+ * the form needs to know at a glance what will block submission, what is merely
+ * advisable, and what the field is for.
+ */
+function Field({ label, required, note, hint, help, children }) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-sm font-semibold text-slate-800 dark:text-slate-200">
+        {label}
+        {required && <span className="ml-1 text-rose-500" aria-hidden="true">*</span>}
+        {required && <span className="sr-only"> (required)</span>}
+        {note && <span className="ml-1.5 text-xs font-normal text-slate-400 dark:text-slate-500">· {note}</span>}
+        {hint && <span className="ml-1.5 text-xs font-normal text-slate-400 dark:text-slate-500">— {hint}</span>}
+      </label>
+      {children}
+      {help && <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{help}</p>}
+    </div>
+  );
+}
 
 function SectionHeader({ title, subtitle }) {
   return (
@@ -91,33 +153,51 @@ export default function ClientForm() {
   const [plans, setPlans] = useState([]);
   const [plansLoading, setPlansLoading] = useState(true);
   const [form, setForm] = useState({
-    name: '',
+    username: '',
+    first_name: '',
+    last_name: '',
     email: '',
-    radius_login: '',
     phone: '',
+    account_number: '',
     address: '',
     service_plan_id: '',
     connection_type: 'pppoe',
-    connect_on_create: true,
-    auto_password: true,
+    subscription_end: '',
+    expiry_touched: false,
+    status: 'active',
     password: '',
   });
   const [loading, setLoading] = useState(false);
   const [credentials, setCredentials] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
+  // Packages are per service type, so the list reloads when the type changes —
+  // offering a PPPoE package to a hotspot subscriber is a guaranteed 400 from
+  // the API, which validates that the two agree.
   useEffect(() => {
+    let cancelled = false;
     setPlansLoading(true);
-    getActivePlans({ plan_type: 'pppoe' })
+    getActivePlans({ plan_type: form.connection_type })
       .then((res) => {
-        if (res.success) {
-          const list = res.data.plans || [];
-          setPlans(list);
-          if (list[0]) setForm((f) => ({ ...f, service_plan_id: String(list[0].id) }));
-        }
+        if (cancelled) return;
+        const list = res.success ? (res.data.plans || []) : [];
+        setPlans(list);
+        setForm((f) => {
+          const stillValid = list.some((p) => String(p.id) === f.service_plan_id);
+          const next = stillValid ? f.service_plan_id : (list[0] ? String(list[0].id) : '');
+          const plan = list.find((p) => String(p.id) === next);
+          return {
+            ...f,
+            service_plan_id: next,
+            // Don't stomp on an expiry the operator typed themselves.
+            subscription_end: f.expiry_touched ? f.subscription_end : planExpiry(plan),
+          };
+        });
       })
-      .finally(() => setPlansLoading(false));
-  }, []);
+      .finally(() => { if (!cancelled) setPlansLoading(false); });
+    return () => { cancelled = true; };
+  }, [form.connection_type]);
 
   const selectedPlan = plans.find((p) => String(p.id) === form.service_plan_id);
   const mbps = parseSpeedMbps(selectedPlan?.speed);
@@ -129,61 +209,111 @@ export default function ClientForm() {
     setField(name, type === 'checkbox' ? checked : value);
   };
 
+  const displayName = [form.first_name, form.last_name].filter(Boolean).join(' ').trim();
+  const initials = [form.first_name, form.last_name]
+    .filter(Boolean).map((s) => s.trim()[0]).join('').toUpperCase().slice(0, 2);
+
+  const onTypeChange = (next) => {
+    setForm((f) => ({
+      ...f,
+      connection_type: next,
+      // The API refuses an active hotspot subscriber outright — they are created
+      // by the portal on payment — so follow it rather than let the operator
+      // fill in a form that cannot be submitted.
+      status: next === 'hotspot' ? 'suspended' : f.status,
+    }));
+  };
+
+  const onPlanChange = (e) => {
+    const id = e.target.value;
+    const plan = plans.find((p) => String(p.id) === id);
+    setForm((f) => ({
+      ...f,
+      service_plan_id: id,
+      subscription_end: f.expiry_touched ? f.subscription_end : planExpiry(plan),
+    }));
+  };
+
+  const generatePassword = () => {
+    // Ambiguous glyphs removed: this gets read aloud down a phone line and
+    // written on a card, where O/0 and l/1/I are a support call each.
+    const alphabet = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = new Uint32Array(12);
+    crypto.getRandomValues(bytes);
+    setField('password', Array.from(bytes, (n) => alphabet[n % alphabet.length]).join(''));
+    setShowPassword(true);
+  };
+
+  const statusHelp = form.connection_type === 'hotspot'
+    ? 'Hotspot subscribers activate on their first payment through the portal.'
+    : form.status === 'active'
+      ? 'Active — can sign in and connect. RADIUS is provisioned on create.'
+      : 'Suspended — the account exists but cannot connect until you activate it.';
+
   const onSubmit = async (e) => {
     e.preventDefault();
-    if (!form.service_plan_id) {
-      toast.error('Select a package');
-      return;
-    }
-    const login = form.radius_login.trim();
+    const login = form.username.trim();
     const email = form.email.trim();
-    if (!login && !email) {
-      toast.error('Enter a connection username or an email');
-      return;
-    }
-    if (!form.auto_password && !form.password.trim()) {
-      toast.error('Enter a password or switch to auto-generate');
-      return;
-    }
+    const phone = form.phone.trim();
+
+    if (!login) { toast.error('Enter a username — it is what they type to sign in'); return; }
+    if (!phone) { toast.error('Enter a phone number'); return; }
+    if (!form.service_plan_id) { toast.error('Pick a package'); return; }
+    if (/[<>]/.test(form.password)) { toast.error('A password cannot contain < or >'); return; }
+
+    // full_name is what the API stores; fall back to the login so the record is
+    // never nameless when an operator skips the optional name fields.
+    const fullName = displayName || login;
+
     setLoading(true);
     try {
       const result = await customerService.createCustomer({
-        name: form.name,
+        name: fullName,
         email: email || undefined,
-        radius_login: login || undefined,
-        phone: form.phone,
-        address: form.address,
+        radius_login: login,
+        phone,
+        address: form.address.trim() || undefined,
+        account_number: form.account_number.trim() || undefined,
         service_plan_id: Number(form.service_plan_id),
         package: selectedPlan?.name,
-        connection_type: 'pppoe',
-        status: form.connect_on_create ? 'active' : 'pending',
-        password: form.auto_password ? undefined : form.password.trim(),
+        connection_type: form.connection_type,
+        // Hotspot cannot be created active; the API rejects it outright.
+        status: form.connection_type === 'hotspot' ? 'pending' : form.status,
+        // Sent as local time without a zone; the API reads it as UTC-naive the
+        // same way it stores every other timestamp.
+        subscription_end: form.subscription_end || '',
+        password: form.password.trim() || undefined,
       });
-      if (result.success) {
-        const data = result.data;
-        const pwd = data.radius_password || (!form.auto_password ? form.password.trim() : '');
-        const username = data.customer?.radius_username || login.toLowerCase() || email.toLowerCase();
-        if (pwd && form.connect_on_create && data.radius_provisioned) {
-          setCredentials({
-            username,
-            password: pwd,
-            account_number: data.customer?.account_number,
-            speed: selectedPlan?.speed,
-            plan: selectedPlan?.name,
-          });
-        } else if (form.connect_on_create && data.radius_provision_reason) {
-          toast.error(data.radius_provision_reason);
-          navigate('/clients');
-        } else if (!form.connect_on_create) {
-          toast.success('Client created — RADIUS will provision when you connect');
-          navigate('/clients');
-        } else {
-          toast.success('Client created');
-          navigate('/clients');
-        }
-      } else {
-        toast.error(result.error || 'Failed to create client');
+      // apiCall resolves { success: false, error } rather than throwing, so the
+      // failure branch has to be explicit or a 400 looks like a silent no-op.
+      if (!result.success) {
+        toast.error(result.error || 'Failed to create subscriber');
+        return;
       }
+      const data = result.data;
+      const pwd = data.radius_password || form.password.trim();
+      const username = data.customer?.radius_username || login.toLowerCase();
+
+      if (pwd && data.radius_provisioned) {
+        // Only hand over credentials that actually work — a card shown for an
+        // account RADIUS never provisioned is a support call waiting to happen.
+        setCredentials({
+          username,
+          password: pwd,
+          account_number: data.customer?.account_number,
+          speed: selectedPlan?.speed,
+          plan: selectedPlan?.name,
+        });
+        return;
+      }
+      if (data.radius_provision_reason) {
+        toast.success(`Subscriber created — ${data.radius_provision_reason}`);
+      } else if (data.wireguard_provisioned) {
+        toast.success('Subscriber created and WireGuard peer provisioned');
+      } else {
+        toast.success('Subscriber created');
+      }
+      navigate('/clients');
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -290,15 +420,19 @@ export default function ClientForm() {
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <Link
             to="/clients"
-            className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 mb-4"
+            className="mb-4 inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to clients
           </Link>
-          <p className="text-sm font-semibold text-blue-600 uppercase tracking-wider">Subscribers</p>
-          <h1 className="text-3xl font-bold text-slate-900 mt-1">Add Client</h1>
-          <p className="text-slate-600 mt-1">
-            Create a subscriber account and provision FreeRADIUS at the selected package speed.
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+            Subscribers <span className="mx-1">—</span> New
+          </p>
+          <h1 className="mt-1 text-3xl font-bold text-slate-900 dark:text-white">
+            Add a <span className="text-orange-500">subscriber.</span>
+          </h1>
+          <p className="mt-1 text-slate-600 dark:text-slate-400">
+            Hotspot users sign up through the portal — this is for the ones you provision by hand.
           </p>
         </motion.div>
 
@@ -306,257 +440,217 @@ export default function ClientForm() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           onSubmit={onSubmit}
-          className="space-y-8"
+          className="mx-auto max-w-3xl space-y-6"
         >
-          {/* Connection type */}
-          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8">
-            <SectionHeader
-              title="Connection type"
-              subtitle="Admin provisioning is available for PPPoE. Hotspot clients sign up via the captive portal."
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
-              {CONNECTION_TYPES.map((type) => {
-                const Icon = type.icon;
-                const selected = form.connection_type === type.key;
-                return (
-                  <button
-                    key={type.key}
-                    type="button"
-                    disabled={!type.enabled}
-                    onClick={() => type.enabled && setField('connection_type', type.key)}
-                    className={`flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all ${
-                      !type.enabled
-                        ? 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
-                        : selected
-                          ? `${type.selectedBg} ${type.selectedRing} ring-2`
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <div
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white ${
-                        selected && type.enabled ? type.iconBg : 'bg-slate-300'
-                      }`}
-                    >
-                      <Icon className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="font-semibold text-slate-900 text-sm block">{type.label}</span>
-                      <span className="text-xs text-slate-500 mt-0.5 block">{type.description}</span>
-                    </div>
-                  </button>
-                );
-              })}
+          {/* Who is being created — an anchor so a long form still has a subject. */}
+          <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-orange-500 text-lg font-bold text-white">
+              {initials || <HelpCircle className="h-6 w-6" />}
             </div>
-            <p className="mt-4 text-sm text-amber-800 bg-amber-50 border border-amber-200/80 rounded-xl px-4 py-3 max-w-2xl">
-              Hotspot clients are created automatically when users pay on the captive portal.
-            </p>
-          </section>
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-slate-900 dark:text-white">
+                {displayName || 'New subscriber'}
+              </p>
+              <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                {form.username ? `@${form.username.trim().toLowerCase()}` : 'Fill in the details below'}
+              </p>
+            </div>
+          </div>
 
-          {/* Client details */}
-          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8">
-            <SectionHeader title="Client details" subtitle="Contact and login information for this subscriber." />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <FieldLabel required>Full name</FieldLabel>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <input
-                    name="name"
-                    required
-                    value={form.name}
-                    onChange={onInput}
-                    placeholder="Eg. Jane Wanjiku"
-                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
+          <Section title="Identity" description="Their login name and who they are.">
+            <Field
+              label="Username"
+              required
+              hint="what they type to sign in"
+              help="No spaces or special characters. This is what they enter when connecting."
+            >
+              <input
+                name="username"
+                value={form.username}
+                onChange={(e) => setField('username', sanitiseUsername(e.target.value))}
+                placeholder="e.g. john.doe"
+                autoComplete="off"
+                className={`${inputCls} font-mono`}
+              />
+            </Field>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="First name" note="recommended">
+                <input name="first_name" value={form.first_name} onChange={onInput}
+                       placeholder="John" className={inputCls} />
+              </Field>
+              <Field label="Last name" note="recommended">
+                <input name="last_name" value={form.last_name} onChange={onInput}
+                       placeholder="Doe" className={inputCls} />
+              </Field>
+            </div>
+          </Section>
+
+          <Section title="Contact" description="How you'll reach them about renewals and outages.">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Email">
+                <input name="email" type="email" value={form.email} onChange={onInput}
+                       placeholder="john@example.com" className={inputCls} />
+              </Field>
+              <Field label="Phone" required>
+                <input name="phone" value={form.phone} onChange={onInput}
+                       placeholder="+254 7XX XXX XXX" className={inputCls} />
+              </Field>
+            </div>
+            <Field
+              label="Account number"
+              note="optional"
+              help="Shown next to the subscriber's name everywhere; also matched on import. Left blank, one is generated."
+            >
+              <input name="account_number" value={form.account_number} onChange={onInput}
+                     placeholder="A-1024" className={`${inputCls} font-mono`} />
+            </Field>
+            <Field label="Address" note="optional">
+              <input name="address" value={form.address} onChange={onInput}
+                     placeholder="Estate, building, or a GPS note" className={inputCls} />
+            </Field>
+          </Section>
+
+          <Section title="Connection" description="Service type, plan, and when this subscription should end.">
+            <Field
+              label="User type"
+              required
+              help="Hotspot signs up through the captive portal after payment; PPPoE is for fixed-line homes."
+            >
+              <select name="connection_type" value={form.connection_type}
+                      onChange={(e) => onTypeChange(e.target.value)} className={inputCls}>
+                {CONNECTION_TYPES.map((t) => (
+                  <option key={t.key} value={t.key}>{t.label} — {t.description}</option>
+                ))}
+              </select>
+            </Field>
+
+            {form.connection_type === 'hotspot' && (
+              <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  Hotspot subscribers are created by the captive portal once they pay, so this one is
+                  saved as <strong>Pending</strong>. It activates on their first payment.
+                </span>
               </div>
-              <div>
-                <FieldLabel required>Phone</FieldLabel>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <input
-                    name="phone"
-                    required
-                    value={form.phone}
-                    onChange={onInput}
-                    placeholder="Eg. 0712 345 678"
-                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
+            )}
+
+            <Field label="Package" required
+                   help={plansLoading ? 'Loading packages…' : (plans.length ? 'Sets the speed limit and the renewal period.' : null)}>
+              <select name="service_plan_id" value={form.service_plan_id} onChange={onPlanChange}
+                      disabled={plansLoading || !plans.length} className={inputCls}>
+                <option value="">— Pick a package —</option>
+                {plans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.speed || '—'} · {formatCurrency(p.price)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            {!plansLoading && !plans.length && (
+              <div className="flex items-start gap-2 rounded-xl bg-rose-50 p-3 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  No {CONNECTION_TYPES.find((t) => t.key === form.connection_type)?.label} packages yet —{' '}
+                  <Link to="/plans/new" className="font-semibold underline">create one first</Link>.
+                </span>
               </div>
-              <div>
-                <FieldLabel>Connection username</FieldLabel>
-                <div className="relative">
-                  <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <input
-                    name="radius_login"
-                    value={form.radius_login}
-                    onChange={onInput}
-                    placeholder="Eg. jane_wanjiku"
-                    autoCapitalize="none"
-                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  The PPPoE dial-up login. Leave blank to use the email instead.
-                </p>
-              </div>
-              <div>
-                <FieldLabel>Email</FieldLabel>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <input
-                    name="email"
-                    type="email"
-                    value={form.email}
-                    onChange={onInput}
-                    placeholder="subscriber@example.com (optional)"
-                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  Optional — used as the login only if no username is set. Editable later.
-                </p>
-              </div>
-              <div className="md:col-span-2">
-                <FieldLabel>Connection password</FieldLabel>
-                <div className="flex flex-col gap-3">
-                  <SwitchToggle
-                    checked={form.auto_password}
-                    onChange={(v) => setField('auto_password', v)}
-                    label={
-                      <span className="text-sm text-slate-700">
-                        Auto-generate a secure password
-                      </span>
-                    }
-                  />
-                  {!form.auto_password && (
-                    <div className="relative max-w-md">
-                      <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                      <input
-                        name="password"
-                        value={form.password}
-                        onChange={onInput}
-                        placeholder="Set the subscriber's password"
-                        autoCapitalize="none"
-                        className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                  )}
-                  <p className="text-xs text-slate-500">
-                    This is also the subscriber&rsquo;s portal login password.
+            )}
+
+            <Field
+              label="Subscription expires"
+              note={form.expiry_touched ? 'edited' : 'auto-set from the package · editable'}
+              help="When this subscription should end. Clear the field for no expiry."
+            >
+              <input
+                type="datetime-local"
+                name="subscription_end"
+                value={form.subscription_end}
+                onChange={(e) => { setField('subscription_end', e.target.value); setField('expiry_touched', true); }}
+                className={inputCls}
+              />
+            </Field>
+
+            {mbps && selectedPlan && (
+              <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 dark:border-blue-500/20 dark:bg-blue-500/10">
+                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" />
+                <div>
+                  <p className="text-sm font-medium text-blue-900 dark:text-blue-200">RADIUS rate limit</p>
+                  <p className="mt-0.5 text-xs text-blue-700 dark:text-blue-300">
+                    {mbps}M / {mbps}M up &amp; down — from &ldquo;{selectedPlan.name}&rdquo;
                   </p>
                 </div>
               </div>
-              <div className="md:col-span-2">
-                <FieldLabel>Installation address</FieldLabel>
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                  <input
-                    name="address"
-                    value={form.address}
-                    onChange={onInput}
-                    placeholder="Optional — estate, building, or GPS note"
-                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
+            )}
+          </Section>
 
-          {/* Package & provisioning */}
-          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8">
-            <SectionHeader
-              title="Package & provisioning"
-              subtitle="Choose an active PPPoE package. Rate limits are applied from the package settings."
-            />
-
-            {plansLoading ? (
-              <div className="flex items-center justify-center py-12 text-slate-500">
-                <Loader2 className="h-6 w-6 animate-spin mr-2 text-blue-600" />
-                Loading packages…
-              </div>
-            ) : plans.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
-                <p className="font-medium text-slate-900">No active PPPoE packages</p>
-                <p className="text-sm text-slate-500 mt-1 mb-4">Create a PPPoE package before adding clients.</p>
-                <Link
-                  to="/plans/new"
-                  className="inline-flex items-center px-4 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700"
-                >
-                  Create package
-                </Link>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {plans.map((plan) => {
-                  const selected = String(plan.id) === form.service_plan_id;
+          <Section title="Account" description="Status and credentials.">
+            <Field label="Status" help={statusHelp}>
+              <div className="inline-flex rounded-full bg-slate-100 p-1 dark:bg-slate-800">
+                {STATUSES.map((s) => {
+                  const disabled = s.key === 'active' && form.connection_type === 'hotspot';
                   return (
                     <button
-                      key={plan.id}
+                      key={s.key}
                       type="button"
-                      onClick={() => setField('service_plan_id', String(plan.id))}
-                      className={`flex flex-col items-start p-4 rounded-xl border-2 text-left transition-all ${
-                        selected
-                          ? 'bg-violet-50 border-violet-500 ring-2 ring-violet-500'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      disabled={disabled}
+                      onClick={() => setField('status', s.key)}
+                      aria-pressed={form.status === s.key}
+                      title={disabled ? 'Hotspot subscribers activate on their first payment' : undefined}
+                      className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        form.status === s.key
+                          ? 'bg-orange-500 text-white shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
                       }`}
                     >
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500 text-white mb-3">
-                        <Router className="h-4 w-4" />
-                      </div>
-                      <span className="font-semibold text-slate-900 text-sm line-clamp-1">{plan.name}</span>
-                      <span className="text-xs text-slate-500 mt-1">{plan.speed || plan.speed_display}</span>
-                      <span className="text-sm font-bold text-slate-900 mt-2">
-                        {formatCurrency(plan.price)}
-                        <span className="text-xs font-normal text-slate-500"> /mo</span>
-                      </span>
+                      {s.label}
                     </button>
                   );
                 })}
               </div>
-            )}
+            </Field>
 
-            {mbps && selectedPlan && (
-              <div className="mt-5 flex items-start gap-3 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
-                <ShieldCheck className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-blue-900">RADIUS rate limit</p>
-                  <p className="text-xs text-blue-700 mt-0.5">
-                    {mbps}M / {mbps}M upload & download — from package &ldquo;{selectedPlan.name}&rdquo;
-                  </p>
+            <Field
+              label="Password"
+              required={form.status === 'active'}
+              help="Any length, any characters except < and >. Leave blank to generate one."
+            >
+              <div className="relative">
+                <input
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={form.password}
+                  onChange={onInput}
+                  placeholder="Any length"
+                  autoComplete="new-password"
+                  className={`${inputCls} pr-20 font-mono`}
+                />
+                <div className="absolute inset-y-0 right-2 flex items-center gap-0.5">
+                  <button type="button" onClick={generatePassword} title="Generate a password"
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
+                  <button type="button" onClick={() => setShowPassword((v) => !v)}
+                          title={showPassword ? 'Hide password' : 'Show password'}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
               </div>
-            )}
-
-            <div className="mt-6 pt-6 border-t border-slate-100">
-              <SwitchToggle
-                checked={form.connect_on_create}
-                onChange={(v) => setField('connect_on_create', v)}
-                label={
-                  <>
-                    <span className="font-medium text-emerald-600">Connect immediately</span>
-                    {' — provision RADIUS and enable internet access on create'}
-                  </>
-                }
-              />
-            </div>
-          </section>
+            </Field>
+          </Section>
 
           <div className="flex items-center justify-end gap-3 pb-4">
-            <Link
-              to="/clients"
-              className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-900"
-            >
+            <Link to="/clients" className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white">
               Cancel
             </Link>
             <button
               type="submit"
-              disabled={loading || !plans.length || plansLoading}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 shadow-sm"
+              disabled={loading || plansLoading}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {loading ? 'Provisioning…' : 'Create client'}
+              {loading ? 'Creating…' : 'Create subscriber'}
             </button>
           </div>
         </motion.form>

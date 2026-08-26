@@ -4,7 +4,7 @@ from sqlalchemy import or_
 from extensions import db
 from auth_utils import get_current_user
 from models import User, Customer, CustomerStatus, ServicePlan, ISP, KycStatus, RadAcct, MikrotikDevice
-from datetime import datetime
+from datetime import datetime, timezone
 from services.radius_provisioning import (
     provision_customer_radius,
     deprovision_customer_radius,
@@ -377,6 +377,30 @@ def get_customer(customer_id):
     except Exception as e:
         return jsonify({'error': f'Failed to get customer: {str(e)}'}), 500
 
+_UNSET = object()
+
+
+def _parse_datetime(value):
+    """ISO 8601 from the browser -> naive UTC datetime, or None if unparseable.
+
+    The column is naive and the rest of the app treats it as UTC, so a value
+    carrying an offset is converted rather than stored as written — otherwise an
+    expiry set from a +03:00 browser would fire three hours late.
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith('Z'):
+        text = text[:-1] + '+00:00'
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 @customers_bp.route('/', methods=['POST'])
 @customers_bp.route('', methods=['POST'])
 @jwt_required()
@@ -446,7 +470,23 @@ def create_customer():
             connection_type=connection_type,
         )
 
-        if plan and status == CustomerStatus.ACTIVE:
+        # Expiry: the plan's term is the default, but an operator entering a
+        # subscriber who already paid up to a particular date has to be able to
+        # say so. An explicit empty value means "no expiry" and must not fall
+        # back to the plan, or clearing the field would silently do nothing.
+        explicit_end = data.get('subscription_end', _UNSET)
+        if explicit_end is not _UNSET:
+            customer.subscription_start = datetime.utcnow()
+            if explicit_end in (None, ''):
+                customer.subscription_end = None
+            else:
+                parsed_end = _parse_datetime(explicit_end)
+                if parsed_end is None:
+                    return jsonify({
+                        'error': 'Invalid subscription_end — expected an ISO 8601 datetime',
+                    }), 400
+                customer.subscription_end = parsed_end
+        elif plan and status == CustomerStatus.ACTIVE:
             from services.portal_service import plan_subscription_end
             customer.subscription_start = datetime.utcnow()
             customer.subscription_end = plan_subscription_end(plan)
