@@ -52,8 +52,12 @@ export function bandwidthLabel(value) {
 
 export function bandwidthTone(value) {
   const mbps = Number(value) / 1000;
-  if (Number.isNaN(mbps)) return 'text-slate-600';
-  if (mbps > 800) return 'text-rose-600';
-  if (mbps > 400) return 'text-amber-600';
-  return 'text-emerald-600';
+  if (Number.isNaN(mbps)) return 'text-slate-600 dark:text-slate-400';
+  // Zero is the absence of a reading, not a healthy one. Painting an offline
+  // router's "0 Mbps" the same green as a router comfortably under load says
+  // the opposite of what is happening.
+  if (mbps <= 0) return 'text-slate-500 dark:text-slate-400';
+  if (mbps > 800) return 'text-rose-600 dark:text-rose-400';
+  if (mbps > 400) return 'text-amber-600 dark:text-amber-400';
+  return 'text-emerald-600 dark:text-emerald-400';
 }

@@ -208,6 +208,105 @@ def _summary(rows):
     }
 
 
+def fleet_trends(isp_id=None, hours=6, points=24, now=None):
+    """Sparkline series and headline vitals for every device, in two queries.
+
+    The devices list draws a trend on each card and one for the fleet. Asking
+    per device would be a request per row; this answers the whole page at once.
+
+    Buckets are a fixed count across the window rather than a fixed duration, so
+    every sparkline has the same number of points and they line up visually
+    between cards regardless of how long a device has been reporting.
+    """
+    from models import DeviceOutage, MikrotikDevice
+
+    now = now or datetime.utcnow()
+    since = now - timedelta(hours=hours)
+    points = max(2, min(96, int(points)))
+    span = (now - since).total_seconds()
+    step = span / points
+
+    devices_q = MikrotikDevice.query
+    if isp_id is not None:
+        devices_q = devices_q.filter(MikrotikDevice.isp_id == isp_id)
+    devices = devices_q.all()
+    device_ids = [d.id for d in devices]
+    if not device_ids:
+        return {'window_hours': hours, 'points': points, 'fleet': [], 'devices': {}}
+
+    rows = (DeviceResourceSample.query
+            .filter(DeviceResourceSample.device_id.in_(device_ids))
+            .filter(DeviceResourceSample.sampled_at >= since)
+            .order_by(DeviceResourceSample.sampled_at.asc())
+            .all())
+
+    # bucket index -> readings, per device and for the fleet as a whole.
+    per_device = {d_id: [[] for _ in range(points)] for d_id in device_ids}
+    for row in rows:
+        idx = int((row.sampled_at - since).total_seconds() // step) if step else 0
+        idx = max(0, min(points - 1, idx))
+        per_device[row.device_id][idx].append(row)
+
+    # Availability over the last 30 days, clipped to the window and to how long
+    # each device has existed — the same rule the downtime tab uses, so the two
+    # screens cannot disagree.
+    outage_since = now - timedelta(days=30)
+    outages = (DeviceOutage.query
+               .filter(DeviceOutage.device_id.in_(device_ids))
+               .filter(db.or_(DeviceOutage.ended_at.is_(None),
+                              DeviceOutage.ended_at >= outage_since))
+               .all())
+    down_minutes = {d_id: 0 for d_id in device_ids}
+    for outage in outages:
+        start = max(outage.started_at, outage_since)
+        end = outage.ended_at or now
+        if end > start:
+            down_minutes[outage.device_id] += int((end - start).total_seconds() // 60)
+
+    result = {}
+    fleet_buckets = [[] for _ in range(points)]
+    for device in devices:
+        buckets = per_device[device.id]
+        series = []
+        for i, group in enumerate(buckets):
+            value = _average([r.bandwidth_kbps for r in group])
+            series.append(value)
+            if value is not None:
+                fleet_buckets[i].append(value)
+
+        measured_from = max(outage_since, device.created_at or outage_since)
+        measured = max(1, int((now - measured_from).total_seconds() // 60))
+        uptime = round(max(0.0, min(100.0,
+                                    (measured - down_minutes[device.id]) * 100.0 / measured)), 2)
+
+        latest = None
+        for group in reversed(buckets):
+            if group:
+                latest = group[-1]
+                break
+
+        result[str(device.id)] = {
+            'spark': series,
+            'cpu': round(latest.cpu_load, 1) if latest and latest.cpu_load is not None else device.cpu_load,
+            'memory': latest.memory_percent if latest else None,
+            'bandwidth_kbps': latest.bandwidth_kbps if latest else device.bandwidth_usage,
+            'uptime_percent': uptime,
+            'samples': sum(len(g) for g in buckets),
+            'last_sample': latest.sampled_at.isoformat() + 'Z' if latest else None,
+        }
+
+    return {
+        'window_hours': hours,
+        'points': points,
+        'since': since.isoformat() + 'Z',
+        'until': now.isoformat() + 'Z',
+        # Fleet load is the sum of what each device was pushing, not the average —
+        # two routers at 10 Mbps are 20 Mbps of load on the network.
+        'fleet': [round(sum(vals), 1) if vals else None for vals in fleet_buckets],
+        'devices': result,
+    }
+
+
 def purge_old_samples(now=None, dry_run=False):
     """Drop samples past the retention window. Called by the retention purge."""
     days = max(1, _config_int('DEVICE_SAMPLE_RETENTION_DAYS', _DEFAULT_RETENTION_DAYS))

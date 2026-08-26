@@ -28,6 +28,16 @@ class DeviceService {
     }
   }
 
+  /** Sparkline series + vitals for every router, in one call for the list page. */
+  async getFleetTrends(token, { hours = 6, points = 24 } = {}) {
+    const response = await fetch(`${this.baseURL}/trends?${toQueryString({ hours, points })}`, {
+      method: 'GET', headers: getAuthHeaders(token),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP error! status: ${response.status}`);
+    return data;
+  }
+
   /** Downsampled CPU / memory / disk / clients / throughput trend for one router. */
   async getResourceHistory(token, deviceId, window = '6h') {
     const response = await fetch(

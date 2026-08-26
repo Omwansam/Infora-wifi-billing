@@ -18,12 +18,16 @@ import {
   Copy,
   Check,
   X,
+  LayoutGrid,
+  List,
+  Settings,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
 import { getAccessToken } from '../../utils/authToken';
 import { bandwidthLabel, bandwidthTone } from '../../lib/deviceUtils';
-import { formatDate } from '../../lib/utils';
+import Sparkline from '../ui/Sparkline';
+import { formatDate, formatRelativeTime } from '../../lib/utils';
 import deviceService from '../../services/deviceService';
 import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
 import { useConfirm } from '../../contexts/ConfirmContext';
@@ -52,6 +56,23 @@ export default function MikrotikPage() {
   const [deploymentIssues, setDeploymentIssues] = useState([]);
   const [provisionModal, setProvisionModal] = useState(null);
   const [copied, setCopied] = useState(false);
+  // Card grid or table. Remembered, because which one an operator wants depends
+  // on fleet size and that does not change between visits.
+  const [view, setView] = useState(() => {
+    try {
+      return localStorage.getItem('infora.devicesView') === 'table' ? 'table' : 'cards';
+    } catch {
+      return 'cards';
+    }
+  });
+  const [trends, setTrends] = useState({ devices: {}, fleet: [] });
+
+  const setViewMode = (next) => {
+    setView(next);
+    try {
+      localStorage.setItem('infora.devicesView', next);
+    } catch { /* private window — the preference just won't persist */ }
+  };
 
   useEffect(() => {
     const loadIsps = async () => {
@@ -68,6 +89,23 @@ export default function MikrotikPage() {
     };
     loadIsps();
   }, []);
+
+  // Trend series for every card plus the fleet total, in one request. Refreshed
+  // on the poll cadence rather than on every render.
+  useEffect(() => {
+    let cancelled = false;
+    const loadTrends = async () => {
+      try {
+        const data = await deviceService.getFleetTrends(getAccessToken(), { hours: 6, points: 24 });
+        if (!cancelled) setTrends(data || { devices: {}, fleet: [] });
+      } catch {
+        if (!cancelled) setTrends({ devices: {}, fleet: [] });
+      }
+    };
+    loadTrends();
+    const timer = setInterval(loadTrends, 300000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [devices.length]);
 
   useEffect(() => {
     const loadDeploymentHealth = async () => {
@@ -128,12 +166,15 @@ export default function MikrotikPage() {
       {
         title: 'Bandwidth Load',
         value: bandwidthLabel(stats.total_bandwidth_mb ?? 0),
-        subtitle: 'Aggregate usage snapshot',
+        subtitle: 'Aggregate snapshot',
         icon: Activity,
         accent: 'from-cyan-500 to-blue-600',
+        // The one card where the trend earns its place: a throughput figure on
+        // its own cannot say whether the network is ramping up or winding down.
+        trend: trends.fleet,
       },
     ],
-    [stats, devices]
+    [stats, devices, trends]
   );
 
   const handleSync = async (deviceId) => {
@@ -308,19 +349,35 @@ export default function MikrotikPage() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.05 }}
-            className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 p-5 shadow-sm"
+            className="relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900"
           >
             <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${stat.accent}`} />
             <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500">{stat.title}</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
-                <p className="text-xs text-slate-500 mt-2">{stat.subtitle}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{stat.title}</p>
+                {/* Proportional figures: tabular-nums pads every digit to the
+                    width of a zero, which reads loose at display size. */}
+                <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">{stat.value}</p>
               </div>
-              <div className={`p-2.5 rounded-xl bg-gradient-to-br ${stat.accent} text-white`}>
+              <div className={`shrink-0 rounded-xl bg-gradient-to-br p-2.5 text-white ${stat.accent}`}>
                 <stat.icon className="h-5 w-5" />
               </div>
             </div>
+
+            {stat.trend ? (
+              <div className="mt-3">
+                <Sparkline
+                  values={stat.trend}
+                  height={38}
+                  ariaLabel={`${stat.title} over the last 6 hours`}
+                />
+              </div>
+            ) : null}
+
+            {/* mt-auto so the caption sits on the same baseline whether or not
+                the card carries a trend — otherwise the one with a sparkline
+                pushes its caption down and the row reads as ragged. */}
+            <p className="mt-auto pt-2 text-xs text-slate-500 dark:text-slate-400">{stat.subtitle}</p>
           </motion.div>
         ))}
       </div>
@@ -349,6 +406,28 @@ export default function MikrotikPage() {
                 {tab.label}
               </button>
             ))}
+
+            <div className="ml-auto flex rounded-full border border-slate-200 p-0.5 dark:border-slate-700">
+              {[
+                { key: 'cards', Icon: LayoutGrid, label: 'Card view' },
+                { key: 'table', Icon: List, label: 'Table view' },
+              ].map(({ key, Icon, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setViewMode(key)}
+                  aria-pressed={view === key}
+                  title={label}
+                  className={`rounded-full p-2 transition-colors ${
+                    view === key
+                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                      : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -371,8 +450,105 @@ export default function MikrotikPage() {
         </div>
       ) : (
         <div>
+        {view === 'table' ? (
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400">
+                  <tr>
+                    <th className="px-5 py-3 font-semibold">Device</th>
+                    <th className="px-5 py-3 font-semibold">Status</th>
+                    <th className="px-5 py-3 font-semibold">IP Address</th>
+                    <th className="px-5 py-3 text-right font-semibold">Clients</th>
+                    <th className="px-5 py-3 font-semibold">Bandwidth</th>
+                    <th className="px-5 py-3 text-right font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {pageItems.map((device) => {
+                    const trend = trends.devices?.[String(device.id)];
+                    return (
+                      <tr
+                        key={device.id}
+                        className="cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                        onClick={() => navigate(`/devices/mikrotik/${device.id}`)}
+                      >
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <div className="shrink-0 rounded-lg bg-orange-50 p-2 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">
+                              <Router className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-slate-900 dark:text-white">{device.name}</p>
+                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">{device.model}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5"><DeviceStatusBadge status={device.status} /></td>
+                        <td className="px-5 py-3.5 font-mono text-slate-700 dark:text-slate-300">{device.ip}</td>
+                        {/* tabular-nums here and not on the cards: these are
+                            columns of numbers that have to line up. */}
+                        <td className="px-5 py-3.5 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                          {device.clients ?? 0}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <span className={`shrink-0 tabular-nums font-semibold ${bandwidthTone(device.bandwidth)}`}>
+                              {bandwidthLabel(device.bandwidth)}
+                            </span>
+                            <span className="hidden w-20 shrink-0 lg:block">
+                              <Sparkline
+                                values={trend?.spark || []}
+                                height={22}
+                                area={false}
+                                strokeWidth={1.5}
+                                placeholder={false}
+                                ariaLabel={`${device.name} throughput trend`}
+                              />
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-0.5">
+                            <button
+                              onClick={() => handleQuickProvision(device)}
+                              disabled={actionId === device.id}
+                              title="Quick provision (one-line command)"
+                              className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-500/15"
+                            >
+                              <Terminal className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => handleSync(device.id)}
+                              disabled={actionId === device.id}
+                              title="Sync device"
+                              className="rounded-lg p-2 text-slate-500 hover:bg-orange-50 hover:text-orange-700 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-orange-500/15 dark:hover:text-orange-300"
+                            >
+                              <RefreshCw className={`h-4 w-4 ${actionId === device.id ? 'animate-spin' : ''}`} />
+                            </button>
+                            <button
+                              onClick={() => navigate(`/devices/mikrotik/${device.id}`)}
+                              title="View device"
+                              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+                            >
+                              <Settings className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <TablePagination {...paginationProps} loading={loading} noun="router" />
+          </div>
+        ) : (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {pageItems.map((device, index) => (
+          {pageItems.map((device, index) => {
+            const trend = trends.devices?.[String(device.id)];
+            return (
             <motion.div
               key={device.id}
               initial={{ opacity: 0, y: 16 }}
@@ -384,42 +560,84 @@ export default function MikrotikPage() {
             >
               <div className={`h-1 ${device.status === 'online' ? 'bg-emerald-500' : device.status === 'maintenance' ? 'bg-amber-500' : 'bg-rose-400'}`} />
               <div className="p-5">
-                <div className="flex items-start justify-between gap-3 mb-4">
-                  <div className="flex gap-3 min-w-0">
-                    <div className="p-2.5 rounded-xl bg-orange-50 text-orange-700 shrink-0">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 gap-3">
+                    <div className="shrink-0 rounded-xl bg-orange-50 p-2.5 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">
                       <Router className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="font-bold text-slate-900 truncate">{device.name}</h3>
-                      <p className="text-sm text-slate-500">{device.model}</p>
+                      <h3 className="flex items-center gap-2 truncate font-bold text-slate-900 dark:text-white">
+                        <span
+                          className={`h-2 w-2 shrink-0 rounded-full ${
+                            device.status === 'online' ? 'bg-emerald-500'
+                              : device.status === 'maintenance' ? 'bg-amber-500' : 'bg-rose-500'
+                          }`}
+                          aria-hidden="true"
+                        />
+                        {device.name}
+                      </h3>
+                      <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                        {device.model} · <span className="font-mono">{device.ip}</span>
+                      </p>
                     </div>
                   </div>
-                  <DeviceStatusBadge status={device.status} />
+                  {/* Availability, not just "is it up right now": a router that
+                      flaps hourly and one that has never dropped both read
+                      "Online" in a snapshot. The dot above still carries the
+                      live state, so this is the second channel, not a
+                      replacement. */}
+                  {trend?.uptime_percent != null ? (
+                    <span
+                      title={`Availability over the last 30 days${device.status !== 'online' ? ' — currently ' + device.status : ''}`}
+                      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${
+                        trend.uptime_percent >= 99.9
+                          ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25'
+                          : trend.uptime_percent >= 99
+                            ? 'bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25'
+                            : 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25'
+                      }`}
+                    >
+                      {trend.uptime_percent}% UPTIME
+                    </span>
+                  ) : (
+                    <DeviceStatusBadge status={device.status} />
+                  )}
                 </div>
 
-                <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
-                  <div className="rounded-xl bg-slate-50 p-3">
-                    <dt className="text-slate-500 text-xs">IP Address</dt>
-                    <dd className="font-mono font-medium text-slate-900 mt-0.5">{device.ip}</dd>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 p-3">
-                    <dt className="text-slate-500 text-xs">Clients</dt>
-                    <dd className="font-semibold text-slate-900 mt-0.5">{device.clients}</dd>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 p-3">
-                    <dt className="text-slate-500 text-xs">Location</dt>
-                    <dd className="font-medium text-slate-900 mt-0.5 truncate">{device.location || '—'}</dd>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 p-3">
-                    <dt className="text-slate-500 text-xs">Bandwidth</dt>
-                    <dd className={`font-semibold mt-0.5 ${bandwidthTone(device.bandwidth)}`}>
+                <div className="relative mb-4 overflow-hidden rounded-xl bg-slate-50 px-3 pt-3 dark:bg-slate-800/40">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className={`text-lg font-bold ${bandwidthTone(device.bandwidth)}`}>
                       {bandwidthLabel(device.bandwidth)}
-                    </dd>
+                    </span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                      Current uplink
+                    </span>
                   </div>
+                  <Sparkline
+                    values={trend?.spark || []}
+                    height={44}
+                    ariaLabel={`${device.name} uplink throughput over the last 6 hours`}
+                  />
+                </div>
+
+                <dl className="mb-4 grid grid-cols-3 gap-2 text-center">
+                  {[
+                    ['CPU', trend?.cpu != null ? `${Math.round(trend.cpu)}%` : '—'],
+                    ['MEM', trend?.memory != null ? `${Math.round(trend.memory)}%` : '—'],
+                    ['CLIENTS', device.clients ?? 0],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-xl bg-slate-50 px-2 py-2 dark:bg-slate-800/40">
+                      <dd className="text-base font-bold text-slate-900 dark:text-white">{value}</dd>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                        {label}
+                      </dt>
+                    </div>
+                  ))}
                 </dl>
 
-                <p className="text-xs text-slate-400 mb-4">
-                  Last sync: {device.lastSynced ? formatDate(device.lastSynced) : 'Never'}
+                <p className="mb-4 truncate text-xs text-slate-400 dark:text-slate-500">
+                  Last poll: {device.lastSynced ? formatRelativeTime(device.lastSynced) : 'never'}
+                  {device.location ? ` · ${device.location}` : ''}
                   {device.ispName ? ` · ${device.ispName}` : ''}
                 </p>
 
@@ -476,11 +694,14 @@ export default function MikrotikPage() {
                 </div>
               </div>
             </motion.div>
-          ))}
+            );
+          })}
         </div>
         <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <TablePagination {...paginationProps} loading={loading} noun="router" divider={false} />
         </div>
+        </>
+        )}
         </div>
       )}
 

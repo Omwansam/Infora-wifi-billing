@@ -984,6 +984,32 @@ def device_provision_status(device_id):
     return jsonify(status), 200
 
 
+@devices_bp.route('/trends', methods=['GET'])
+@jwt_required()
+def devices_trends():
+    """Sparkline series + vitals for the whole fleet, for the devices list.
+
+    One call for the page. Per-device requests would be a round trip per card.
+    """
+    from services.device_resource_history import fleet_trends
+
+    current_user = get_current_user()
+    if not current_user:
+        return jsonify({'error': 'User not found'}), 404
+
+    try:
+        hours = max(1, min(168, int(request.args.get('hours', 6))))
+    except (TypeError, ValueError):
+        hours = 6
+    try:
+        points = int(request.args.get('points', 24))
+    except (TypeError, ValueError):
+        points = 24
+
+    isp_id = None if current_user.role == 'admin' else current_user.isp_id
+    return jsonify(fleet_trends(isp_id=isp_id, hours=hours, points=points)), 200
+
+
 @devices_bp.route('/<int:device_id>/resource-history', methods=['GET'])
 @jwt_required()
 def device_resource_history(device_id):
