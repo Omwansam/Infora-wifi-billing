@@ -49,14 +49,17 @@ function resolveConnectionType(pathname) {
 }
 
 function ClientTypeBadge({ type }) {
+  // Explicit dark steps: the blanket remap in index.css turns these light
+  // tints into low-contrast mud on a dark surface, which is what made the
+  // badges unreadable behind a selected row.
   const styles = {
-    pppoe: 'bg-blue-50 text-blue-700 ring-blue-600/15',
-    hotspot: 'bg-amber-50 text-amber-800 ring-amber-600/15',
-    wireguard: 'bg-emerald-50 text-emerald-700 ring-emerald-600/15',
+    pppoe: 'bg-blue-50 text-blue-700 ring-blue-600/15 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-400/25',
+    hotspot: 'bg-amber-50 text-amber-800 ring-amber-600/15 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
+    wireguard: 'bg-emerald-50 text-emerald-700 ring-emerald-600/15 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
   };
   const label = type === 'pppoe' ? 'PPPoE' : type === 'hotspot' ? 'Hotspot' : type === 'wireguard' ? 'WireGuard' : type || '—';
   return (
-    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ring-1 ring-inset ${styles[type] || 'bg-slate-100 text-slate-600 ring-slate-500/15'}`}>
+    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ring-1 ring-inset ${styles[type] || 'bg-slate-100 text-slate-600 ring-slate-500/15 dark:bg-slate-700/50 dark:text-slate-300 dark:ring-slate-400/25'}`}>
       {label}
     </span>
   );
@@ -521,9 +524,9 @@ export default function ClientsPage() {
           {/* Selection toolbar — only present once something is selected, so it
               never competes with the filters for attention. */}
           {selectedCount > 0 && (
-            <div className="flex flex-col gap-3 border-b border-rose-100 bg-rose-50/70 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-indigo-100 bg-indigo-50/70 px-5 py-3 dark:border-indigo-500/20 dark:bg-indigo-500/10 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-rose-900">
+                <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">
                   {selectedCount} subscriber{selectedCount === 1 ? '' : 's'} selected
                   {selectAllMatching && ' — everything matching this view'}
                 </p>
@@ -533,7 +536,7 @@ export default function ClientsPage() {
                   <button
                     type="button"
                     onClick={() => setSelectAllMatching(true)}
-                    className="mt-0.5 text-sm font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900"
+                    className="mt-0.5 text-sm font-medium text-indigo-700 underline underline-offset-2 hover:text-indigo-900 dark:text-indigo-300 dark:hover:text-indigo-100"
                   >
                     Select all {totalMatching} subscribers
                     {filterSummary() ? ` (${filterSummary()})` : ' in this account'}
@@ -543,7 +546,7 @@ export default function ClientsPage() {
                   <button
                     type="button"
                     onClick={toggleAllVisible}
-                    className="mt-0.5 text-sm font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900"
+                    className="mt-0.5 text-sm font-medium text-indigo-700 underline underline-offset-2 hover:text-indigo-900 dark:text-indigo-300 dark:hover:text-indigo-100"
                   >
                     Select only the {filteredClients.length} shown here
                   </button>
@@ -554,7 +557,7 @@ export default function ClientsPage() {
                   type="button"
                   onClick={clearSelection}
                   disabled={bulkBusy}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   Clear
                 </button>
@@ -562,7 +565,7 @@ export default function ClientsPage() {
                   type="button"
                   onClick={handleBulkDelete}
                   disabled={bulkBusy}
-                  className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60 dark:bg-rose-600 dark:hover:bg-rose-500"
                 >
                   {bulkBusy ? (
                     <RefreshCw className="h-4 w-4 animate-spin" />
@@ -578,7 +581,7 @@ export default function ClientsPage() {
           <div className="overflow-x-auto">
             <table className="min-w-full">
               <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-100">
+                <tr className="border-b border-slate-100 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-800/50">
                   <th className="w-12 px-5 py-3 text-left">
                     <input
                       type="checkbox"
@@ -595,7 +598,7 @@ export default function ClientsPage() {
                       }}
                       onChange={toggleAllVisible}
                       disabled={loading || filteredClients.length === 0}
-                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-rose-600 focus:ring-rose-500 disabled:opacity-40"
+                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900"
                     />
                   </th>
                   {[
@@ -666,18 +669,34 @@ export default function ClientsPage() {
                     return (
                       <tr
                         key={client.id}
-                        className={`transition-colors cursor-pointer ${
-                          checked ? 'bg-rose-50/60 hover:bg-rose-50' : 'hover:bg-blue-50/30'
+                        // Selection is informational, not destructive — only the
+                        // Delete button is. Painting every ticked row red made the
+                        // table read as "about to be destroyed" and, with no dark
+                        // variant, washed the whole thing out in dark mode.
+                        // The left accent bar carries selection alongside the tint
+                        // so it still reads for anyone who cannot separate the two
+                        // shades; the unselected rows keep a transparent border of
+                        // the same width so nothing shifts when a row is ticked.
+                        className={`cursor-pointer transition-colors ${
+                          checked
+                            ? 'bg-indigo-50/70 hover:bg-indigo-100/70 dark:bg-indigo-500/10 dark:hover:bg-indigo-500/20'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                         }`}
                         onClick={() => navigate(`/clients/${client.id}`)}
                       >
-                        <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                        {/* The accent lives on the cell, not the row: a border on
+                            a <tr> is only honoured on the first row in a collapsed
+                            table, so the rest of the selection silently lost it. */}
+                        <td
+                          className={`border-l-2 px-5 py-4 ${checked ? 'border-indigo-500' : 'border-transparent'}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <input
                             type="checkbox"
                             aria-label={`Select ${client.name}`}
                             checked={checked}
                             onChange={() => toggleOne(client.id)}
-                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-900"
                           />
                         </td>
                         <td className="px-5 py-4">
@@ -688,8 +707,8 @@ export default function ClientsPage() {
                               {customerInitials(client.name)}
                             </div>
                             <div className="min-w-0">
-                              <p className="font-medium text-slate-900 truncate">{client.name}</p>
-                              <p className="text-xs text-slate-500">{client.phone}</p>
+                              <p className="truncate font-medium text-slate-900 dark:text-white">{client.name}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{client.phone}</p>
                             </div>
                           </div>
                         </td>
@@ -699,18 +718,18 @@ export default function ClientsPage() {
                           </td>
                         )}
                         <td className="px-5 py-4">
-                          <p className="font-mono text-xs text-slate-700">{client.email}</p>
+                          <p className="font-mono text-xs text-slate-700 dark:text-slate-300">{client.email}</p>
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-700">{client.package || '—'}</td>
+                        <td className="px-5 py-4 text-sm text-slate-700 dark:text-slate-300">{client.package || '—'}</td>
                         <td className="px-5 py-4">
-                          <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-600/15">
+                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-500/15 dark:bg-slate-700/50 dark:text-slate-200 dark:ring-slate-400/25">
                             {clientSpeedLabel(client)}
                           </span>
                         </td>
                         <td className="px-5 py-4">
                           <ClientConnectionBadge connected={connected} status={client.status} />
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600 whitespace-nowrap">
+                        <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-600 dark:text-slate-400">
                           {client.subscription_end ? formatDate(client.subscription_end) : '—'}
                         </td>
                         <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
@@ -722,8 +741,8 @@ export default function ClientsPage() {
                               onClick={(e) => toggleConnection(client, e)}
                               className={`p-2 rounded-lg transition-colors disabled:opacity-40 ${
                                 connected
-                                  ? 'text-amber-600 hover:bg-amber-50'
-                                  : 'text-emerald-600 hover:bg-emerald-50'
+                                  ? 'text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-500/15'
+                                  : 'text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/15'
                               }`}
                             >
                               {connected ? <Unplug className="h-4 w-4" /> : <PlugZap className="h-4 w-4" />}
@@ -732,7 +751,7 @@ export default function ClientsPage() {
                               type="button"
                               title="View"
                               onClick={() => navigate(`/clients/${client.id}`)}
-                              className="p-2 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+                              className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-600 dark:text-slate-400 dark:hover:bg-blue-500/15 dark:hover:text-blue-300"
                             >
                               <Eye className="h-4 w-4" />
                             </button>
@@ -741,7 +760,7 @@ export default function ClientsPage() {
                                 type="button"
                                 title="Edit"
                                 onClick={() => navigate(`/clients/${client.id}/edit`)}
-                                className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
                               >
                                 <Pencil className="h-4 w-4" />
                               </button>
@@ -750,7 +769,7 @@ export default function ClientsPage() {
                               type="button"
                               title="Delete"
                               onClick={(e) => handleDelete(client, e)}
-                              className="p-2 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50"
+                              className="rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:text-slate-400 dark:hover:bg-rose-500/15 dark:hover:text-rose-300"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
