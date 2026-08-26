@@ -21,12 +21,14 @@ import {
   LayoutGrid,
   List,
   Settings,
+  Image as ImageIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS, getAuthHeaders } from '../../config/api';
 import { getAccessToken } from '../../utils/authToken';
 import { bandwidthLabel, bandwidthTone } from '../../lib/deviceUtils';
 import Sparkline from '../ui/Sparkline';
+import DeviceArt from './DeviceArt';
 import { formatDate, formatRelativeTime } from '../../lib/utils';
 import deviceService from '../../services/deviceService';
 import { useMikrotikDevices } from '../../hooks/useMikrotikDevices';
@@ -66,6 +68,23 @@ export default function MikrotikPage() {
     }
   });
   const [trends, setTrends] = useState({ devices: {}, fleet: [] });
+  // The panel on each card alternates between the throughput trend and a
+  // picture of the hardware. A timer would swap it out from under whoever is
+  // reading it, so the operator flips it and the choice sticks.
+  const [cardPanel, setCardPanel] = useState(() => {
+    try {
+      return localStorage.getItem('infora.devicePanel') === 'art' ? 'art' : 'chart';
+    } catch {
+      return 'chart';
+    }
+  });
+
+  const setPanel = (next) => {
+    setCardPanel(next);
+    try {
+      localStorage.setItem('infora.devicePanel', next);
+    } catch { /* private window — preference just won't persist */ }
+  };
 
   const setViewMode = (next) => {
     setView(next);
@@ -475,9 +494,14 @@ export default function MikrotikPage() {
                       >
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-3">
-                            <div className="shrink-0 rounded-lg bg-orange-50 p-2 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">
-                              <Router className="h-4 w-4" />
-                            </div>
+                            {/* The hardware, not a generic router glyph: in a long
+                                list the silhouette is what lets you find the box
+                                you are thinking of before you read the name. */}
+                            <DeviceArt
+                              model={device.model}
+                              offline={device.status !== 'online'}
+                              className="h-7 w-12 shrink-0"
+                            />
                             <div className="min-w-0">
                               <p className="truncate font-semibold text-slate-900 dark:text-white">{device.name}</p>
                               <p className="truncate text-xs text-slate-500 dark:text-slate-400">{device.model}</p>
@@ -586,13 +610,16 @@ export default function MikrotikPage() {
                       "Online" in a snapshot. The dot above still carries the
                       live state, so this is the second channel, not a
                       replacement. */}
+                  {/* Colour tracks the live state, not the percentage: a router
+                      that is up right now reads green even if it had a bad
+                      month, and the figure beside it still tells you it did. */}
                   {trend?.uptime_percent != null ? (
                     <span
-                      title={`Availability over the last 30 days${device.status !== 'online' ? ' — currently ' + device.status : ''}`}
+                      title={`${device.status === 'online' ? 'Online' : device.status} · ${trend.uptime_percent}% availability over the last 30 days`}
                       className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${
-                        trend.uptime_percent >= 99.9
+                        device.status === 'online'
                           ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25'
-                          : trend.uptime_percent >= 99
+                          : device.status === 'maintenance'
                             ? 'bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25'
                             : 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25'
                       }`}
@@ -605,19 +632,42 @@ export default function MikrotikPage() {
                 </div>
 
                 <div className="relative mb-4 overflow-hidden rounded-xl bg-slate-50 px-3 pt-3 dark:bg-slate-800/40">
-                  <div className="flex items-baseline justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPanel(cardPanel === 'chart' ? 'art' : 'chart')}
+                    title={cardPanel === 'chart' ? 'Show the hardware' : 'Show the throughput trend'}
+                    aria-label={cardPanel === 'chart' ? 'Show the hardware' : 'Show the throughput trend'}
+                    className="absolute right-1.5 top-1.5 z-10 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-white hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+                  >
+                    {cardPanel === 'chart' ? <ImageIcon className="h-3.5 w-3.5" /> : <Activity className="h-3.5 w-3.5" />}
+                  </button>
+
+                  <div className="flex items-baseline justify-between gap-2 pr-7">
                     <span className={`text-lg font-bold ${bandwidthTone(device.bandwidth)}`}>
                       {bandwidthLabel(device.bandwidth)}
                     </span>
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                      Current uplink
+                    <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                      {cardPanel === 'chart' ? 'Current uplink' : device.model || 'RouterOS'}
                     </span>
                   </div>
-                  <Sparkline
-                    values={trend?.spark || []}
-                    height={44}
-                    ariaLabel={`${device.name} uplink throughput over the last 6 hours`}
-                  />
+
+                  {cardPanel === 'chart' ? (
+                    <Sparkline
+                      values={trend?.spark || []}
+                      height={44}
+                      ariaLabel={`${device.name} uplink throughput over the last 6 hours`}
+                    />
+                  ) : (
+                    // Taller than the sparkline it replaces: a 44px strip is
+                    // enough for a trend line and not enough to recognise a
+                    // chassis, which is the whole point of showing one.
+                    <DeviceArt
+                      model={device.model}
+                      offline={device.status !== 'online'}
+                      className="h-[68px] w-full py-1"
+                      title={`${device.model || 'RouterOS device'} — ${device.name}`}
+                    />
+                  )}
                 </div>
 
                 <dl className="mb-4 grid grid-cols-3 gap-2 text-center">
