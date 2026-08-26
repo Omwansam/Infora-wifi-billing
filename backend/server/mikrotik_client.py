@@ -397,11 +397,24 @@ class MikroTikClient:
         )
 
     def _ssh_count(self, command: str) -> int:
-        """Run a RouterOS 'print count-only' and return the integer (0 on any issue)."""
+        """Run a RouterOS 'print count-only' and return the integer (0 on any issue).
+
+        Only a line that is *entirely* digits counts. Scraping every digit out of
+        the whole reply looks equivalent and is not: RouterOS answers a command
+        the board does not support with prose, and
+
+            bad command name wireless (line 1 column 12)
+
+        collapses to "112". That is exactly how a wired-only RB3011 — which has
+        no wireless interface at all — came to report 112 connected clients.
+        """
         try:
             out, _err = self._ssh_execute_command(command)
-            digits = ''.join(ch for ch in (out or '') if ch.isdigit())
-            return int(digits) if digits else 0
+            for line in reversed((out or '').strip().splitlines()):
+                line = line.strip()
+                if line.isdigit():
+                    return int(line)
+            return 0
         except Exception:
             return 0
 
