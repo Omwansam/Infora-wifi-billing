@@ -42,7 +42,7 @@ const STATUSES = [
 
 const inputCls =
   'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none '
-  + 'transition-colors placeholder:text-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 '
+  + 'transition-colors placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 '
   + 'disabled:cursor-not-allowed disabled:opacity-60 '
   + 'dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500';
 
@@ -134,7 +134,7 @@ function SwitchToggle({ checked, onChange, label }) {
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={`relative h-8 w-14 rounded-full transition-colors shrink-0 ${
-          checked ? 'bg-emerald-500' : 'bg-slate-200'
+          checked ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-700'
         }`}
       >
         <span
@@ -143,7 +143,7 @@ function SwitchToggle({ checked, onChange, label }) {
           }`}
         />
       </button>
-      {label && <span className="text-sm text-slate-700">{label}</span>}
+      {label && <span className="text-sm text-slate-700 dark:text-slate-300">{label}</span>}
     </label>
   );
 }
@@ -165,6 +165,7 @@ export default function ClientForm() {
     subscription_end: '',
     expiry_touched: false,
     status: 'active',
+    auto_password: true,
     password: '',
   });
   const [loading, setLoading] = useState(false);
@@ -242,6 +243,7 @@ export default function ClientForm() {
     crypto.getRandomValues(bytes);
     setField('password', Array.from(bytes, (n) => alphabet[n % alphabet.length]).join(''));
     setShowPassword(true);
+    setField('auto_password', false);
   };
 
   const statusHelp = form.connection_type === 'hotspot'
@@ -259,7 +261,16 @@ export default function ClientForm() {
     if (!login) { toast.error('Enter a username — it is what they type to sign in'); return; }
     if (!phone) { toast.error('Enter a phone number'); return; }
     if (!form.service_plan_id) { toast.error('Pick a package'); return; }
-    if (/[<>]/.test(form.password)) { toast.error('A password cannot contain < or >'); return; }
+    if (!form.auto_password) {
+      if (!form.password.trim()) {
+        toast.error('Enter a password, or switch auto-generate back on');
+        return;
+      }
+      if (/[<>]/.test(form.password)) {
+        toast.error('A password cannot contain < or >');
+        return;
+      }
+    }
 
     // full_name is what the API stores; fall back to the login so the record is
     // never nameless when an operator skips the optional name fields.
@@ -282,7 +293,9 @@ export default function ClientForm() {
         // Sent as local time without a zone; the API reads it as UTC-naive the
         // same way it stores every other timestamp.
         subscription_end: form.subscription_end || '',
-        password: form.password.trim() || undefined,
+        // Omitted entirely when auto-generating: the API mints one and returns
+        // it, which is the only copy anybody gets.
+        password: form.auto_password ? undefined : form.password.trim(),
       });
       // apiCall resolves { success: false, error } rather than throwing, so the
       // failure branch has to be explicit or a 400 looks like a silent no-op.
@@ -291,7 +304,7 @@ export default function ClientForm() {
         return;
       }
       const data = result.data;
-      const pwd = data.radius_password || form.password.trim();
+      const pwd = data.radius_password || (form.auto_password ? '' : form.password.trim());
       const username = data.customer?.radius_username || login.toLowerCase();
 
       if (pwd && data.radius_provisioned) {
@@ -429,7 +442,7 @@ export default function ClientForm() {
             Subscribers <span className="mx-1">—</span> New
           </p>
           <h1 className="mt-1 text-3xl font-bold text-slate-900 dark:text-white">
-            Add a <span className="text-orange-500">subscriber.</span>
+            Add a <span className="text-emerald-600 dark:text-emerald-400">subscriber.</span>
           </h1>
           <p className="mt-1 text-slate-600 dark:text-slate-400">
             Hotspot users sign up through the portal — this is for the ones you provision by hand.
@@ -444,7 +457,7 @@ export default function ClientForm() {
         >
           {/* Who is being created — an anchor so a long form still has a subject. */}
           <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-orange-500 text-lg font-bold text-white">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-lg font-bold text-white">
               {initials || <HelpCircle className="h-6 w-6" />}
             </div>
             <div className="min-w-0">
@@ -597,9 +610,15 @@ export default function ClientForm() {
                       onClick={() => setField('status', s.key)}
                       aria-pressed={form.status === s.key}
                       title={disabled ? 'Hotspot subscribers activate on their first payment' : undefined}
+                      // The selected pill takes the colour of what it means —
+                      // an account that can connect is not the same kind of
+                      // state as one that cannot, and one accent for both would
+                      // say it is.
                       className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                         form.status === s.key
-                          ? 'bg-orange-500 text-white shadow-sm'
+                          ? (s.key === 'active'
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-amber-500 text-white shadow-sm')
                           : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
                       }`}
                     >
@@ -611,32 +630,48 @@ export default function ClientForm() {
             </Field>
 
             <Field
-              label="Password"
-              required={form.status === 'active'}
-              help="Any length, any characters except < and >. Leave blank to generate one."
+              label="Connection password"
+              required={!form.auto_password && form.status === 'active'}
+              help="This is also the subscriber's portal login password."
             >
-              <div className="relative">
-                <input
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={form.password}
-                  onChange={onInput}
-                  placeholder="Any length"
-                  autoComplete="new-password"
-                  className={`${inputCls} pr-20 font-mono`}
-                />
-                <div className="absolute inset-y-0 right-2 flex items-center gap-0.5">
-                  <button type="button" onClick={generatePassword} title="Generate a password"
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
-                    <RefreshCw className="h-4 w-4" />
-                  </button>
-                  <button type="button" onClick={() => setShowPassword((v) => !v)}
-                          title={showPassword ? 'Hide password' : 'Show password'}
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
+              <SwitchToggle
+                checked={form.auto_password}
+                onChange={(v) => setField('auto_password', v)}
+                label="Auto-generate a secure password"
+              />
+
+              {form.auto_password ? (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  A password is generated on save and shown to you once, with the username and
+                  account number, on a card you can copy.
+                </p>
+              ) : (
+                <div className="relative mt-3">
+                  <input
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={form.password}
+                    onChange={onInput}
+                    placeholder="Any length"
+                    autoComplete="new-password"
+                    className={`${inputCls} pr-20 font-mono`}
+                  />
+                  <div className="absolute inset-y-0 right-2 flex items-center gap-0.5">
+                    <button type="button" onClick={generatePassword} title="Generate a password"
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
+                      <RefreshCw className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => setShowPassword((v) => !v)}
+                            title={showPassword ? 'Hide password' : 'Show password'}
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100">
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                    Any length, any characters except &lt; and &gt;.
+                  </p>
                 </div>
-              </div>
+              )}
             </Field>
           </Section>
 
