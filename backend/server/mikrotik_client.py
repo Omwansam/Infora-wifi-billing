@@ -11,7 +11,7 @@ except ImportError:
 import time
 import json
 import ssl
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
@@ -433,50 +433,110 @@ class MikroTikClient:
         except Exception:
             return 0
 
-    def _ssh_uplink_bps(self) -> Tuple[int, int]:
-        """Return (rx_bps, tx_bps) on the WAN/uplink port via monitor-traffic.
+    def _ssh_iface_bps(self, iface: str) -> Tuple[int, int]:
+        """One monitor-traffic sample for a single interface, as (rx_bps, tx_bps).
 
-        Best-effort: picks ether1 (MikroTik's conventional WAN) or the first
-        ethernet port, samples once, and returns raw bits/sec. Any failure
-        yields (0, 0) so a stats read never breaks sync/status.
+        Only bare-integer lines are read. RouterOS answers monitor-traffic on a
+        missing interface with prose, and scraping digits out of that would
+        invent throughput the same way it once invented 112 clients.
         """
         try:
-            uplink = self._ssh_uplink_interface()
-            if not uplink:
-                return 0, 0
-            # One 'as-value' sample -> raw integer bits/sec for rx and tx.
             out, _err = self._ssh_execute_command(
-                f':local m [/interface monitor-traffic {uplink} once as-value];'
+                f':local m [/interface monitor-traffic "{iface}" once as-value];'
                 ' :put ($m->"rx-bits-per-second"); :put ($m->"tx-bits-per-second")'
             )
-            nums = [int(''.join(c for c in ln if c.isdigit()) or 0)
-                    for ln in (out or '').strip().splitlines() if ln.strip()]
+            nums = [int(ln.strip()) for ln in (out or '').splitlines() if ln.strip().isdigit()]
             rx = nums[0] if len(nums) >= 1 else 0
             tx = nums[1] if len(nums) >= 2 else 0
             return rx, tx
         except Exception:
             return 0, 0
 
-    def _ssh_uplink_interface(self) -> Optional[str]:
-        """WAN/uplink port name.
+    def _ssh_uplink_bps(self) -> Tuple[int, int]:
+        """Total (rx_bps, tx_bps) across every active internet uplink.
 
-        Prefer the interface carrying the active default route (the true internet
-        uplink, wherever it is), and only fall back to ether1 / the first
-        ethernet when that can't be resolved.
+        Summed, not sampled from one port. A load-balanced router carries its
+        traffic over two WANs at once, so reporting whichever one happened to
+        sort first understates the load by roughly half and swings as the
+        balancer shifts sessions between them.
+
+        Any failure yields (0, 0) so a stats read never breaks sync/status.
         """
-        # 1) Interface of the active default route (immediate-gw is 'IP%iface').
+        try:
+            uplinks = self._ssh_uplink_interfaces()
+            if not uplinks:
+                return 0, 0
+            rx_total = tx_total = 0
+            for iface in uplinks:
+                rx, tx = self._ssh_iface_bps(iface)
+                rx_total += rx
+                tx_total += tx
+            return rx_total, tx_total
+        except Exception:
+            return 0, 0
+
+    def _ssh_uplink_interfaces(self) -> List[str]:
+        """Every interface carrying an active default route, deduplicated.
+
+        Two shapes have to be recognised, and only handling the first is what
+        made a PPPoE uplink invisible here:
+
+        * ``immediate-gw=192.168.0.1%ether2`` — an ethernet WAN, interface after
+          the ``%``.
+        * ``gateway=pppoe-out-isp1`` with an empty ``immediate-gw`` — a PPPoE
+          uplink, where the gateway *is* the interface. A router whose primary
+          WAN is PPPoE has no ``%`` anywhere in its default route, so a rule
+          that keys on ``%`` alone skips the main link and measures the backup.
+
+        Values are pulled with a regex rather than by splitting on spaces:
+        ``comment=WAN2: main backup via ISP2`` contains spaces and would
+        otherwise shift every field after it.
+        """
+        import re
+
+        ifaces: List[str] = []
+
+        def _add(name: str) -> None:
+            name = (name or '').strip().strip('"')
+            if name and name not in ifaces:
+                ifaces.append(name)
+
         try:
             out, _err = self._ssh_execute_command(
-                ':local r [/ip route find where dst-address="0.0.0.0/0" active=yes];'
-                ' :if ([:len $r] > 0) do={ :put [/ip route get ([:pick $r 0]) immediate-gw] }'
+                '/ip route print terse where dst-address="0.0.0.0/0" active=yes'
             )
-            val = (out or '').strip()
-            if '%' in val:
-                iface = val.split('%')[-1].strip().split(',')[0].split()[0]
-                if iface:
-                    return iface
+            for line in (out or '').splitlines():
+                if 'dst-address=0.0.0.0/0' not in line:
+                    continue
+                matched = False
+                for gw in re.findall(r'immediate-gw=(\S+)', line):
+                    for part in gw.split(','):
+                        if '%' in part:
+                            _add(part.split('%')[-1])
+                            matched = True
+                if matched:
+                    continue
+                # No immediate-gw: a gateway that is not an address is an
+                # interface name (PPPoE, l2tp, wireguard…).
+                for gw in re.findall(r'gateway=(\S+)', line):
+                    for part in gw.split(','):
+                        part = part.strip()
+                        if part and not re.fullmatch(r'[0-9a-fA-F:.]+', part):
+                            _add(part)
+            if ifaces:
+                return ifaces
         except Exception:
             pass
+
+        fallback = self._ssh_uplink_interface()
+        return [fallback] if fallback else []
+
+    def _ssh_uplink_interface(self) -> Optional[str]:
+        """Single WAN/uplink port name — the conventional guess.
+
+        Kept as the fallback for :meth:`_ssh_uplink_interfaces` when no active
+        default route can be read at all.
+        """
         # 2) Fallback: ether1, else the first ethernet port.
         try:
             out, _err = self._ssh_execute_command('/interface ethernet print terse')
