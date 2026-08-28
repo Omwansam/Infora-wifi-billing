@@ -24,6 +24,25 @@ from services.radius_provisioning import provision_customer_radius
 
 logger = logging.getLogger(__name__)
 
+# Override modes, in the order the dialog offers them. `inherit` is the same as
+# having no override at all and exists so the operator can say so explicitly.
+OVERRIDE_MODES = ('inherit', 'exempt', 'throttle', 'disconnect')
+
+
+def active_override_mode(customer):
+    """The override in force right now, or 'inherit' when there is none.
+
+    An override past its `until` is not an override — enforcement has already
+    resumed — so it reads as inherit rather than lingering silently.
+    """
+    mode = (customer.fup_override_mode or 'inherit').lower()
+    if mode not in OVERRIDE_MODES or mode == 'inherit':
+        return 'inherit'
+    until = customer.fup_override_until
+    if until and until <= datetime.utcnow():
+        return 'inherit'
+    return mode
+
 
 def _kick(customer, isp):
     """Best-effort kick of live sessions so the new rate-limit takes effect."""
@@ -73,11 +92,44 @@ def apply_fup_enforcement(isp_id=None):
         if not plan or not isp:
             continue
 
-        # An operator override outranks the policy for as long as it lasts: the
-        # point of releasing someone from a throttle is that they stay released.
-        # An expired override falls through and enforcement resumes on its own.
-        if customer.fup_exempt_until and customer.fup_exempt_until > datetime.utcnow():
+        # An operator override outranks the package policy for as long as it
+        # lasts — the point of a support decision is that it sticks. An expired
+        # or absent override falls through and normal policy resumes on its own.
+        mode = active_override_mode(customer)
+
+        if mode == 'exempt':
             if customer.fup_throttled:
+                _restore(customer, plan, isp)
+                restored += 1
+            continue
+
+        if mode == 'disconnect':
+            # Past the cap this account is dropped rather than slowed. Kicking
+            # without re-provisioning is the whole behaviour: the session ends,
+            # and the next one is refused by the same check.
+            if is_over:
+                _kick(customer, isp)
+                if not customer.fup_throttled:
+                    customer.fup_throttled = True
+                    throttled += 1
+                    logger.info('FUP disconnected %s (override)', customer.email)
+            elif customer.fup_throttled:
+                _restore(customer, plan, isp)
+                restored += 1
+            continue
+
+        if mode == 'throttle':
+            # Force the throttle even where the plan itself would not, falling
+            # back to the plan's own speed when no throttled speed is set.
+            forced_speed = throttle_speed or normalize_rate_limit(row.get('fup_throttled_speed'))
+            if is_over or row['status'] == 'exceeded':
+                if forced_speed and not customer.fup_throttled:
+                    provision_customer_radius(customer, plan, isp, throttle=True)
+                    customer.fup_throttled = True
+                    _kick(customer, isp)
+                    throttled += 1
+                    logger.info('FUP throttled %s to %s (override)', customer.email, forced_speed)
+            elif customer.fup_throttled:
                 _restore(customer, plan, isp)
                 restored += 1
             continue

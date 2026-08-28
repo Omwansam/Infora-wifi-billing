@@ -29,6 +29,9 @@ from models import (
 )
 from services import customer_events as events
 from services import subscriber_insights as insights
+from services import subscriber_messages as messages
+from services import subscription_pause as pause_service
+from services.fup_enforcement import OVERRIDE_MODES
 from services.plan_utils import (
     format_plan_data_cap_display, get_plan_speed_mbps, plan_subscription_end,
 )
@@ -106,6 +109,22 @@ def _parse_dt(value):
 
 def _fmt_dt(value):
     return value.strftime('%d %b %Y, %H:%M') if value else '—'
+
+
+def _send_sms(customer, body):
+    """(True, None) on success, or (False, error_response).
+
+    `raise_errors=True` throughout: an operator who clicked Send must be told
+    when nothing went out. The automated templates keep the quiet behaviour.
+    """
+    from services import notification_dispatch as nd
+    try:
+        sent = nd.send_sms(customer.phone, body, isp=_isp_of(customer), raise_errors=True)
+    except Exception as exc:
+        return False, _fail(str(exc) or 'SMS gateway rejected the message', 502)
+    if not sent:
+        return False, _fail('SMS gateway did not accept the message', 502)
+    return True, None
 
 
 def _ok(payload, status=200):
@@ -389,6 +408,33 @@ def list_messages(customer_id):
     return _ok({'messages': [_serialize_message(row) for row in rows]})
 
 
+@subscriber_bp.route('/<int:customer_id>/message-preview', methods=['GET'])
+@jwt_required()
+def message_preview(customer_id):
+    """Exactly what a canned SMS will say, before the operator commits to it.
+
+    The dialogs show this verbatim and let it be edited; the send endpoints
+    accept the edited body back. Same builder both ways, so the preview can
+    never drift from what is actually delivered.
+    """
+    customer, _user, error = _load(customer_id)
+    if error:
+        return error
+
+    kind = (request.args.get('kind') or '').strip()
+    body, extras = messages.preview(customer, kind)
+    if body is None:
+        return _fail(extras.get('error', 'No preview available'), 400)
+
+    return _ok({
+        'kind': kind,
+        'body': body,
+        'phone': customer.phone,
+        'can_send': bool(customer.phone),
+        **extras,
+    })
+
+
 @subscriber_bp.route('/<int:customer_id>/messages', methods=['POST'])
 @jwt_required()
 def send_message(customer_id):
@@ -566,41 +612,29 @@ def _dispatch(customer, event_key, channel='sms', extra=None):
 @subscriber_bp.route('/<int:customer_id>/send-credentials', methods=['POST'])
 @jwt_required()
 def send_credentials(customer_id):
-    """SMS the subscriber their own login. Only for account types that have one."""
+    """SMS the subscriber their own login, as previewed (or as edited)."""
     customer, user, error = _load(customer_id)
     if error:
         return error
-    if customer.connection_type not in ('pppoe', 'hotspot'):
-        return _fail('Only PPPoE and hotspot accounts have connection credentials')
     if not customer.phone:
         return _fail('This subscriber has no phone number on file')
 
-    password = get_customer_radius_password(customer)
-    if not password:
-        return _fail('No password is stored for this account — reset it first')
+    data = request.get_json(silent=True) or {}
+    body = (data.get('message') or '').strip()
+    if not body:
+        body, extras = messages.preview(customer, 'credentials')
+        if body is None:
+            return _fail(extras.get('error', 'No credentials to send'))
 
-    isp = _isp_of(customer)
-    name = (isp.name or isp.company_name) if isp else 'your ISP'
-    body = (
-        f'{name} internet login\n'
-        f'Username: {radius_username(customer)}\n'
-        f'Password: {password}\n'
-        f'Account no: {customer.account_number or "—"}'
-    )
-
-    from services import notification_dispatch as nd
-    try:
-        sent = nd.send_sms(customer.phone, body, isp=isp, raise_errors=True)
-    except Exception as exc:
-        return _fail(str(exc) or 'SMS gateway rejected the message', 502)
+    sent, failure = _send_sms(customer, body)
     if not sent:
-        return _fail('SMS gateway did not accept the message', 502)
+        return failure
 
     db.session.add(Notification(
         customer_id=customer.id, notification_type='sms',
         title='Connection credentials',
-        # The message we file must not archive the password in plaintext — the
-        # SMS is the delivery, the record is only that it happened.
+        # The filed record must not archive the password in plaintext — the SMS
+        # is the delivery, the record is only that it happened.
         message='Connection credentials sent by SMS.',
         priority=NotificationPriority.MEDIUM,
     ))
@@ -613,34 +647,19 @@ def send_credentials(customer_id):
 @subscriber_bp.route('/<int:customer_id>/send-payment-details', methods=['POST'])
 @jwt_required()
 def send_payment_details(customer_id):
-    """SMS how to pay: paybill/till, the account number, and what is owed."""
+    """SMS how to pay: the ISP's real collection route and the account number."""
     customer, user, error = _load(customer_id)
     if error:
         return error
     if not customer.phone:
         return _fail('This subscriber has no phone number on file')
 
-    isp = _isp_of(customer)
-    name = (isp.name or isp.company_name) if isp else 'your ISP'
-    plan = customer.service_plan
-    amount = float(plan.price) if plan and plan.price is not None else float(customer.balance or 0)
+    data = request.get_json(silent=True) or {}
+    body = (data.get('message') or '').strip() or messages.payment_details_body(customer)
 
-    paybill = getattr(isp, 'mpesa_shortcode', None) or getattr(isp, 'mpesa_paybill', None)
-    lines = [f'{name} payment details']
-    if paybill:
-        lines.append(f'Paybill: {paybill}')
-    lines.append(f'Account no: {customer.account_number or radius_username(customer)}')
-    if amount:
-        lines.append(f'Amount: Ksh {amount:,.0f}')
-    body = '\n'.join(lines)
-
-    from services import notification_dispatch as nd
-    try:
-        sent = nd.send_sms(customer.phone, body, isp=isp, raise_errors=True)
-    except Exception as exc:
-        return _fail(str(exc) or 'SMS gateway rejected the message', 502)
+    sent, failure = _send_sms(customer, body)
     if not sent:
-        return _fail('SMS gateway did not accept the message', 502)
+        return failure
 
     db.session.add(Notification(
         customer_id=customer.id, notification_type='sms',
@@ -714,9 +733,8 @@ def generate_invoice(customer_id):
 def pause_subscription(customer_id):
     """Stop the clock: remove access and bank the days still owed.
 
-    This is not the same as blocking. A paused subscriber gets their remaining
-    days back on resume, because they paid for them and were not using the
-    line — charging someone for a suspension they asked for is theft by clock.
+    Optionally set `pause_until` and the subscription comes back on its own —
+    see services.subscription_pause for why the banked days live on the event.
     """
     customer, user, error = _load(customer_id)
     if error:
@@ -724,31 +742,27 @@ def pause_subscription(customer_id):
     if customer.status == CustomerStatus.SUSPENDED:
         return _fail('This subscription is already suspended')
 
-    now = datetime.utcnow()
-    remaining_days = None
-    if customer.subscription_end and customer.subscription_end > now:
-        remaining_days = round((customer.subscription_end - now).total_seconds() / 86400, 3)
+    data = request.get_json(silent=True) or {}
+    until = _parse_dt(data.get('pause_until'))
+    if data.get('pause_until') and not until:
+        return _fail('Invalid auto-resume time — expected an ISO 8601 datetime')
+    if until and until <= datetime.utcnow():
+        return _fail('The auto-resume time is already in the past')
 
-    isp = _isp_of(customer)
-    if isp:
-        try:
-            suspend_customer_access(customer, isp)
-        except Exception as exc:
-            return _fail(f'Could not remove RADIUS access: {exc}', 502)
-    customer.status = CustomerStatus.SUSPENDED
+    try:
+        banked = pause_service.pause(customer, isp=_isp_of(customer), until=until, actor=user)
+    except Exception as exc:
+        db.session.rollback()
+        return _fail(f'Could not remove RADIUS access: {exc}', 502)
 
-    events.record(
-        customer, 'suspended', 'Subscription paused',
-        detail=(f'{remaining_days:g} days banked' if remaining_days
-                else 'No remaining days to bank'),
-        # `to_value` is how resume tells a pause apart from a block, and
-        # `from_value` is the balance it hands back.
-        from_value=remaining_days, to_value='paused', actor=user,
-    )
     db.session.commit()
+    if data.get('notify'):
+        _dispatch(customer, 'account_suspended')
+
     return _ok({
         'status': customer.status.value,
-        'banked_days': remaining_days,
+        'banked_days': banked,
+        'pause_until': until.isoformat() if until else None,
         'subscription': insights.subscription_state(customer),
     })
 
@@ -763,53 +777,17 @@ def resume_subscription(customer_id):
     if customer.status == CustomerStatus.ACTIVE:
         return _fail('This subscription is already active')
 
-    from models import CustomerEvent
-    pause = (
-        CustomerEvent.query
-        .filter_by(customer_id=customer.id, event_type='suspended', to_value='paused')
-        .order_by(CustomerEvent.created_at.desc()).first()
-    )
-    resumed_at = (
-        CustomerEvent.query
-        .filter_by(customer_id=customer.id, event_type='activated')
-        .order_by(CustomerEvent.created_at.desc()).first()
-    )
-    # A pause already answered by a later activation has been spent; giving its
-    # days back twice would mint free subscription out of the log.
-    if pause and resumed_at and resumed_at.created_at >= pause.created_at:
-        pause = None
+    try:
+        restored = pause_service.resume(customer, isp=_isp_of(customer), actor=user)
+    except Exception as exc:
+        db.session.rollback()
+        return _fail(f'Could not restore RADIUS access: {exc}', 502)
 
-    now = datetime.utcnow()
-    banked = None
-    if pause and pause.from_value:
-        try:
-            banked = float(pause.from_value)
-        except (TypeError, ValueError):
-            banked = None
-    if banked and banked > 0:
-        customer.subscription_end = now + timedelta(days=banked)
-
-    customer.status = CustomerStatus.ACTIVE
-    customer.fup_throttled = False
-
-    isp = _isp_of(customer)
-    if isp:
-        try:
-            provision_customer_radius(customer, customer.service_plan, isp)
-        except Exception as exc:
-            return _fail(f'Could not restore RADIUS access: {exc}', 502)
-
-    events.record(
-        customer, 'activated', 'Subscription resumed',
-        detail=(f'{banked:g} banked days restored' if banked else 'Access restored'),
-        to_value=customer.subscription_end.isoformat() if customer.subscription_end else None,
-        actor=user,
-    )
     db.session.commit()
     _dispatch(customer, 'account_reactivated')
     return _ok({
         'status': customer.status.value,
-        'restored_days': banked,
+        'restored_days': restored,
         'subscription': insights.subscription_state(customer),
     })
 
@@ -867,42 +845,65 @@ def unblock_subscriber(customer_id):
 @subscriber_bp.route('/<int:customer_id>/fup-override', methods=['POST'])
 @jwt_required()
 def fup_override(customer_id):
-    """Release this account from FUP throttling, or put it back under policy.
+    """Set how fair use is applied to this one account.
 
-    The release sets an exemption window that `services.fup_enforcement` honours,
-    so the next scheduler pass does not quietly undo the operator's decision.
+    inherit    — no override; the package policy applies
+    exempt     — never throttle this account
+    throttle   — rate-limit past the cap even where the plan would not
+    disconnect — drop the session past the cap instead of slowing it
+
+    The window matters: an override with no end quietly becomes policy, and one
+    the scheduler ignores is a button that lies. services.fup_enforcement reads
+    both, so what this writes is what actually happens on the router.
     """
     customer, user, error = _load(customer_id)
     if error:
         return error
 
     data = request.get_json(silent=True) or {}
-    action = (data.get('action') or 'release').lower()
-    if action not in ('release', 'enforce'):
-        return _fail('action must be "release" or "enforce"')
+    mode = (data.get('mode') or '').strip().lower()
+    if mode not in OVERRIDE_MODES:
+        return _fail(f"mode must be one of {', '.join(OVERRIDE_MODES)}")
+
+    reason = (data.get('reason') or '').strip()[:500] or None
+    previous = (customer.fup_override_mode or 'inherit')
+
+    until = None
+    if mode != 'inherit':
+        raw_days = data.get('days')
+        if raw_days not in (None, '', 0, '0'):
+            try:
+                days = max(1, min(365, int(raw_days)))
+            except (TypeError, ValueError):
+                return _fail('Override duration must be a whole number of days')
+            until = datetime.utcnow() + timedelta(days=days)
+
+    customer.fup_override_mode = None if mode == 'inherit' else mode
+    customer.fup_override_reason = reason
+    customer.fup_override_until = until
 
     isp = _isp_of(customer)
-    if action == 'release':
+    # Apply the decision now rather than leaving it for the next scheduler pass —
+    # an operator who exempts someone expects their speed back immediately.
+    if isp and customer.status == CustomerStatus.ACTIVE:
         try:
-            days = max(1, int(data.get('days') or 30))
-        except (TypeError, ValueError):
-            days = 30
-        customer.fup_exempt_until = datetime.utcnow() + timedelta(days=days)
-        customer.fup_throttled = False
-        if isp and customer.status == CustomerStatus.ACTIVE:
-            try:
+            if mode == 'exempt' and customer.fup_throttled:
                 provision_customer_radius(customer, customer.service_plan, isp, throttle=False)
-            except Exception as exc:
-                return _fail(f'Could not restore full speed: {exc}', 502)
-        events.record(customer, 'fup_released', 'FUP override applied',
-                      detail=f'Exempt from fair-use throttling for {days} days',
-                      to_value=customer.fup_exempt_until.isoformat(), actor=user)
-    else:
-        customer.fup_exempt_until = None
-        events.record(customer, 'fup_throttled', 'FUP override removed',
-                      detail='Account is back under the plan\'s fair-use policy',
-                      actor=user)
+                customer.fup_throttled = False
+            elif mode == 'throttle' and not customer.fup_throttled:
+                provision_customer_radius(customer, customer.service_plan, isp, throttle=True)
+                customer.fup_throttled = True
+        except Exception as exc:
+            return _fail(f'Could not apply the override on RADIUS: {exc}', 502)
 
+    window = f" until {until.strftime('%d %b %Y')}" if until else ' with no end date'
+    events.record(
+        customer,
+        'fup_released' if mode in ('inherit', 'exempt') else 'fup_throttled',
+        f'Fair use override: {mode}',
+        detail=(reason or f'Override set to {mode}{window}'),
+        from_value=previous, to_value=mode, actor=user,
+    )
     db.session.commit()
     return _ok({'fup': insights.fup_snapshot(customer)})
 
@@ -916,20 +917,32 @@ def compensate(customer_id):
         return error
 
     data = request.get_json(silent=True) or {}
+
+    # Minutes is the unit on the wire. An outage worth compensating is often
+    # measured in minutes, and expressing that as a fraction of a day (0.0035)
+    # is how rounding errors get into someone's expiry date.
+    raw_minutes = data.get('minutes')
+    if raw_minutes is None and data.get('days') is not None:
+        try:
+            raw_minutes = float(data['days']) * 1440
+        except (TypeError, ValueError):
+            return _fail('Duration must be a number')
     try:
-        days = float(data.get('days') or 0)
+        minutes = int(round(float(raw_minutes or 0)))
     except (TypeError, ValueError):
-        return _fail('Days must be a number')
-    if days <= 0:
-        return _fail('Compensation needs a positive number of days')
-    if days > 365:
+        return _fail('Duration must be a number')
+
+    if minutes <= 0:
+        return _fail('Compensation needs a positive duration')
+    if minutes > 365 * 1440:
         return _fail('That is more than a year — set the expiry directly instead')
 
+    days = minutes / 1440
     reason = (data.get('reason') or '').strip() or 'Service compensation'
     now = datetime.utcnow()
     before = customer.subscription_end
     base = before if (before and before > now) else now
-    customer.subscription_end = base + timedelta(days=days)
+    customer.subscription_end = base + timedelta(minutes=minutes)
 
     isp = _isp_of(customer)
     if isp and customer.status == CustomerStatus.ACTIVE:
@@ -942,16 +955,29 @@ def compensate(customer_id):
 
     events.record(
         customer, 'compensated', 'Service compensated',
-        detail=f'{days:g} day{"" if days == 1 else "s"} added — {reason}',
+        detail=f'{_humanise_minutes(minutes)} added — {reason}',
         from_value=before.isoformat() if before else None,
         to_value=customer.subscription_end.isoformat(), actor=user,
     )
     db.session.commit()
 
-    if data.get('notify', True):
+    if data.get('notify'):
         _dispatch(customer, 'expiry_date_changed')
 
     return _ok({
-        'days': days,
+        'minutes': minutes,
+        'days': round(days, 4),
+        'label': _humanise_minutes(minutes),
         'subscription': insights.subscription_state(customer),
     })
+
+
+def _humanise_minutes(minutes):
+    """'3 minutes', '2 hours', '5 days' — whichever unit the number is really in."""
+    if minutes % 1440 == 0:
+        value, unit = minutes // 1440, 'day'
+    elif minutes % 60 == 0:
+        value, unit = minutes // 60, 'hour'
+    else:
+        value, unit = minutes, 'minute'
+    return f'{value} {unit}{"" if value == 1 else "s"}'

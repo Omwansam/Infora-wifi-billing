@@ -531,12 +531,11 @@ def fup_snapshot(customer, now=None):
     monitored = customer_is_fup_monitored(plan) if plan else False
     state, pct = compute_fup_status(used, threshold, bool(policy.get('fup_enabled')))
 
-    # An expired exemption is no exemption — enforcement has already resumed, so
-    # reporting one would make the UI offer "remove override" for a window that
-    # is not there any more.
-    exempt_until = customer.fup_exempt_until
-    if exempt_until and exempt_until <= datetime.utcnow():
-        exempt_until = None
+    # An expired override is no override — enforcement has already resumed, so
+    # reporting one would make the dialog open on a window that is not there.
+    from services.fup_enforcement import active_override_mode
+    mode = active_override_mode(customer)
+    override_until = customer.fup_override_until if mode != 'inherit' else None
 
     return {
         'monitored': monitored,
@@ -552,9 +551,11 @@ def fup_snapshot(customer, now=None):
         'throttled_speed': policy.get('fup_throttled_speed'),
         'reset_cycle': policy.get('fup_reset_cycle') or 'monthly',
         'period_start': period_start.isoformat(),
-        # The operator override window. The menu label and the dialog both
-        # branch on this to decide between releasing and re-applying policy.
-        'exempt_until': exempt_until.isoformat() if exempt_until else None,
+        # The operator override in force. The menu label and the dialog both
+        # open on this, so it must reflect what enforcement will actually do.
+        'override_mode': mode,
+        'override_reason': customer.fup_override_reason,
+        'override_until': override_until.isoformat() if override_until else None,
     }
 
 

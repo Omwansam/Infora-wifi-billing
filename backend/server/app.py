@@ -154,6 +154,11 @@ def ensure_schema_upgrades():
             'grace_period_days': 'INTEGER DEFAULT 0',
             # Operator FUP override window (see services.fup_enforcement).
             'fup_exempt_until': 'TIMESTAMP',
+            'fup_override_mode': 'VARCHAR(12)',
+            'fup_override_reason': 'TEXT',
+            'fup_override_until': 'TIMESTAMP',
+            # Auto-resume alarm for a paused subscription.
+            'pause_until': 'TIMESTAMP',
         },
         'isps': {
             'account_number_prefix': 'VARCHAR(12)',
@@ -615,6 +620,15 @@ def enforce_expiry_command(grace_hours):
         click.echo(f'Expired subscriptions enforced: {count} customer(s) suspended.')
 
 
+@app.cli.command('resume-paused')
+def resume_paused_command():
+    """Resume paused subscriptions whose auto-resume time has passed."""
+    with app.app_context():
+        from services.subscription_pause import resume_due_pauses
+        count = resume_due_pauses()
+        click.echo(f'Paused subscriptions resumed: {count}.')
+
+
 @app.cli.command('issue-subscription-invoices')
 @click.option('--lead-days', default=None, type=int,
               help='Raise the invoice this many days before expiry (default PLATFORM_ISSUE_LEAD_DAYS)')
@@ -753,6 +767,13 @@ def _start_expiry_scheduler(app):
                     )
                 except Exception as exc:
                     app.logger.warning('expiry enforcement failed: %s', exc)
+                # Rides the same cadence: a subscription paused "until Friday"
+                # that nothing ever un-pauses is a promise the console broke.
+                try:
+                    from services.subscription_pause import resume_due_pauses
+                    resume_due_pauses()
+                except Exception as exc:
+                    app.logger.warning('auto-resume pass failed: %s', exc)
 
     thread = threading.Thread(target=_loop, daemon=True, name='subscription-expiry')
     thread.start()

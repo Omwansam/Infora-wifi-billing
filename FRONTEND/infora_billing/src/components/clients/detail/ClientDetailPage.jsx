@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Ban, Loader2, Pause, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Play, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { customerService, unwrap } from '../../../services/customerService';
@@ -16,7 +16,10 @@ import {
   DevicesTab, MessagesTab, NotesTab, PackageHistoryTab, PaymentsTab, SessionsTab, TicketsTab,
 } from './tabs/ListTabs';
 import ChangeExpiryModal from './modals/ChangeExpiryModal';
-import { CompensateModal, ConfirmModal, FupOverrideModal, SendSmsModal } from './modals/ActionModals';
+import {
+  BlockModal, CompensateModal, ConfirmModal, DeleteModal, FupOverrideModal, InvoiceModal,
+  PauseModal, SendCredentialsModal, SendPaymentDetailsModal, SendSmsModal,
+} from './modals/ActionModals';
 import { PANEL, StatTile } from './parts';
 
 /* -------------------------------------------------------------------------
@@ -69,7 +72,10 @@ export default function ClientDetailPage() {
   const [sessionPage, setSessionPage] = useState(1);
 
   const [modal, setModal] = useState(null);
-  const [pendingReason] = useState('');
+  // The two canned-SMS dialogs show the real body before sending, so opening
+  // one fetches its preview rather than guessing at the wording locally.
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const notify = useCallback((message, isError) => {
     if (isError) toast.error(message);
@@ -167,6 +173,23 @@ export default function ClientDetailPage() {
     }
   }, [loadCore, loadTab, tabData]);
 
+  const openMessageDialog = useCallback(async (which) => {
+    const kind = which === 'credentials' ? 'credentials' : 'payment_details';
+    setPreview(null);
+    setPreviewLoading(true);
+    setModal(which);
+    try {
+      setPreview(unwrap(await customerService.getMessagePreview(customerId, kind),
+        'Could not build the message'));
+    } catch (error) {
+      // A preview that fails is shown in the dialog, not swallowed — the
+      // operator needs to know why there is nothing to send.
+      setPreview({ error: error.message });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [customerId]);
+
   const revealPassword = async () => {
     if (password !== null) { setPassword(null); return; }
     setRevealing(true);
@@ -184,28 +207,17 @@ export default function ClientDetailPage() {
   };
 
   const actions = useMemo(() => ({
-    sendCredentials: () => run('credentials',
-      () => customerService.sendCredentials(customerId),
-      (data) => `Credentials sent to ${data.sent_to}`, { refreshTabs: ['sms'] }),
-    sendPaymentDetails: () => run('payment-details',
-      () => customerService.sendPaymentDetails(customerId),
-      (data) => `Payment details sent to ${data.sent_to}`, { refreshTabs: ['sms'] }),
-    generateInvoice: () => run('invoice',
-      () => customerService.generateInvoice(customerId),
-      (data) => `Invoice ${data.invoice.invoice_number} raised for ${formatCurrency(data.invoice.amount)}`),
+    sendCredentials: () => openMessageDialog('credentials'),
+    sendPaymentDetails: () => openMessageDialog('payment'),
+    generateInvoice: () => setModal('invoice'),
     pause: () => setModal('pause'),
-    resume: () => run('resume',
-      () => customerService.resumeSubscription(customerId),
-      (data) => data.restored_days
-        ? `Resumed — ${Number(data.restored_days).toFixed(1)} banked days restored`
-        : 'Subscription resumed'),
+    resume: () => setModal('resume'),
     block: () => setModal('block'),
-    unblock: () => run('unblock',
-      () => customerService.unblockSubscriber(customerId), 'Subscriber unblocked'),
+    unblock: () => setModal('unblock'),
     fupOverride: () => setModal('fup'),
     compensate: () => setModal('compensate'),
     remove: () => setModal('delete'),
-  }), [customerId, run]);
+  }), [openMessageDialog]);
 
   // --- Render --------------------------------------------------------------
 
@@ -400,14 +412,51 @@ export default function ClientDetailPage() {
           'Message sent', { refreshTabs: ['sms'] })}
       />
 
+      <SendCredentialsModal
+        open={modal === 'credentials'}
+        onClose={() => setModal(null)}
+        client={client}
+        preview={preview}
+        loading={previewLoading}
+        saving={busy === 'credentials'}
+        onSubmit={(message) => run('credentials',
+          () => customerService.sendCredentials(customerId, message),
+          (data) => `Credentials sent to ${data.sent_to}`, { refreshTabs: ['sms'] })}
+      />
+
+      <SendPaymentDetailsModal
+        open={modal === 'payment'}
+        onClose={() => setModal(null)}
+        client={client}
+        preview={preview}
+        loading={previewLoading}
+        saving={busy === 'payment-details'}
+        onSubmit={(message) => run('payment-details',
+          () => customerService.sendPaymentDetails(customerId, message),
+          (data) => `Payment details sent to ${data.sent_to}`, { refreshTabs: ['sms'] })}
+      />
+
+      <InvoiceModal
+        open={modal === 'invoice'}
+        onClose={() => setModal(null)}
+        client={client}
+        plan={overview?.plan}
+        saving={busy === 'invoice'}
+        onSubmit={(payload) => run('invoice',
+          () => customerService.generateInvoice(customerId, payload),
+          (data) => `Invoice ${data.invoice.invoice_number} raised for ${formatCurrency(data.invoice.amount)}`,
+          { refreshTabs: ['payments'] })}
+      />
+
       <CompensateModal
         open={modal === 'compensate'}
         onClose={() => setModal(null)}
         client={client}
+        subscription={subscription}
         saving={busy === 'compensate'}
         onSubmit={(payload) => run('compensate',
           () => customerService.compensate(customerId, payload),
-          (data) => `${data.days} day${data.days === 1 ? '' : 's'} added to the subscription`)}
+          (data) => `${data.label} added to the subscription`)}
       />
 
       <FupOverrideModal
@@ -417,52 +466,69 @@ export default function ClientDetailPage() {
         saving={busy === 'fup'}
         onSubmit={(payload) => run('fup',
           () => customerService.fupOverride(customerId, payload),
-          payload.action === 'release' ? 'Released from fair-use throttling' : 'Fair-use policy re-applied')}
+          payload.mode === 'inherit'
+            ? 'Back under the package policy'
+            : `Fair use override set to ${payload.mode}`)}
       />
 
-      <ConfirmModal
+      <PauseModal
         open={modal === 'pause'}
         onClose={() => setModal(null)}
-        icon={Pause}
-        tone="warning"
-        title="Pause subscription"
-        description="Access stops, and the remaining days are kept."
-        body={subscription.days_remaining > 0
-          ? `${client.name} has ${subscription.days_remaining} day${subscription.days_remaining === 1 ? '' : 's'} left. Those days are banked now and handed back in full when you resume, so the pause costs them nothing.`
-          : `${client.name} has no remaining days to bank. Pausing removes RADIUS access until you resume.`}
-        confirmLabel="Pause subscription"
+        client={client}
+        subscription={subscription}
         saving={busy === 'pause'}
-        onConfirm={() => run('pause',
-          () => customerService.pauseSubscription(customerId),
+        onSubmit={(payload) => run('pause',
+          () => customerService.pauseSubscription(customerId, payload),
           (data) => data.banked_days
             ? `Paused — ${Number(data.banked_days).toFixed(1)} days banked`
             : 'Subscription paused')}
       />
 
       <ConfirmModal
+        open={modal === 'resume'}
+        onClose={() => setModal(null)}
+        icon={Play}
+        title="Resume subscription"
+        description="Access comes back, and so do the banked days."
+        body={`${client.name} regains internet access immediately, and any days banked at the pause are added back to the expiry from now.`}
+        confirmLabel="Resume subscription"
+        saving={busy === 'resume'}
+        onConfirm={() => run('resume',
+          () => customerService.resumeSubscription(customerId),
+          (data) => data.restored_days
+            ? `Resumed — ${Number(data.restored_days).toFixed(1)} banked days restored`
+            : 'Subscription resumed')}
+      />
+
+      <BlockModal
         open={modal === 'block'}
         onClose={() => setModal(null)}
-        icon={Ban}
-        title="Block subscriber"
-        description="An enforcement action, not a pause."
-        body={`${client.name} loses internet access immediately and the subscription clock keeps running — they will still expire on schedule. Use Pause instead if the days should be given back.`}
-        confirmLabel="Block subscriber"
+        client={client}
+        subscription={subscription}
         saving={busy === 'block'}
-        onConfirm={() => run('block',
-          () => customerService.blockSubscriber(customerId, pendingReason || 'Blocked by operator'),
-          'Subscriber blocked')}
+        onSubmit={(reason) => run('block',
+          () => customerService.blockSubscriber(customerId, reason), 'Subscriber blocked')}
       />
 
       <ConfirmModal
+        open={modal === 'unblock'}
+        onClose={() => setModal(null)}
+        icon={Play}
+        title="Unblock subscriber"
+        description="Access is restored under the existing subscription."
+        body={`${client.name} can connect again. No days are handed back — the clock kept running while they were blocked.`}
+        confirmLabel="Unblock subscriber"
+        saving={busy === 'unblock'}
+        onConfirm={() => run('unblock',
+          () => customerService.unblockSubscriber(customerId), 'Subscriber unblocked')}
+      />
+
+      <DeleteModal
         open={modal === 'delete'}
         onClose={() => setModal(null)}
-        icon={Trash2}
-        title="Delete subscriber"
-        description="This cannot be undone."
-        body={`Permanently removes ${client.name}, their RADIUS credentials, sessions, notes and account history. Payments are kept for accounting.`}
-        confirmLabel="Delete subscriber"
+        client={client}
         saving={busy === 'delete'}
-        onConfirm={async () => {
+        onSubmit={async () => {
           setBusy('delete');
           try {
             unwrap(await customerService.deleteCustomer(customerId), 'Delete failed');

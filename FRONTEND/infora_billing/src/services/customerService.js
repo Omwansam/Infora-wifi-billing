@@ -285,16 +285,27 @@ export const customerService = {
       { method: 'POST', body: JSON.stringify(body) });
   },
 
-  async sendCredentials(customerId) {
+  /**
+   * Exactly what a canned SMS will say, before it is sent.
+   * `kind` is 'credentials' or 'payment_details'.
+   */
+  async getMessagePreview(customerId, kind) {
     return authenticatedApiCall(
-      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/send-credentials`, getAccessToken(),
-      { method: 'POST' });
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/message-preview?kind=${encodeURIComponent(kind)}`,
+      getAccessToken());
   },
 
-  async sendPaymentDetails(customerId) {
+  /** `message` overrides the generated body — the operator may have edited it. */
+  async sendCredentials(customerId, message) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/send-credentials`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify(message ? { message } : {}) });
+  },
+
+  async sendPaymentDetails(customerId, message) {
     return authenticatedApiCall(
       `${API_ENDPOINTS.CUSTOMERS}/${customerId}/send-payment-details`, getAccessToken(),
-      { method: 'POST' });
+      { method: 'POST', body: JSON.stringify(message ? { message } : {}) });
   },
 
   async generateInvoice(customerId, body = {}) {
@@ -303,10 +314,14 @@ export const customerService = {
       { method: 'POST', body: JSON.stringify(body) });
   },
 
-  /** Pause banks the remaining days; resume hands them back. */
-  async pauseSubscription(customerId) {
+  /**
+   * Pause banks the remaining days; resume hands them back.
+   * `pause_until` (ISO) sets an automatic resume.
+   */
+  async pauseSubscription(customerId, body = {}) {
     return authenticatedApiCall(
-      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/pause`, getAccessToken(), { method: 'POST' });
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/pause`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify(body) });
   },
 
   async resumeSubscription(customerId) {
@@ -326,16 +341,18 @@ export const customerService = {
       `${API_ENDPOINTS.CUSTOMERS}/${customerId}/unblock`, getAccessToken(), { method: 'POST' });
   },
 
-  async fupOverride(customerId, { action = 'release', days = 30 } = {}) {
+  /** `mode` is inherit | exempt | throttle | disconnect; `days` bounds it. */
+  async fupOverride(customerId, { mode = 'inherit', reason, days } = {}) {
     return authenticatedApiCall(
       `${API_ENDPOINTS.CUSTOMERS}/${customerId}/fup-override`, getAccessToken(),
-      { method: 'POST', body: JSON.stringify({ action, days }) });
+      { method: 'POST', body: JSON.stringify({ mode, reason, days }) });
   },
 
-  async compensate(customerId, { days, reason, notify = true }) {
+  /** Duration is minutes on the wire — an outage is rarely a whole day. */
+  async compensate(customerId, { minutes, reason, notify = false }) {
     return authenticatedApiCall(
       `${API_ENDPOINTS.CUSTOMERS}/${customerId}/compensate`, getAccessToken(),
-      { method: 'POST', body: JSON.stringify({ days, reason, notify }) });
+      { method: 'POST', body: JSON.stringify({ minutes, reason, notify }) });
   },
 
   async getCustomerTickets(customerId, params = {}) {

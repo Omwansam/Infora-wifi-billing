@@ -157,16 +157,29 @@ class Customer(db.Model):
     # True while the subscriber is provisioned at the plan's FUP throttled speed
     # (set/cleared by services.fup_enforcement).
     fup_throttled = db.Column(db.Boolean, default=False, nullable=False)
-    # Operator override: skip FUP enforcement for this account until this moment.
-    # Without it, "release from throttle" is undone by the next scheduler pass,
-    # which makes the button a lie rather than a decision.
+    # Superseded by fup_override_mode/_until below. Kept because the column
+    # already exists in deployed databases and dropping it buys nothing.
     fup_exempt_until = db.Column(db.DateTime, nullable=True)
+    # Per-account fair-use override, outranking the package policy while set:
+    #   inherit    – no override; the plan's policy applies (same as NULL)
+    #   exempt     – never throttle this account
+    #   throttle   – rate-limit past the cap even if the plan would not
+    #   disconnect – drop the session past the cap instead of throttling
+    # `until` bounds the override so a support decision does not become
+    # permanent by forgetting; NULL means it stands until removed by hand.
+    fup_override_mode = db.Column(db.String(12), nullable=True)
+    fup_override_reason = db.Column(db.Text, nullable=True)
+    fup_override_until = db.Column(db.DateTime, nullable=True)
     subscription_start = db.Column(db.DateTime, nullable=True)
     subscription_end = db.Column(db.DateTime, nullable=True)
     # Extra days after subscription_end before access is actually cut. 0/NULL
     # means the expiry is the cut-off. Set per account from the expiry dialog,
     # because a grace given to one subscriber is not a policy for all of them.
     grace_period_days = db.Column(db.Integer, default=0, nullable=True)
+    # When a paused subscription should come back on its own. NULL = paused
+    # until an operator resumes it. The banked days live on the pause event,
+    # not here — this is only the alarm clock.
+    pause_until = db.Column(db.DateTime, nullable=True)
     id_number = db.Column(db.String(50), nullable=True)
     kyc_status = db.Column(
         db.Enum(KycStatus, name='kyc_status', values_callable=lambda enum: [item.value for item in enum]),
