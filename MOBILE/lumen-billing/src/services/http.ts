@@ -68,7 +68,11 @@ async function rawRequest<T>(path: string, opts: RequestOptions): Promise<ApiRes
       const message =
         (data && typeof data === 'object' && (data.error || data.message)) ||
         `Request failed (${res.status})`;
-      return { success: false, status: res.status, error: String(message) };
+      // Keep the body on a failure, not just its message. The signup wizard
+      // reacts to flags the backend sends *alongside* an error — `resend_in`,
+      // `attempts_left`, `suggestion`, `email_in_use` — and dropping them here
+      // turns "3 attempts left" into a dead end.
+      return { success: false, status: res.status, error: String(message), data: data as T };
     }
     return { success: true, status: res.status, data: data as T };
   } catch (err) {
@@ -85,38 +89,39 @@ async function rawRequest<T>(path: string, opts: RequestOptions): Promise<ApiRes
   }
 }
 
-/** Attempt a token refresh; returns true on success. */
+/**
+ * Attempt a token refresh; returns true on success.
+ *
+ * Flask-JWT reads the refresh token from the Authorization header, not the
+ * body, so this cannot go through `rawRequest` — that one always attaches the
+ * *access* token.
+ */
 async function tryRefresh(): Promise<boolean> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return false;
-  const res = await rawRequest<{ access_token: string }>(ENDPOINTS.refresh, {
-    method: 'POST',
-    auth: false,
-    body: {},
-    // Flask-JWT refresh expects the refresh token in the Authorization header.
-  });
-  // The backend reads the refresh token from Authorization; send it explicitly.
-  if (!res.success) {
-    // Retry sending the refresh token as bearer.
-    const withHeader = await fetch(api(ENDPOINTS.refresh), {
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+  try {
+    const res = await fetch(api(ENDPOINTS.refresh), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${refreshToken}`,
       },
       body: JSON.stringify({}),
-    }).catch(() => null);
-    if (!withHeader || !withHeader.ok) return false;
-    const body = (await withHeader.json().catch(() => null)) as { access_token?: string } | null;
+      signal: controller.signal,
+    });
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => null)) as { access_token?: string } | null;
     if (!body?.access_token) return false;
     await updateAccessToken(body.access_token);
     return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
-  if (res.data?.access_token) {
-    await updateAccessToken(res.data.access_token);
-    return true;
-  }
-  return false;
 }
 
 /** Core request with automatic 401 refresh-and-retry. Throws ApiError on failure. */
@@ -137,6 +142,25 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
   if (!res.success) throw new ApiError(res.error ?? 'Request failed', res.status);
   return res.data as T;
+}
+
+/**
+ * Public request that resolves to the `{ success, status, data, error }`
+ * envelope instead of throwing.
+ *
+ * Sign-in and the signup wizard need the *body* of a failure — `requires_2fa`,
+ * `resend_in`, `attempts_left`, `suggestion` — not just its message, and they
+ * need to put every error in front of a person rather than swallowing it. A
+ * thrown ApiError loses all of that.
+ */
+export async function publicRequest<T>(
+  path: string,
+  opts: Omit<RequestOptions, 'auth'> = {},
+): Promise<ApiResult<T>> {
+  if (!API_BASE_URL) {
+    return { success: false, status: 0, error: 'No API URL configured (running in demo mode).' };
+  }
+  return rawRequest<T>(path, { ...opts, auth: false });
 }
 
 export const http = {

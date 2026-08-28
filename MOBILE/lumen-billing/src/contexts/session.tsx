@@ -7,7 +7,19 @@ type Status = 'loading' | 'authenticated' | 'unauthenticated';
 interface SessionContextValue {
   user: AuthUser | null;
   status: Status;
-  signIn: (email: string, password: string) => Promise<void>;
+  /**
+   * Sign in, optionally with a second-factor code.
+   *
+   * Resolves rather than throws for every outcome the sign-in screen has to
+   * render differently: `requires2fa` means the password was accepted and the
+   * backend is holding the tokens until it sees a code.
+   */
+  signIn: (
+    email: string,
+    password: string,
+    otpCode?: string,
+    remember?: boolean,
+  ) => Promise<{ ok: boolean; requires2fa: boolean; error?: string }>;
   signOut: () => Promise<void>;
 }
 
@@ -35,11 +47,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    const signedIn = await authService.login(email, password);
-    setUser(signedIn);
-    setStatus('authenticated');
-  }, []);
+  const signIn = useCallback(
+    async (email: string, password: string, otpCode?: string, remember = true) => {
+      const result = await authService.login(email, password, otpCode, remember);
+      if (!result.ok) {
+        return {
+          ok: false,
+          requires2fa: result.requires2fa === true,
+          error: 'error' in result ? result.error : undefined,
+        };
+      }
+      setUser(result.user);
+      setStatus('authenticated');
+      return { ok: true, requires2fa: false };
+    },
+    [],
+  );
 
   const signOut = useCallback(async () => {
     await authService.logout();

@@ -3,6 +3,7 @@ export { ApiError } from './http';
 export type { AuthUser } from './session';
 
 export * as authService from './auth';
+export * as onboardingService from './onboarding';
 export * as customerService from './customers';
 export * as planService from './plans';
 export * as billingService from './billing';

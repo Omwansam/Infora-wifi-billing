@@ -1,6 +1,11 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./src/**/*.{js,jsx,ts,tsx}'],
+  // 'class' rather than the default 'media': NativeWind refuses a manual
+  // setColorScheme() under 'media', which would leave the theme toggle on the
+  // auth screens with nothing to set. With no explicit choice stored it still
+  // falls through to the system appearance, so nothing else changes.
+  darkMode: 'class',
   presets: [require('nativewind/preset')],
   theme: {
     extend: {

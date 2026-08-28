@@ -33,6 +33,23 @@ export const ENDPOINTS = {
   verify: '/api/auth/verify',
   profile: '/api/auth/profile',
   changePassword: '/api/auth/change-password',
+  forgotPassword: '/api/auth/forgot-password',
+  resetPassword: '/api/auth/reset-password',
+
+  // Self-serve ISP signup — the five wizard steps plus the provisioning poll.
+  // Public (no bearer token); see ONBOARDING.md for the flow.
+  onboardingCountries: '/api/onboarding/countries',
+  onboardingLocale: '/api/onboarding/locale',
+  onboardingStart: '/api/onboarding/start',
+  onboardingResend: '/api/onboarding/resend',
+  onboardingChangeNumber: '/api/onboarding/change-number',
+  onboardingVerify: '/api/onboarding/verify',
+  onboardingSlugCheck: '/api/onboarding/slug-check',
+  onboardingAccount: '/api/onboarding/account',
+  onboardingProfile: '/api/onboarding/profile',
+  onboardingComplete: '/api/onboarding/complete',
+  onboardingStatus: '/api/onboarding/status',
+  onboardingSession: '/api/onboarding/session',
 
   // customers
   customers: '/api/customers',

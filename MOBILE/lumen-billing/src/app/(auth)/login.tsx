@@ -1,166 +1,366 @@
+/**
+ * Sign in.
+ *
+ * One card, three states — password, second factor, password reset — and only
+ * one of them is on screen at a time. That is the same call the console makes:
+ * once the backend has asked for a code, leaving the email and password inputs
+ * sitting there only invites someone to edit them and wonder why nothing
+ * happened.
+ *
+ * Every control here does what it says. The screen this replaces had a
+ * "Forgot password?" that did nothing, a "Request access" that did nothing, and
+ * a "Use biometrics" button that re-submitted the typed password — there is no
+ * biometric credential store in this build, so it was a shortcut that only
+ * looked like one. The first two are now wired to real endpoints; the third is
+ * gone rather than faked.
+ */
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Text, View } from 'react-native';
+import { AuthShell } from '@/components/auth/shell';
+import { LumenLogo } from '@/components/auth/logo';
 import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button } from '@/components/ui';
+  AuthAltButton,
+  AuthBadge,
+  AuthCard,
+  AuthDivider,
+  AuthInput,
+  AuthLink,
+  AuthNotice,
+  AuthSubmit,
+  AuthSubtitle,
+  AuthTitle,
+  Checkbox,
+  CodeInput,
+  Field,
+  InputAdornment,
+} from '@/components/auth/ui';
 import { useSession } from '@/contexts/session';
+import { useThemeMode } from '@/contexts/theme-mode';
+import { authPalette } from '@/lib/auth-theme';
 import { IS_LIVE } from '@/services';
-import { useAppTheme } from '@/lib/theme';
+import { requestPasswordReset } from '@/services/auth';
+
+type Mode = 'password' | 'otp' | 'forgot';
+
+const DEMO_EMAIL = 'demo@infora.app';
+const DEMO_PASSWORD = 'demo1234';
 
 export default function LoginScreen() {
-  const insets = useSafeAreaInsets();
-  const theme = useAppTheme();
+  const { scheme } = useThemeMode();
+  const palette = useMemo(() => authPalette('signin', scheme), [scheme]);
   const { signIn } = useSession();
-  const [email, setEmail] = useState('demo@infora.app');
-  const [password, setPassword] = useState('demo1234');
+
+  const [mode, setMode] = useState<Mode>('password');
+  // Demo build: pre-fill the demo account so a visitor just taps "Sign in".
+  const [email, setEmail] = useState(IS_LIVE ? '' : DEMO_EMAIL);
+  const [password, setPassword] = useState(IS_LIVE ? '' : DEMO_PASSWORD);
   const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(true);
+  const [otp, setOtp] = useState('');
+  const [usingBackup, setUsingBackup] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [notice, setNotice] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleSignIn = async () => {
+    if (!email.trim() || !password) {
+      setNotice({ tone: 'error', text: 'Enter both your email and password.' });
+      return;
+    }
+    if (mode === 'otp' && !otp.trim()) {
+      setNotice({ tone: 'error', text: 'Enter your verification code.' });
+      return;
+    }
+
     setLoading(true);
-    setError(null);
+    setNotice(null);
     try {
-      await signIn(email.trim(), password);
+      const result = await signIn(
+        email.trim(),
+        password,
+        mode === 'otp' ? otp.trim() : undefined,
+        remember,
+      );
+
+      if (result.requires2fa) {
+        setMode('otp');
+        setOtp('');
+        return;
+      }
+      if (!result.ok) {
+        setNotice({
+          tone: 'error',
+          text:
+            result.error ??
+            (mode === 'otp' ? 'That code was not accepted.' : 'Sign in failed.'),
+        });
+        return;
+      }
       router.replace('/(tabs)');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Sign in failed. Please try again.');
+    } catch {
+      // signIn resolves for every expected outcome; anything landing here is a
+      // genuine crash in the transport, not a rejected credential.
+      setNotice({ tone: 'error', text: 'Network error. Check your connection and try again.' });
     } finally {
       setLoading(false);
     }
   };
 
+  const handleReset = async () => {
+    const target = resetEmail.trim() || email.trim();
+    if (!target || !target.includes('@')) {
+      setNotice({ tone: 'error', text: 'Enter the email address on your account.' });
+      return;
+    }
+    setLoading(true);
+    setNotice(null);
+    const result = await requestPasswordReset(target);
+    setLoading(false);
+    setNotice({ tone: result.ok ? 'success' : 'error', text: result.message });
+  };
+
+  const leaveSubMode = () => {
+    setMode('password');
+    setOtp('');
+    setUsingBackup(false);
+    setNotice(null);
+  };
+
   return (
-    <View className="flex-1 bg-surface dark:bg-night">
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1 }}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-          {/* Brand header band */}
+    <AuthShell palette={palette}>
+      <AuthCard palette={palette}>
+        <View style={{ alignItems: 'center', marginBottom: 22 }}>
+          <LumenLogo color={palette.text} subtitleColor={palette.accent} />
+        </View>
+
+        {mode === 'otp' ? (
+          <>
+            <AuthBadge palette={palette} icon="shield-checkmark" label="Two-factor" />
+            <AuthTitle palette={palette} align="left">
+              Confirm it&apos;s you
+            </AuthTitle>
+            <AuthSubtitle palette={palette} align="left">
+              {usingBackup
+                ? 'Enter one of the backup codes you saved when you turned on two-factor.'
+                : `Enter the 6-digit code from your authenticator app for ${email.trim()}.`}
+            </AuthSubtitle>
+          </>
+        ) : mode === 'forgot' ? (
+          <>
+            <AuthBadge palette={palette} icon="key-outline" label="Password reset" />
+            <AuthTitle palette={palette} align="left">
+              Reset your password
+            </AuthTitle>
+            <AuthSubtitle palette={palette} align="left">
+              We&apos;ll email a link to the address on your operator account. Open it on this
+              device to choose a new password.
+            </AuthSubtitle>
+          </>
+        ) : (
+          <>
+            <AuthTitle palette={palette}>Sign in</AuthTitle>
+            <AuthSubtitle palette={palette}>
+              Welcome back. Access your operator console.
+            </AuthSubtitle>
+          </>
+        )}
+
+        {!IS_LIVE && mode === 'password' ? (
           <View
-            className="bg-brand-600 px-6 pb-10"
-            style={{ paddingTop: insets.top + 48 }}>
-            <View className="h-14 w-14 items-center justify-center rounded-2xl bg-white/15">
-              <Ionicons name="wifi" size={30} color="#ffffff" />
-            </View>
-            <Text className="mt-5 text-3xl font-extrabold text-white">Infora Billing</Text>
-            <Text className="mt-1.5 text-base text-brand-100">
-              ISP & WiFi billing, in your pocket.
+            style={{
+              marginTop: 18,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: palette.line,
+              backgroundColor: palette.lineSoft,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+            }}>
+            <Text style={{ color: palette.accentHi, fontSize: 12, fontWeight: '700' }}>
+              Demo mode — credentials pre-filled
+            </Text>
+            <Text style={{ color: palette.textDim, fontSize: 12, marginTop: 4 }}>
+              {DEMO_EMAIL} · {DEMO_PASSWORD}
+            </Text>
+            <Text style={{ color: palette.textFaint, fontSize: 11.5, marginTop: 6, lineHeight: 17 }}>
+              Set EXPO_PUBLIC_API_URL to sign in against a real backend.
             </Text>
           </View>
+        ) : null}
 
-          <View className="-mt-6 flex-1 rounded-t-3xl bg-surface px-6 pt-8 dark:bg-night">
-            <Text className="text-xl font-bold text-ink dark:text-white">Welcome back</Text>
-            <Text className="mt-1 text-sm text-ink-muted dark:text-ink-faint">
-              Sign in to your operator account to continue.
-            </Text>
-
-            {/* Email */}
-            <Text className="mb-2 mt-6 text-sm font-semibold text-ink-soft dark:text-ink-faint">
-              Email address
-            </Text>
-            <View className="h-14 flex-row items-center rounded-xl border border-line bg-surface-muted px-4 dark:border-night-line dark:bg-night-card">
-              <Ionicons name="mail-outline" size={20} color={theme.textFaint} />
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@company.com"
-                placeholderTextColor={theme.textFaint}
+        <View style={{ marginTop: 22, gap: 16 }}>
+          {mode === 'otp' ? (
+            <>
+              <Field
+                palette={palette}
+                label={usingBackup ? 'Backup code' : 'Verification code'}
+                required>
+                <CodeInput
+                  palette={palette}
+                  value={otp}
+                  onChangeText={setOtp}
+                  numeric={!usingBackup}
+                  maxLength={usingBackup ? 32 : 6}
+                  placeholder={usingBackup ? 'xxxx-xxxx' : '000000'}
+                  invalid={notice?.tone === 'error'}
+                />
+              </Field>
+              <AuthLink
+                palette={palette}
+                align="center"
+                label={
+                  usingBackup
+                    ? 'Use your authenticator app instead'
+                    : "Can't reach your authenticator? Use a backup code"
+                }
+                onPress={() => {
+                  setUsingBackup((b) => !b);
+                  setOtp('');
+                  setNotice(null);
+                }}
+              />
+            </>
+          ) : mode === 'forgot' ? (
+            <Field palette={palette} label="Email address" required>
+              <AuthInput
+                palette={palette}
+                value={resetEmail}
+                onChangeText={setResetEmail}
+                placeholder="you@operator.net"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
-                className="ml-3 flex-1 text-base text-ink dark:text-white"
+                autoComplete="email"
+                textContentType="emailAddress"
+                autoFocus
               />
-            </View>
-
-            {/* Password */}
-            <Text className="mb-2 mt-4 text-sm font-semibold text-ink-soft dark:text-ink-faint">
-              Password
-            </Text>
-            <View className="h-14 flex-row items-center rounded-xl border border-line bg-surface-muted px-4 dark:border-night-line dark:bg-night-card">
-              <Ionicons name="lock-closed-outline" size={20} color={theme.textFaint} />
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder="••••••••"
-                placeholderTextColor={theme.textFaint}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                className="ml-3 flex-1 text-base text-ink dark:text-white"
-              />
-              <Pressable onPress={() => setShowPassword((s) => !s)} hitSlop={8}>
-                <Ionicons
-                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={theme.textFaint}
+            </Field>
+          ) : (
+            <>
+              <Field palette={palette} label="Email address" required>
+                <AuthInput
+                  palette={palette}
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="you@operator.net"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="email"
+                  textContentType="emailAddress"
                 />
-              </Pressable>
-            </View>
+              </Field>
 
-            <Pressable className="mt-3 self-end" hitSlop={8}>
-              <Text className="text-sm font-semibold text-brand-600 dark:text-brand-400">
-                Forgot password?
-              </Text>
-            </Pressable>
+              <Field
+                palette={palette}
+                label="Password"
+                required
+                trailing={
+                  <AuthLink
+                    palette={palette}
+                    label="Forgot password?"
+                    onPress={() => {
+                      setResetEmail(email);
+                      setMode('forgot');
+                      setNotice(null);
+                    }}
+                  />
+                }>
+                <View>
+                  <AuthInput
+                    palette={palette}
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="••••••••••••"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    autoComplete="current-password"
+                    textContentType="password"
+                    onSubmitEditing={handleSignIn}
+                    returnKeyType="go"
+                    padded
+                  />
+                  <InputAdornment
+                    palette={palette}
+                    icon={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    label={showPassword ? 'Hide password' : 'Show password'}
+                    onPress={() => setShowPassword((v) => !v)}
+                  />
+                </View>
+              </Field>
 
-            {error ? (
-              <View className="mt-4 flex-row items-center rounded-xl bg-danger/10 px-3 py-2.5">
-                <Ionicons name="alert-circle" size={18} color="#ef4444" />
-                <Text className="ml-2 flex-1 text-sm font-medium text-danger">{error}</Text>
-              </View>
-            ) : null}
-
-            <View className="mt-6">
-              <Button label="Sign in" size="lg" loading={loading} onPress={handleSignIn} />
-            </View>
-
-            {!IS_LIVE ? (
-              <View className="mt-3 flex-row items-center justify-center">
-                <Ionicons name="flask-outline" size={13} color={theme.textFaint} />
-                <Text className="ml-1.5 text-xs text-ink-faint">
-                  Demo mode — any credentials work. Set EXPO_PUBLIC_API_URL to go live.
+              <Checkbox
+                palette={palette}
+                checked={remember}
+                onToggle={() => setRemember((r) => !r)}>
+                <Text style={{ color: palette.textDim, fontSize: 13.5, lineHeight: 20 }}>
+                  Keep me signed in
                 </Text>
-              </View>
-            ) : null}
+              </Checkbox>
+            </>
+          )}
 
-            <View className="mt-6 flex-row items-center">
-              <View className="h-px flex-1 bg-line dark:bg-night-line" />
-              <Text className="mx-3 text-xs font-medium text-ink-faint">OR</Text>
-              <View className="h-px flex-1 bg-line dark:bg-night-line" />
-            </View>
+          {notice ? (
+            <AuthNotice palette={palette} tone={notice.tone}>
+              {notice.text}
+            </AuthNotice>
+          ) : null}
 
-            <Pressable
-              onPress={handleSignIn}
-              className="mt-5 h-14 flex-row items-center justify-center rounded-xl border border-line active:bg-surface-sunken dark:border-night-line dark:active:bg-night-raised">
-              <Ionicons name="finger-print" size={20} color={theme.tint} />
-              <Text className="ml-2 text-base font-semibold text-ink dark:text-white">
-                Use biometrics
+          <AuthSubmit
+            palette={palette}
+            label={
+              mode === 'otp'
+                ? 'Verify and sign in'
+                : mode === 'forgot'
+                  ? 'Email me a reset link'
+                  : 'Sign in'
+            }
+            loading={loading}
+            onPress={mode === 'forgot' ? handleReset : handleSignIn}
+          />
+
+          {mode !== 'password' ? (
+            <AuthLink
+              palette={palette}
+              align="center"
+              label="Back to sign in"
+              onPress={leaveSubMode}
+            />
+          ) : null}
+        </View>
+
+        {mode === 'password' ? (
+          <View style={{ marginTop: 22, gap: 14 }}>
+            <AuthDivider palette={palette} />
+            <AuthAltButton
+              palette={palette}
+              icon="person-add-outline"
+              label="Create an operator account"
+              onPress={() => router.push('/(auth)/signup')}
+            />
+            <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 2 }}>
+              <Ionicons
+                name="information-circle-outline"
+                size={14}
+                color={palette.textFaint}
+                style={{ marginTop: 2 }}
+              />
+              <Text
+                style={{
+                  flex: 1,
+                  color: palette.textFaint,
+                  fontSize: 12,
+                  lineHeight: 18,
+                }}>
+                Signing in on a borrowed phone? Untick “Keep me signed in” and the session is
+                dropped when the app closes instead of being written to the keychain.
               </Text>
-            </Pressable>
-
-            <View className="mt-8 flex-row justify-center pb-6">
-              <Text className="text-sm text-ink-muted dark:text-ink-faint">New operator? </Text>
-              <Pressable hitSlop={8}>
-                <Text className="text-sm font-bold text-brand-600 dark:text-brand-400">
-                  Request access
-                </Text>
-              </Pressable>
             </View>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </View>
+        ) : null}
+      </AuthCard>
+    </AuthShell>
   );
 }
