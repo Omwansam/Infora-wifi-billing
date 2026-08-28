@@ -15,12 +15,37 @@ export function parseApiError(error, fallback = 'Request failed') {
   return fallback;
 }
 
-export function formatBytes(bytes) {
+/* Stopping at GB made a lifetime total read "3818.42 GB", which is a number the
+   reader has to convert in their head. The ladder now runs to PB. */
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+
+export function formatBytes(bytes, decimals = 2) {
   const value = Number(bytes) || 0;
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(2)} MB`;
-  if (value >= 1024) return `${(value / 1024).toFixed(2)} KB`;
-  return `${value} B`;
+  if (value < 1024) return `${Math.round(value)} B`;
+  let index = 0;
+  let scaled = value;
+  while (scaled >= 1024 && index < BYTE_UNITS.length - 1) {
+    scaled /= 1024;
+    index += 1;
+  }
+  return `${scaled.toFixed(decimals)} ${BYTE_UNITS[index]}`;
+}
+
+/**
+ * Same ladder, one significant decimal and none at all past 100 — for axis
+ * ticks and other tight slots, where "953.67 MB" wraps onto two lines and
+ * stops being a tick label.
+ */
+export function formatBytesShort(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${Math.round(value)} B`;
+  let index = 0;
+  let scaled = value;
+  while (scaled >= 1024 && index < BYTE_UNITS.length - 1) {
+    scaled /= 1024;
+    index += 1;
+  }
+  return `${scaled >= 100 ? Math.round(scaled) : scaled.toFixed(1)} ${BYTE_UNITS[index]}`;
 }
 
 export function formatDuration(seconds) {

@@ -208,6 +208,136 @@ export const customerService = {
     return authenticatedApiCall(url, getAccessToken());
   },
 
+  // --- Subscriber detail page -------------------------------------------
+  // Backed by routes/subscriber_detail.py. Every one of these returns the
+  // shape { ok, data } inside `result.data`; `unwrap()` below is what callers
+  // use so a failed call throws instead of quietly rendering an empty page.
+
+  /** Everything the Overview tab and the header need, in one request. */
+  async getOverview(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/overview`, getAccessToken());
+  },
+
+  /** Everything the Reports tab needs, in one request. */
+  async getReports(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/reports`, getAccessToken());
+  },
+
+  async getSessions(customerId, { page = 1, perPage = 20 } = {}) {
+    const qs = new URLSearchParams({ page, per_page: perPage });
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/sessions?${qs}`, getAccessToken());
+  },
+
+  async getDevices(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/devices`, getAccessToken());
+  },
+
+  async getPackageHistory(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/package-history`, getAccessToken());
+  },
+
+  async getNotes(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/notes`, getAccessToken());
+  },
+
+  async addNote(customerId, content, type = 'general') {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/notes`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify({ content, type }) });
+  },
+
+  async deleteNote(customerId, noteId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/notes/${noteId}`, getAccessToken(),
+      { method: 'DELETE' });
+  },
+
+  async getMessages(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/messages`, getAccessToken());
+  },
+
+  async sendMessage(customerId, message) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/messages`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify({ message }) });
+  },
+
+  /**
+   * Change when the subscription ends.
+   * Pass `extend` ('1h'|'1d'|'7d'|'1mo') for a relative bump, or `expiry` for
+   * an absolute date. `planId` switches package, `graceDays` sets the grace.
+   */
+  async changeExpiry(customerId, { expiry, extend, planId, graceDays, notify = true } = {}) {
+    const body = { notify };
+    if (extend) body.extend = extend;
+    if (expiry !== undefined) body.expiry = expiry;
+    if (planId) body.plan_id = planId;
+    if (graceDays !== undefined) body.grace_days = graceDays;
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/expiry`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  async sendCredentials(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/send-credentials`, getAccessToken(),
+      { method: 'POST' });
+  },
+
+  async sendPaymentDetails(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/send-payment-details`, getAccessToken(),
+      { method: 'POST' });
+  },
+
+  async generateInvoice(customerId, body = {}) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/invoice`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  /** Pause banks the remaining days; resume hands them back. */
+  async pauseSubscription(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/pause`, getAccessToken(), { method: 'POST' });
+  },
+
+  async resumeSubscription(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/resume`, getAccessToken(), { method: 'POST' });
+  },
+
+  /** Block cuts access and keeps the clock running — not the same as pause. */
+  async blockSubscriber(customerId, reason) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/block`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify({ reason }) });
+  },
+
+  async unblockSubscriber(customerId) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/unblock`, getAccessToken(), { method: 'POST' });
+  },
+
+  async fupOverride(customerId, { action = 'release', days = 30 } = {}) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/fup-override`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify({ action, days }) });
+  },
+
+  async compensate(customerId, { days, reason, notify = true }) {
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/${customerId}/compensate`, getAccessToken(),
+      { method: 'POST', body: JSON.stringify({ days, reason, notify }) });
+  },
+
   async getCustomerTickets(customerId, params = {}) {
     const queryParams = new URLSearchParams();
 
@@ -219,3 +349,23 @@ export const customerService = {
     return authenticatedApiCall(url, getAccessToken());
   },
 };
+
+/**
+ * Turn an apiCall result into data, or throw.
+ *
+ * `apiCall` never throws — it returns `{ success: false, error }` — so the
+ * common `if (result.success) { … }` with no else silently renders an empty
+ * page when the API is down. Every caller on the detail page goes through here
+ * so a failure is loud.
+ */
+export function unwrap(result, fallbackMessage = 'Request failed') {
+  if (!result?.success) {
+    throw new Error(result?.error || result?.data?.error || fallbackMessage);
+  }
+  const payload = result.data;
+  if (payload && typeof payload === 'object' && 'ok' in payload) {
+    if (!payload.ok) throw new Error(payload.error || fallbackMessage);
+    return payload.data ?? payload;
+  }
+  return payload;
+}

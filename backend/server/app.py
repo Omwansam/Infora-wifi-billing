@@ -5,6 +5,7 @@ from extensions import db, migrate, jwt
 from models import User, LDAPServer, RadiusClient, SnmpDevice, VPNConfig, EapProfile, RadCheck, RadReply, RadAcct, RadUserGroup, RadGroupCheck, RadGroupReply
 from routes.auth import auth_bp
 from routes.customers import customers_bp
+from routes.subscriber_detail import subscriber_bp
 from routes.invoices import invoices_bp
 from routes.plans import plans_bp
 from routes.devices import devices_bp
@@ -80,6 +81,9 @@ def _invalid_token(reason):
 # Register blueprints
 app.register_blueprint(auth_bp)
 app.register_blueprint(customers_bp)
+# Same /api/customers prefix, different concern: the detail page's history,
+# time series and account actions. Distinct blueprint name keeps endpoints unique.
+app.register_blueprint(subscriber_bp)
 app.register_blueprint(invoices_bp)
 app.register_blueprint(plans_bp)
 app.register_blueprint(devices_bp)
@@ -146,6 +150,10 @@ def ensure_schema_upgrades():
             # customer-facing account number (see radius_provisioning).
             'radius_login': 'VARCHAR(120)',
             'account_number': 'VARCHAR(40)',
+            # Per-account grace after expiry, set from the Change-expiry dialog.
+            'grace_period_days': 'INTEGER DEFAULT 0',
+            # Operator FUP override window (see services.fup_enforcement).
+            'fup_exempt_until': 'TIMESTAMP',
         },
         'isps': {
             'account_number_prefix': 'VARCHAR(12)',
@@ -252,6 +260,7 @@ def ensure_schema_upgrades():
         # boot. checkfirst=True makes this a no-op once they exist.
         from models import (
             CpeDevice, CpeFirmware, CpeSession, CpeTask, ImportCandidate, ImportRun,
+            CustomerEvent,
             DeviceOutage, DeviceResourceSample,
             FiberCable, FiberNode, FiberSplice,
             OnboardingSignup, PlatformInvoice,
@@ -261,6 +270,8 @@ def ensure_schema_upgrades():
                       OnboardingSignup, PlatformInvoice,
                       # The device detail page's two history tabs read these.
                       DeviceOutage, DeviceResourceSample,
+                      # The subscriber's lifecycle and package-history tabs.
+                      CustomerEvent,
                       # Nodes first: cables and splices reference them.
                       FiberNode, FiberCable, FiberSplice):
             model.__table__.create(bind=db.engine, checkfirst=True)

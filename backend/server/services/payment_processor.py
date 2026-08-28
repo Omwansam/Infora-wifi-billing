@@ -42,6 +42,18 @@ def complete_successful_payment(payment, mpesa_receipt=None, amount=None):
             plan = payment.invoice.customer.service_plan or plan
         activate_customer_after_payment(customer, isp, plan=plan, stack_time=True)
 
+    if customer:
+        # Payment is the event the subscriber cares most about seeing on their
+        # history, and the one that explains every expiry jump after it.
+        from services import customer_events
+        customer_events.record(
+            customer, 'payment', 'Payment received',
+            detail=f'{payment.payment_method or "payment"}'
+                   + (f' · {payment.mpesa_receipt_number}' if payment.mpesa_receipt_number else ''),
+            amount=payment.amount,
+            to_value=customer.subscription_end.isoformat() if customer.subscription_end else None,
+        )
+
     txn = Transaction(
         transaction_number=payment.transaction_id or f'TXN-{payment.id}',
         transaction_type='payment',

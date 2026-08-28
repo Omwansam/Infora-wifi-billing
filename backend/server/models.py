@@ -157,8 +157,16 @@ class Customer(db.Model):
     # True while the subscriber is provisioned at the plan's FUP throttled speed
     # (set/cleared by services.fup_enforcement).
     fup_throttled = db.Column(db.Boolean, default=False, nullable=False)
+    # Operator override: skip FUP enforcement for this account until this moment.
+    # Without it, "release from throttle" is undone by the next scheduler pass,
+    # which makes the button a lie rather than a decision.
+    fup_exempt_until = db.Column(db.DateTime, nullable=True)
     subscription_start = db.Column(db.DateTime, nullable=True)
     subscription_end = db.Column(db.DateTime, nullable=True)
+    # Extra days after subscription_end before access is actually cut. 0/NULL
+    # means the expiry is the cut-off. Set per account from the expiry dialog,
+    # because a grace given to one subscriber is not a policy for all of them.
+    grace_period_days = db.Column(db.Integer, default=0, nullable=True)
     id_number = db.Column(db.String(50), nullable=True)
     kyc_status = db.Column(
         db.Enum(KycStatus, name='kyc_status', values_callable=lambda enum: [item.value for item in enum]),
@@ -191,6 +199,14 @@ class Customer(db.Model):
     tickets = db.relationship('Ticket', back_populates="customer", cascade='all, delete-orphan')
     # Relationships mapping the customer to multiple notes
     notes = db.relationship('CustomerNote', back_populates="customer", cascade='all, delete-orphan')
+    # Account history. Dies with the account: an event about a deleted
+    # subscriber names nobody, and the financial record lives in payments.
+    events = db.relationship(
+        'CustomerEvent',
+        back_populates="customer",
+        cascade='all, delete-orphan',
+        order_by='CustomerEvent.created_at.desc()',
+    )
     # Relationships mapping the customer to multiple documents
     documents = db.relationship('CustomerDocument', back_populates="customer", cascade='all, delete-orphan')
     # Foreign Key To store service plan id
@@ -2966,3 +2982,58 @@ class FiberSplice(db.Model):
 
     def __repr__(self):
         return f'<FiberSplice node={self.node_id} port={self.port_number}>'
+
+
+# =========================
+#   CustomerEvent Model
+# =========================
+
+class CustomerEvent(db.Model):
+    """One dated thing that happened to a subscriber account.
+
+    The subscriber detail page has two tabs that are only answerable from a
+    written record — "Subscription lifecycle" and "Package history" — and until
+    this table existed the app kept no such record. `AuditLog` is declared but
+    never written to, and `system_logs` is keyed by operator rather than by
+    account, so neither can answer "what happened to *this* subscriber, in
+    order". Events are append-only: an account's history must not change when
+    the account does.
+
+    `from_value`/`to_value` carry the before/after for the change kinds where
+    the pair *is* the story (plan swapped, expiry moved, status flipped); they
+    stay NULL for events that are simply facts (a payment, an SMS).
+    """
+
+    __tablename__ = 'customer_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(
+        db.Integer, db.ForeignKey('customers.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True, index=True)
+
+    # created | plan_changed | expiry_changed | payment | connected | disconnected
+    # | suspended | activated | blocked | unblocked | password_reset | fup_throttled
+    # | fup_released | compensated | invoice | note | sms | kyc
+    event_type = db.Column(db.String(30), nullable=False, index=True)
+    title = db.Column(db.String(160), nullable=False)
+    detail = db.Column(db.Text, nullable=True)
+    from_value = db.Column(db.String(160), nullable=True)
+    to_value = db.Column(db.String(160), nullable=True)
+    # Money attached to the event (payment, compensation credit, invoice total).
+    amount = db.Column(db.Numeric(10, 2), nullable=True)
+
+    # Who did it. NULL means the system did — a scheduler, a payment callback,
+    # or the subscriber themselves through the portal.
+    actor_user_id = db.Column(
+        db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
+    actor_name = db.Column(db.String(120), nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    customer = db.relationship('Customer', back_populates='events')
+    actor = db.relationship('User')
+
+    def __repr__(self):
+        return f'<CustomerEvent {self.customer_id} {self.event_type}>'

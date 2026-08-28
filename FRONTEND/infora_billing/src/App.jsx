@@ -20,7 +20,7 @@ import RouterImport from './components/imports/RouterImport';
 import ImportRuns from './components/imports/ImportRuns';
 import ImportRunDetail from './components/imports/ImportRunDetail';
 import ImportCutover from './components/imports/ImportCutover';
-import ClientDetail from './components/clients/ClientDetail';
+import ClientDetailPage from './components/clients/detail/ClientDetailPage';
 import OnlineUsersPage from './components/clients/OnlineUsersPage';
 import ClientEdit from './components/clients/ClientEdit';
 import PaymentsPage from './components/billing/PaymentsPage';
@@ -166,7 +166,7 @@ function AppRoutes() {
       <Route path="/clients/hotspot" element={<ProtectedRoute><MainLayout><ClientsPage /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/online" element={<ProtectedRoute><MainLayout><OnlineUsersPage /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/kyc" element={<ProtectedRoute><MainLayout><CustomerKycPage /></MainLayout></ProtectedRoute>} />
-      <Route path="/clients/:customerId" element={<ProtectedRoute><MainLayout><ClientDetail /></MainLayout></ProtectedRoute>} />
+      <Route path="/clients/:customerId" element={<ProtectedRoute><MainLayout><ClientDetailPage /></MainLayout></ProtectedRoute>} />
       <Route path="/clients/:customerId/edit" element={<ProtectedRoute><MainLayout><ClientEdit /></MainLayout></ProtectedRoute>} />
 
       {/* Legacy customer URLs → clients */}

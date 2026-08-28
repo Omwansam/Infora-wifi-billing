@@ -14,6 +14,7 @@ Run via cron: ``flask enforce-fup``
 Or set FUP_ENFORCEMENT_INTERVAL (seconds) for in-process polling.
 """
 import logging
+from datetime import datetime
 
 from extensions import db
 from models import Customer, CustomerStatus, ISP
@@ -70,6 +71,15 @@ def apply_fup_enforcement(isp_id=None):
         plan = customer.service_plan
         isp = ISP.query.get(customer.isp_id) if customer.isp_id else None
         if not plan or not isp:
+            continue
+
+        # An operator override outranks the policy for as long as it lasts: the
+        # point of releasing someone from a throttle is that they stay released.
+        # An expired override falls through and enforcement resumes on its own.
+        if customer.fup_exempt_until and customer.fup_exempt_until > datetime.utcnow():
+            if customer.fup_throttled:
+                _restore(customer, plan, isp)
+                restored += 1
             continue
 
         if is_over and throttle_speed and not customer.fup_throttled:

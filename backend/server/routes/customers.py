@@ -18,6 +18,7 @@ from services.radius_provisioning import (
     find_customer_by_login,
 )
 from services.system_log import record_system_log
+from services import customer_events
 import secrets
 
 customers_bp = Blueprint('customers', __name__, url_prefix='/api/customers')
@@ -520,6 +521,9 @@ def create_customer():
         elif status != CustomerStatus.ACTIVE:
             radius_provision_reason = f'Customer status is {status.value} — RADIUS not provisioned on create'
 
+        # The lifecycle tab starts here. Written before the commit so the account
+        # and its first event land together or not at all.
+        customer_events.backfill_created(customer)
         db.session.commit()
 
         response = {
@@ -659,6 +663,7 @@ def update_customer(customer_id):
             customer.usage_percentage = data['usage_percentage']
         if 'device_count' in data:
             customer.device_count = data['device_count']
+        old_package = customer.package
         if 'service_plan_id' in data:
             customer.service_plan_id = data['service_plan_id']
             plan = ServicePlan.query.get(data['service_plan_id'])
@@ -677,6 +682,25 @@ def update_customer(customer_id):
 
         if customer.status != old_status or 'service_plan_id' in data or login_changed:
             sync_customer_radius_status(customer, old_status=old_status)
+
+        # Only the changes an operator would look for on the timeline. Editing a
+        # phone number is not account history; changing what someone pays for is.
+        actor = get_current_user()
+        if customer.package != old_package:
+            customer_events.record(
+                customer, 'plan_changed', 'Package changed',
+                detail=f'{old_package or "—"} → {customer.package}',
+                from_value=old_package, to_value=customer.package, actor=actor,
+            )
+        if customer.status != old_status:
+            became_active = customer.status == CustomerStatus.ACTIVE
+            customer_events.record(
+                customer,
+                'activated' if became_active else 'suspended',
+                'Account activated' if became_active else 'Account suspended',
+                detail=f'{old_status.value} → {customer.status.value}',
+                from_value=old_status.value, to_value=customer.status.value, actor=actor,
+            )
 
         db.session.commit()
         
@@ -1089,6 +1113,11 @@ def connect_client(customer_id):
             return jsonify({'error': 'Assign a service plan before connecting'}), 400
 
         activate_customer_after_payment(customer, isp)
+        customer_events.record(
+            customer, 'connected', 'Connected',
+            detail=f'Provisioned on {plan.name} at {plan.speed}',
+            actor=get_current_user(),
+        )
         db.session.commit()
         return jsonify({
             'message': 'Client connected — internet access provisioned',
@@ -1112,6 +1141,11 @@ def disconnect_client(customer_id):
             return jsonify({'message': 'Client is already disconnected', 'customer': serialize_customer(customer)}), 200
 
         suspend_customer_access(customer, isp)
+        customer_events.record(
+            customer, 'disconnected', 'Disconnected',
+            detail='RADIUS access removed by operator',
+            actor=get_current_user(),
+        )
         db.session.commit()
         return jsonify({
             'message': 'Client disconnected — internet access removed',
@@ -1196,6 +1230,12 @@ def reset_customer_radius_credentials(customer_id):
                 pass
             reprovisioned = True
 
+        customer_events.record(
+            customer, 'password_reset', 'Connection password reset',
+            detail=('RADIUS re-provisioned and live sessions kicked'
+                    if reprovisioned else 'Stored password replaced'),
+            actor=get_current_user(),
+        )
         db.session.commit()
         return jsonify({
             'ok': True,
@@ -1214,89 +1254,107 @@ def reset_customer_radius_credentials(customer_id):
 @customers_bp.route('/<int:customer_id>/invoices', methods=['GET'])
 @jwt_required()
 def get_customer_invoices(customer_id):
-    """Get all invoices for a specific customer"""
-    try:
-        customer = Customer.query.get_or_404(customer_id)
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 20, type=int)
-        status = request.args.get('status')
-        
-        query = customer.invoices
-        
-        if status:
-            query = query.filter_by(status=status)
-        
-        invoices = query.order_by(customer.invoices.any().created_at.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        return jsonify({
-            'customer': serialize_customer(customer),
-            'invoices': [invoice.to_dict() for invoice in invoices.items],
-            'total': invoices.total,
-            'pages': invoices.pages,
-            'current_page': page
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': f'Failed to get customer invoices: {str(e)}'}), 500
+    """Invoices raised against one subscriber, newest first.
+
+    Rewritten: this and the two handlers below paginated `customer.invoices`,
+    which is a plain list (the relationship is not `lazy='dynamic'`), so
+    `.filter_by()`/`.order_by()`/`.paginate()` raised AttributeError on every
+    call and the blanket except turned it into a 500. They queried the model
+    directly nowhere, and none of them ever returned a row.
+    """
+    from models import Invoice
+    customer = Customer.query.get_or_404(customer_id)
+    page = request.args.get('page', 1, type=int)
+    per_page = min(100, request.args.get('per_page', 20, type=int))
+    status = request.args.get('status')
+
+    query = Invoice.query.filter_by(customer_id=customer.id)
+    if status:
+        query = query.filter(Invoice.status == status)
+    paged = (query.order_by(Invoice.created_at.desc())
+                  .paginate(page=page, per_page=per_page, error_out=False))
+
+    return jsonify({
+        'invoices': [{
+            'id': row.id,
+            'invoice_number': row.invoice_number,
+            'amount': float(row.amount or 0),
+            'status': row.status.value if row.status else 'pending',
+            'due_date': row.due_date.isoformat() if row.due_date else None,
+            'paid_date': row.paid_date.isoformat() if row.paid_date else None,
+            'notes': row.notes,
+            'created_at': row.created_at.isoformat() if row.created_at else None,
+        } for row in paged.items],
+        'total': paged.total,
+        'pages': paged.pages,
+        'current_page': page,
+    }), 200
+
 
 @customers_bp.route('/<int:customer_id>/payments', methods=['GET'])
 @jwt_required()
 def get_customer_payments(customer_id):
-    """Get all payments for a specific customer"""
-    try:
-        customer = Customer.query.get_or_404(customer_id)
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 20, type=int)
-        status = request.args.get('status')
-        
-        query = customer.payments
-        
-        if status:
-            query = query.filter_by(status=status)
-        
-        payments = query.order_by(customer.payments.any().created_at.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        return jsonify({
-            'customer': serialize_customer(customer),
-            'payments': [payment.to_dict() for payment in payments.items],
-            'total': payments.total,
-            'pages': payments.pages,
-            'current_page': page
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': f'Failed to get customer payments: {str(e)}'}), 500
+    """Payments made by one subscriber, newest first."""
+    from models import Payment
+    customer = Customer.query.get_or_404(customer_id)
+    page = request.args.get('page', 1, type=int)
+    per_page = min(100, request.args.get('per_page', 20, type=int))
+    status = request.args.get('status')
+
+    query = Payment.query.filter_by(customer_id=customer.id)
+    if status:
+        query = query.filter(Payment.payment_status == status)
+    paged = (query.order_by(Payment.payment_date.desc())
+                  .paginate(page=page, per_page=per_page, error_out=False))
+
+    return jsonify({
+        'payments': [{
+            'id': row.id,
+            'amount': float(row.amount or 0),
+            'method': row.payment_method,
+            'status': row.payment_status.value if row.payment_status else 'pending',
+            'reference': row.mpesa_receipt_number or row.transaction_id,
+            'phone_number': row.phone_number,
+            'invoice_id': row.invoice_id,
+            'payment_date': row.payment_date.isoformat() if row.payment_date else None,
+            'created_at': row.created_at.isoformat() if row.created_at else None,
+        } for row in paged.items],
+        'total': paged.total,
+        'pages': paged.pages,
+        'current_page': page,
+    }), 200
+
 
 @customers_bp.route('/<int:customer_id>/tickets', methods=['GET'])
 @jwt_required()
 def get_customer_tickets(customer_id):
-    """Get all tickets for a specific customer"""
-    try:
-        customer = Customer.query.get_or_404(customer_id)
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 20, type=int)
-        status = request.args.get('status')
-        
-        query = customer.tickets
-        
-        if status:
-            query = query.filter_by(status=status)
-        
-        tickets = query.order_by(customer.tickets.any().created_at.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        return jsonify({
-            'customer': serialize_customer(customer),
-            'tickets': [ticket.to_dict() for ticket in tickets.items],
-            'total': tickets.total,
-            'pages': tickets.pages,
-            'current_page': page
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': f'Failed to get customer tickets: {str(e)}'}), 500
+    """Support tickets opened for one subscriber, newest first."""
+    from models import Ticket
+    customer = Customer.query.get_or_404(customer_id)
+    page = request.args.get('page', 1, type=int)
+    per_page = min(100, request.args.get('per_page', 20, type=int))
+    status = request.args.get('status')
+
+    query = Ticket.query.filter_by(customer_id=customer.id)
+    if status:
+        query = query.filter(Ticket.ticket_status == status)
+    paged = (query.order_by(Ticket.created_at.desc())
+                  .paginate(page=page, per_page=per_page, error_out=False))
+
+    return jsonify({
+        'tickets': [{
+            'id': row.id,
+            'ticket_number': row.ticket_number,
+            'subject': row.ticket_subject,
+            'description': row.ticket_description,
+            'status': row.ticket_status.value if row.ticket_status else None,
+            'priority': row.priority.value if row.priority else None,
+            'category': row.category,
+            'resolved_at': row.resolved_at.isoformat() if row.resolved_at else None,
+            'created_at': row.created_at.isoformat() if row.created_at else None,
+            'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+        } for row in paged.items],
+        'total': paged.total,
+        'pages': paged.pages,
+        'current_page': page,
+    }), 200

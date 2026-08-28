@@ -12,6 +12,21 @@ export function formatCurrency(amount) {
   }).format(amount)
 }
 
+/**
+ * Currency for a tight slot — an axis tick, a chip.
+ *
+ * `formatCurrency` renders "Ksh 6,000.00", which is ~11 characters and gets
+ * clipped by any axis narrow enough to leave the plot room. This drops the
+ * decimals (an axis tick never needs cents) and abbreviates thousands.
+ */
+export function formatCurrencyShort(amount) {
+  const value = Number(amount) || 0;
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 10_000) return `${(value / 1000).toFixed(0)}k`;
+  return new Intl.NumberFormat('en-KE', { maximumFractionDigits: 0 }).format(value);
+}
+
 export function formatDate(date) {
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
