@@ -29,7 +29,21 @@ server default {
         chap
         mschap
         digest
-        suffix
+        # `suffix` is deliberately NOT enabled.
+        #
+        # It splits User-Name at "@" and sets Stripped-User-Name, and
+        # mods-available/sql keys the lookup on
+        #     %{%{Stripped-User-Name}:-%{User-Name}}
+        # So with suffix in this chain, a subscriber whose login is an email —
+        # which is what services/radius_provisioning.radius_username() falls back
+        # to whenever an operator has not set an explicit radius_login — is
+        # looked up as the local part alone, against a realm that is not in
+        # proxy.conf. The request is not even rejected: it gets NO REPLY, so the
+        # router just times out and the failure never reaches the app logs.
+        # Verified on 2026-08-31: "probeuser" -> Access-Accept, but
+        # "probe@example.com" -> no reply, with an identical radcheck row.
+        # This deployment authenticates full usernames locally and never proxies
+        # RADIUS, so there is nothing for realm handling to do here.
         eap {
             ok = return
         }
@@ -70,7 +84,8 @@ server default {
     preacct {
         preprocess
         acct_unique
-        suffix
+        # Not enabled, for the same reason as in authorize above: it would key
+        # accounting on the stripped name while auth used the full one.
         files
     }
 
