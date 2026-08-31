@@ -1,0 +1,69 @@
+# Overlay for the shared "fibi" host (2.24.114.80), where fibi-proxy-1 owns
+# ports 80/443 for every system on the box.
+#
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.prod.yml \
+#                  -f docker-compose.fibi.yml up -d
+#
+# Billing publishes NO web port. The edge proxy reaches these containers over
+# the shared `fibi_internal` network and terminates TLS itself.
+#
+# Upstreams MUST be addressed by the unique aliases below, never by the bare
+# service names. Docker's embedded DNS answers a service name with every
+# container carrying it, and this host runs four stacks — `backend` already
+# collided once here and round-robined traffic between two applications.
+
+services:
+  # The billing web image serves all three sites (admin console + captive
+  # portal, demo, Lumen marketing) and proxies /api to flask internally, so the
+  # edge proxy needs a single upstream and no static-file mounts of its own.
+  web:
+    profiles: !reset []
+    ports: !override []
+    networks:
+      infora_network: null
+      fibi_internal:
+        aliases:
+          - infora-billing-web
+
+  # flask_app deliberately does NOT join fibi_internal.
+  #
+  # Docker resolves a name across every network the querying container is on,
+  # and fibi-postgres-1 already answers to `postgres` there. With flask on both
+  # networks, `postgres` round-robined onto ANOTHER TENANT'S DATABASE and the
+  # boot failed with "password authentication failed for user infora_user".
+  # It could have been worse than a failure: a matching role name would have
+  # meant billing silently reading and writing someone else's database.
+  #
+  # WebFig, the only reason flask needed edge reachability, is served through
+  # the billing web image instead (config/nginx/conf.d/webfig.conf).
+  flask_app:
+    # Loopback only — for curl and debugging, not facing the internet.
+    ports: !override
+      - "127.0.0.1:5080:5000"
+
+  # The base compose hardcodes infora_user/infora_billing in FIVE places:
+  # POSTGRES_DB, POSTGRES_USER, the healthcheck, and FreeRADIUS's two SQL vars.
+  # All of them have to move together. FreeRADIUS is the one that fails quietly
+  # — it would keep querying a database that does not exist and every RADIUS
+  # auth would reject with nothing in the app logs to explain why.
+  postgres:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  freeradius:
+    environment:
+      RADIUS_DB_NAME: ${POSTGRES_DB}
+      RADIUS_DB_USER: ${POSTGRES_USER}
+      RADIUS_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+networks:
+  fibi_internal:
+    external: true
