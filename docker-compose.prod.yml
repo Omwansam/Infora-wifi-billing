@@ -46,6 +46,14 @@ services:
         condition: service_healthy
       freeradius:
         condition: service_started
+    # Pass the WHOLE .env into the container. The explicit `environment:` keys
+    # below still win, so nothing here changes — but a var that is only in .env
+    # (MAIL_*, SMS_*, DEVICE_*, TENANT_BASE_DOMAIN, …) now actually reaches the
+    # app instead of being silently dropped. That drop has bitten this deploy
+    # three times (PORTAL_BASE_URL, then PLATFORM_*); this ends the pattern.
+    # Note: a compose env change needs `up -d`, not `build` or `restart`.
+    env_file:
+      - .env
     environment:
       FLASK_ENV: production
       DATABASE_URL: ${DATABASE_URL}

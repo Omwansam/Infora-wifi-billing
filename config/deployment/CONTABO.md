@@ -1,5 +1,12 @@
 # Manual deployment — Contabo VPS + Cloudflare (ruirufactorymabati.com)
 
+> **Deploying on a NEW server? Use [`DEPLOYMENT.md`](../../DEPLOYMENT.md) instead.**
+> This document describes the *old* arrangement, where billing ran behind the
+> `dan` project's nginx and its frontend/certs/vhosts lived under `/opt/dan`.
+> Keep it as reference for that shared-host setup (DEPLOYMENT.md Appendix B).
+> Known-stale here: the `frontend-dist` publish path, and the claim that
+> `infora_openldap` runs in production (it is behind a profile and does not).
+
 Complete step-by-step guide to deploy by hand on a fresh Contabo VPS. Use this checklist start to finish.
 
 **Deploy directory (this guide):** `/srv/infora-billing`  
