@@ -271,8 +271,26 @@ def build_one_liner(device, base_url=None):
     # check-certificate=no: RouterOS ships without a full CA bundle, so HTTPS
     # fetch to a valid public cert still fails validation. The unguessable
     # 64-hex token in the URL is the auth for this one-time bootstrap fetch.
+    fetch = (
+        f'/tool fetch url="{url}" check-certificate=no dst-path=flash/provision.rsc'
+    )
+    # A stock router very often has no working resolver, so the fetch dies with
+    # "failure: resolving error" before it ever reaches us — the hostname above
+    # cannot be swapped for a literal IP the way the WireGuard endpoint is
+    # (see _resolve_endpoint_ip), because the origin sits behind a proxy that
+    # routes on SNI/Host: an IP URL lands on the wrong vhost.
+    #
+    # So: try the fetch as-is, and only if it fails fall back to public
+    # resolvers and retry. Routers with working DNS are left untouched — this
+    # never overwrites a deliberate resolver configuration unless the fetch has
+    # already proven it does not work.
     return (
-        f'/tool fetch url="{url}" check-certificate=no dst-path=flash/provision.rsc;'
+        f':do {{ {fetch} }} on-error={{'
+        ' :log warning "Infora: fetch failed, setting public DNS and retrying";'
+        ' :do { /ip dns set servers=1.1.1.1,8.8.8.8 } on-error={};'
+        ' :delay 2s;'
+        f' {fetch}'
+        ' };'
         ' :delay 3s;'
         ' /import flash/provision.rsc;'
         ' :delay 2s;'
