@@ -130,6 +130,23 @@ def _authz_device(device_id):
     return device, None
 
 
+def _client_is_secure():
+    """True when the ORIGINAL browser request was HTTPS.
+
+    ``request.is_secure`` describes the proxy->app hop, not the browser->edge
+    one. TLS terminates at the edge proxy here, so it is always False and the
+    one-click URL was minted as ``http://`` — putting the signed session token
+    in a plaintext URL — while the session cookie was set without ``Secure``.
+    The edge sets X-Forwarded-Proto (see config/nginx/snippets/
+    billing-locations.conf); trust it, and fall back to the direct check when
+    the header is absent, as in local development.
+    """
+    proto = (request.headers.get('X-Forwarded-Proto') or '').split(',')[0].strip().lower()
+    if proto:
+        return proto == 'https'
+    return request.is_secure
+
+
 @webfig_bp.route('/<int:device_id>/webfig/session', methods=['POST'])
 @jwt_required()
 def webfig_session(device_id):
@@ -141,7 +158,7 @@ def webfig_session(device_id):
         return jsonify({'error': 'Device has no management WireGuard tunnel'}), 400
 
     token = _serializer().dumps({'d': device_id, 'u': get_jwt_identity()})
-    scheme = 'https' if request.is_secure else 'http'
+    scheme = 'https' if _client_is_secure() else 'http'
     host = webfig_host_for(request.host)
     return jsonify({'url': f'{scheme}://{host}/?t={token}', 'host': host}), 200
 
@@ -235,7 +252,7 @@ def serve_webfig_host(pinned_device_id=None):
             max_age=_COOKIE_MAX_AGE,
             httponly=True,
             samesite='Lax',
-            secure=request.is_secure,
+            secure=_client_is_secure(),
             path='/',
         )
     return resp
@@ -262,7 +279,7 @@ def webfig_legacy_redirect(device_id, subpath):
     rendering a broken WebFig.
     """
     token = request.args.get('t', '')
-    scheme = 'https' if request.is_secure else 'http'
+    scheme = 'https' if _client_is_secure() else 'http'
     host = webfig_host_for(request.host)
     suffix = f'/?t={token}' if token else '/'
     return Response(
