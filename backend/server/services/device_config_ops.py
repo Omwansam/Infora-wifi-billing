@@ -919,6 +919,9 @@ def _subnet_params(subnet):
         # skip the network address and the gateway itself
         'pool_range': _pool_ranges(lower.network_address + 2, lower.broadcast_address),
         'pppoe_pool_range': _pool_ranges(upper.network_address, upper.broadcast_address - 1),
+        # The hotspot half, as a CIDR. Anti-sharing is scoped to it so the rule
+        # cannot reach PPPoE clients, who live in the upper half.
+        'hotspot_subnet': str(lower),
     }
 
 
@@ -1475,17 +1478,30 @@ def build_services_commands(opts):
     #    MUST be scoped to the hotspot bridge — an unscoped postrouting rule sets
     #    TTL=1 on *everything* the router sends, including the WireGuard
     #    management tunnel and all WAN traffic, which kills the whole box.
+    #
+    #    Two things this MUST get right, both found in production 2026-09-01:
+    #
+    #    (a) The remove runs UNCONDITIONALLY. It used to sit inside the `if`, so
+    #        an operator who applied once with anti-sharing on and then turned it
+    #        off left the rule on the router forever — nothing ever deleted it.
+    #    (b) It is scoped to the HOTSPOT half of the subnet, not the whole
+    #        bridge. PPPoE sessions egress the bridge too, so an out-interface-only
+    #        rule gave every PPPoE subscriber TTL=1: their CPE (one hop away)
+    #        worked, but the moment it routed a packet to a phone behind it the
+    #        TTL hit 0 and the packet died — "connected, no internet" for every
+    #        device behind the CPE. Anti-sharing is a hotspot control and a PPPoE
+    #        CPE is a router by definition, so it must never apply there.
+    anti_sharing_cmds = [
+        ':do {/ip firewall mangle remove [find comment="infora-anti-sharing"]} on-error={}',
+    ]
     if run_hotspot and opts.get('anti_sharing'):
-        steps.append(_step(
-            'anti-sharing',
-            [
-                ':do {/ip firewall mangle remove [find comment="infora-anti-sharing"]} on-error={}',
-                '/ip firewall mangle add chain=postrouting action=change-ttl '
-                f'new-ttl=set:1 out-interface={BRIDGE_NAME} passthrough=yes '
-                'comment="infora-anti-sharing"',
-            ],
-            critical=False,
-        ))
+        anti_sharing_cmds.append(
+            '/ip firewall mangle add chain=postrouting action=change-ttl '
+            f'new-ttl=set:1 out-interface={BRIDGE_NAME} '
+            f'dst-address={params["hotspot_subnet"]} passthrough=yes '
+            'comment="infora-anti-sharing"'
+        )
+    steps.append(_step('anti-sharing', anti_sharing_cmds, critical=False))
 
     return steps, params
 
