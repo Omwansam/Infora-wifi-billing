@@ -50,7 +50,8 @@ function ProgressBar({ percent }) {
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
       <motion.div
-        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-sky-400"
+        className="h-full rounded-full"
+        style={{ background: 'linear-gradient(to right, hsl(var(--brand)), hsl(var(--brand-soft)))' }}
         initial={{ width: 0 }}
         animate={{ width: `${percent}%` }}
         transition={{ duration: 0.6, ease: 'easeOut' }}
@@ -63,7 +64,7 @@ function StepChip({ step, onNavigate }) {
   const Icon = STEP_ICONS[step.key] || Package;
   if (step.done) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
         <Check className="h-3.5 w-3.5" />
         {step.title}
       </span>
@@ -73,7 +74,7 @@ function StepChip({ step, onNavigate }) {
     <button
       type="button"
       onClick={() => onNavigate?.(step.path)}
-      className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300 dark:hover:border-indigo-600 dark:hover:text-indigo-300"
+      className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:border-[hsl(var(--brand))] hover:text-[hsl(var(--brand))] dark:border-slate-700 dark:text-slate-300 dark:hover:border-[hsl(var(--brand-soft))] dark:hover:text-[hsl(var(--brand-soft))]"
     >
       <Icon className="h-3.5 w-3.5" />
       {step.title}
@@ -145,14 +146,14 @@ export default function SetupChecklist({ setup, onNavigate }) {
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.08, ease: 'easeOut' }}
-      className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6"
+      className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
     >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+          <h2 className="text-base font-bold tracking-tight text-slate-900 dark:text-white">
             Set up your account
           </h2>
-          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             {done} of {total} done · {left} step{left === 1 ? '' : 's'} left
           </p>
         </div>
@@ -168,26 +169,37 @@ export default function SetupChecklist({ setup, onNavigate }) {
         <button
           type="button"
           onClick={() => onNavigate?.(next.path)}
-          className="group mt-5 flex w-full items-center gap-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-sky-500 p-4 text-left shadow-sm transition hover:shadow-md hover:shadow-indigo-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900 sm:p-5"
+          className="group mt-3.5 flex w-full items-center gap-3 rounded-2xl p-3 text-left shadow-sm transition hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--brand))] focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900 sm:p-3.5"
+          style={{
+            background:
+              'linear-gradient(to right, hsl(var(--brand-strong)), hsl(var(--brand-soft)))',
+            color: 'hsl(var(--brand-contrast))',
+          }}
         >
-          <span className="hidden shrink-0 rounded-xl bg-white/15 p-3 text-white ring-1 ring-inset ring-white/20 sm:block">
+          <span
+            className="hidden shrink-0 rounded-lg p-2 ring-1 ring-inset sm:block"
+            style={{
+              backgroundColor: 'hsl(var(--brand-contrast) / 0.15)',
+              '--tw-ring-color': 'hsl(var(--brand-contrast) / 0.2)',
+            }}
+          >
             <NextIcon className="h-5 w-5" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-white/70">
-              Next step
+            <span className="flex items-baseline gap-2">
+              <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.16em] opacity-70">
+                Next
+              </span>
+              <span className="truncate text-sm font-semibold sm:text-base">{next.title}</span>
             </span>
-            <span className="mt-0.5 block text-base font-semibold text-white sm:text-lg">
-              {next.title}
-            </span>
-            <span className="mt-0.5 block text-sm text-white/75">{next.description}</span>
+            <span className="mt-0.5 block truncate text-xs opacity-75">{next.description}</span>
           </span>
-          <ArrowRight className="h-5 w-5 shrink-0 text-white/80 transition-transform group-hover:translate-x-1" />
+          <ArrowRight className="h-5 w-5 shrink-0 opacity-80 transition-transform group-hover:translate-x-1" />
         </button>
       )}
 
       {(remaining.length > 0 || finished.length > 0) && (
-        <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 dark:border-slate-800">
           {remaining.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">

@@ -50,6 +50,7 @@ import {
   SectionHeading,
   SubscriberStatusCard,
 } from './DashboardWidgets';
+import useBrandColor from '../../hooks/useBrandColor';
 import OverviewHero from './OverviewHero';
 import SetupChecklist from './SetupChecklist';
 
@@ -82,6 +83,9 @@ const PERIOD_KEY_MAP = {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
+  // Publishes the tenant's theme_color as --brand* on :root, so the cards below
+  // (and anything else using the tokens) follow the ISP's colour.
+  useBrandColor();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

@@ -23,6 +23,16 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
+
+    /* ISP brand colour (Settings > General "theme_color"). Defaults match
+       DEFAULT_BRAND in src/lib/brandColor.js so the first paint is already the
+       right colour; applyBrandColor() overwrites these once settings load.
+       Stored as HSL channels so Tailwind arbitrary values can add alpha:
+       hsl(var(--brand) / 0.15). */
+    --brand: 140 72% 37%;
+    --brand-strong: 140 76% 29%;
+    --brand-soft: 158 78% 49%;
+    --brand-contrast: 0 0% 100%;
   }
 
   .dark {

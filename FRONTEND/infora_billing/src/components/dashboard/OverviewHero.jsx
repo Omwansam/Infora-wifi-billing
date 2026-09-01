@@ -127,7 +127,7 @@ function Sparkline({ series }) {
 
 function HeroAction({ icon: Icon, children, onClick, variant = 'glass', spinning = false, disabled }) {
   const base =
-    'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-60';
+    'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--brand-soft)/0.7)] focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-60';
   const styles = {
     primary: 'bg-white text-slate-900 shadow-sm hover:bg-sky-50',
     glass: 'bg-white/10 text-white ring-1 ring-inset ring-white/15 hover:bg-white/15',
@@ -159,7 +159,7 @@ function LiveStrip({ events, onNavigate }) {
 
   if (!events.length) {
     return (
-      <div className="relative flex items-center gap-3 border-t border-white/10 bg-white/[0.02] px-5 py-3 sm:px-7">
+      <div className="relative flex items-center gap-3 border-t border-white/10 bg-white/[0.02] px-5 py-2.5 sm:px-6">
         <span className="inline-flex items-center gap-1.5 rounded-md bg-white/5 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/35 ring-1 ring-inset ring-white/10">
           <span className="h-1.5 w-1.5 rounded-full bg-white/25" />
           Live
@@ -176,7 +176,7 @@ function LiveStrip({ events, onNavigate }) {
 
   return (
     <div
-      className="relative flex items-center gap-3 border-t border-white/10 bg-white/[0.03] px-5 py-3 sm:px-7"
+      className="relative flex items-center gap-3 border-t border-white/10 bg-white/[0.03] px-5 py-2.5 sm:px-6"
       onMouseEnter={() => { paused.current = true; }}
       onMouseLeave={() => { paused.current = false; }}
     >
@@ -270,12 +270,18 @@ export default function OverviewHero({ user, data, generatedAt, refreshing, onRe
       className="relative overflow-hidden rounded-3xl bg-slate-950 shadow-xl shadow-slate-900/20 ring-1 ring-white/10"
     >
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-24 -top-40 h-96 w-96 rounded-full bg-indigo-500/25 blur-3xl" />
-        <div className="absolute -right-24 -top-16 h-80 w-80 rounded-full bg-sky-400/20 blur-3xl" />
+        <div
+          className="absolute -left-24 -top-40 h-80 w-80 rounded-full blur-3xl"
+          style={{ backgroundColor: 'hsl(var(--brand) / 0.28)' }}
+        />
+        <div
+          className="absolute -right-24 -top-16 h-64 w-64 rounded-full blur-3xl"
+          style={{ backgroundColor: 'hsl(var(--brand-soft) / 0.22)' }}
+        />
         <div className="absolute inset-0 bg-gradient-to-br from-transparent via-slate-950/45 to-slate-950/95" />
       </div>
 
-      <div className="relative flex flex-col gap-8 px-5 py-6 sm:px-7 sm:py-8 lg:flex-row lg:items-start lg:justify-between">
+      <div className="relative flex flex-col gap-5 px-5 py-5 sm:px-6 sm:py-6 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
             <span className="text-white/70">{orgName}</span>
@@ -290,12 +296,17 @@ export default function OverviewHero({ user, data, generatedAt, refreshing, onRe
             <span className="text-white/40">{shift}</span>
           </div>
 
-          <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
             {greeting},{' '}
-            <span className="font-serif text-sky-300 [font-variant-caps:small-caps]">{name}.</span>
+            <span
+              className="font-serif [font-variant-caps:small-caps]"
+              style={{ color: 'hsl(var(--brand-soft))' }}
+            >
+              {name}.
+            </span>
           </h1>
 
-          <div className="mt-3 space-y-1.5">
+          <div className="mt-2 space-y-1">
             <p className="flex items-start gap-2 text-sm text-white/80 sm:text-[15px]">
               <AttentionIcon
                 className={`mt-0.5 h-4 w-4 shrink-0 ${attention.clean ? 'text-emerald-300' : 'text-amber-300'}`}
@@ -308,7 +319,7 @@ export default function OverviewHero({ user, data, generatedAt, refreshing, onRe
             </p>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center gap-2">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <HeroAction variant="primary" icon={Plus} onClick={() => onNavigate?.('/clients/pppoe/new')}>
               New PPPoE
             </HeroAction>
