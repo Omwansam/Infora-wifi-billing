@@ -32,11 +32,25 @@ Auth: the JSON endpoints require a JWT; the proxied stream authenticates via the
 signed cookie the first request sets (a browser <img>/<script> request can't
 carry an Authorization header). The cookie is host-scoped, so it is naturally
 confined to one device.
+
+**The query string is opaque binary — never parse it.** WebFig's transport is
+``/jsproxy``, and it carries its session key as raw bytes in the query string::
+
+    GET /jsproxy/?%00%00%00%05%00%00%01%C2%BE%C3%81%C3%940...%C2%85%00
+
+That is not ``key=value`` data and does not survive a parse/re-encode round trip.
+Reading it through ``request.args`` yields one key with no value, and handing that
+back to requests as ``params=`` re-encodes it as ``key=`` — one appended ``=`` byte,
+which RouterOS rejects with 404 on *every* jsproxy GET. WebFig then 500s on POSTs
+against the session the router already threw away. So the path and query are
+forwarded verbatim from the raw WSGI environ; see ``_upstream_url``.
 """
 import os
+import re
+from urllib.parse import quote
 
 import requests
-from flask import Blueprint, request, jsonify, current_app, Response
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
@@ -48,12 +62,34 @@ webfig_bp = Blueprint('webfig', __name__, url_prefix='/api/devices')
 
 _COOKIE_MAX_AGE = 3600           # 1h session
 _TOKEN_SALT = 'infora-webfig'
-# Hop-by-hop headers we must not forward in either direction.
+
+# RFC 7230 hop-by-hop headers: meaningful only to a single connection, so they
+# must not be relayed onto the next one.
 _HOP_BY_HOP = {
     'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-    'te', 'trailers', 'transfer-encoding', 'upgrade', 'content-encoding',
-    'content-length',
+    'te', 'trailers', 'transfer-encoding', 'upgrade',
 }
+# Outbound: requests recomputes Content-Length from the body we hand it, and Host
+# and Cookie are rebuilt below (ours must never reach the router).
+_DROP_REQUEST = _HOP_BY_HOP | {'content-length', 'host', 'cookie'}
+# Inbound: Content-Encoding and Content-Length deliberately survive — the body is
+# streamed through undecoded, so those headers still describe the bytes we send.
+# Set-Cookie is re-added one header at a time, which a dict copy cannot do.
+_DROP_RESPONSE = _HOP_BY_HOP | {'set-cookie'}
+
+_CONNECT_TIMEOUT = 5
+# WebFig's notification channel is a LONG POLL: the router holds the request open
+# until it has something to say, so a short read timeout kills a healthy session.
+# The ceiling is set by whatever sits in front of us — Cloudflare gives up at ~100s
+# with a 524, and `webfig.` must stay orange-clouded (the origin serves a Cloudflare
+# Origin CA cert that browsers do not trust). 90s clears a real poll and still
+# returns before the edge does.
+_READ_TIMEOUT = int(os.getenv('WEBFIG_READ_TIMEOUT') or 90)
+
+# The bootstrap pair we mint in `webfig_session` — URL-safe base64 with itsdangerous'
+# dot separators. Anchored, because it is only ever the first pair of the entry-point
+# URL; a binary jsproxy query is never matched by accident.
+_BOOTSTRAP_TOKEN_RE = re.compile(rb'\At=([A-Za-z0-9_\-.]+)(&|\Z)')
 
 
 def _serializer():
@@ -163,13 +199,53 @@ def webfig_session(device_id):
     return jsonify({'url': f'{scheme}://{host}/?t={token}', 'host': host}), 200
 
 
+def bootstrap_token(query):
+    """Our ``t=`` token from a RAW query string, or None. Pure; takes bytes.
+
+    Read off the raw bytes rather than ``request.args`` because the same function
+    runs on WebFig's binary jsproxy queries, which werkzeug will happily "parse"
+    into a mojibake key. Anchored to the first pair — the only place we put it.
+    """
+    match = _BOOTSTRAP_TOKEN_RE.match(query or b'')
+    return match.group(1).decode('ascii') if match else None
+
+
+def strip_bootstrap_token(query):
+    """Raw query string with our own ``t=`` pair removed, every other byte intact.
+
+    Pure; bytes in, bytes out. The token is ours, not the router's, so it must not
+    be forwarded — but the rest of the query may be arbitrary binary, so this
+    slices rather than re-encoding.
+    """
+    match = _BOOTSTRAP_TOKEN_RE.match(query or b'')
+    return query[match.end():] if match else (query or b'')
+
+
+def _upstream_url(host, raw_uri, query):
+    """``http://<host><path>?<query>`` with path and query byte-for-byte. Pure.
+
+    ``raw_uri`` is the undecoded request target (``RAW_URI``, set by both gunicorn
+    and the werkzeug dev server). Taking the path from there rather than from
+    ``request.path`` keeps any percent-escapes exactly as the browser sent them,
+    for the same reason the query is passed through untouched.
+    """
+    path = (raw_uri or '/').split('?', 1)[0] or '/'
+    url = f'http://{host}{path}'
+    query = strip_bootstrap_token(query)
+    if query:
+        # latin-1 round-trips bytes to str 1:1; requests re-quotes only unreserved
+        # characters, so %00 / %C2%BE / %2B / %26 all reach the router unchanged.
+        url += '?' + query.decode('latin-1')
+    return url
+
+
 def _token_device_id():
     """Device id carried by a valid ?t= token or session cookie, else None.
 
     The token is the only authority on which router this session may reach, so a
     hostname that pins a device still has to agree with it.
     """
-    raw = request.args.get('t') or request.cookies.get(_COOKIE)
+    raw = bootstrap_token(request.query_string) or request.cookies.get(_COOKIE)
     if not raw:
         return None
     try:
@@ -207,13 +283,15 @@ def serve_webfig_host(pinned_device_id=None):
                         status=400, mimetype='text/plain')
 
     host = connection_host(device)
-    # Drop our own bootstrap token so it never reaches the router.
-    args = {k: v for k, v in request.args.items() if k != 't'}
-    target = f'http://{host}{request.path}'
+    # Path and query verbatim, `params=` deliberately unused — see the module
+    # docstring. Reintroducing it breaks every jsproxy request. RAW_URI is set by
+    # gunicorn and by the werkzeug dev server; re-quoting the decoded path is only
+    # a fallback for a WSGI server that omits it, and loses nothing WebFig uses.
+    raw_uri = request.environ.get('RAW_URI') or quote(request.path)
+    target = _upstream_url(host, raw_uri, request.query_string)
 
     fwd_headers = {
-        k: v for k, v in request.headers
-        if k.lower() not in _HOP_BY_HOP and k.lower() not in ('host', 'cookie')
+        k: v for k, v in request.headers if k.lower() not in _DROP_REQUEST
     }
     # Forward only the router's own cookies (its session), never ours.
     router_cookies = {
@@ -224,12 +302,22 @@ def serve_webfig_host(pinned_device_id=None):
         upstream = requests.request(
             method=request.method,
             url=target,
-            params=args,
             data=request.get_data(),
             headers=fwd_headers,
             cookies=router_cookies,
             allow_redirects=False,
-            timeout=(5, 30),
+            # stream=True so a long poll costs no memory and, more importantly,
+            # so the read timeout below lands on the response headers — where it
+            # can still become an honest status code.
+            stream=True,
+            timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
+        )
+    except requests.ReadTimeout:
+        return Response(
+            f'The router accepted the connection but sent no reply within '
+            f'{_READ_TIMEOUT}s.\nIt is reachable over the tunnel but not answering '
+            'WebFig — check that its www service is enabled.',
+            status=504, mimetype='text/plain',
         )
     except requests.RequestException as exc:
         return Response(
@@ -238,17 +326,36 @@ def serve_webfig_host(pinned_device_id=None):
             status=502, mimetype='text/plain',
         )
 
-    resp = Response(upstream.content, status=upstream.status_code)
+    def relay():
+        """Byte-for-byte, undecoded — Content-Encoding is passed through with it."""
+        try:
+            for chunk in upstream.raw.stream(65536, decode_content=False):
+                yield chunk
+        finally:
+            upstream.close()
+
+    resp = Response(stream_with_context(relay()), status=upstream.status_code)
     for key, value in upstream.headers.items():
-        if key.lower() in _HOP_BY_HOP:
+        if key.lower() in _DROP_RESPONSE:
             continue
         resp.headers[key] = value
 
-    if request.args.get('t'):
+    # Set-Cookie has to be replayed one header at a time: requests collapses
+    # repeats into a single comma-joined value, which silently merges two cookies
+    # into one broken one. Domain is dropped because it names the router's tunnel
+    # IP, which the browser would reject for this origin.
+    raw_headers = getattr(upstream.raw, 'headers', None)
+    for cookie in (raw_headers.getlist('Set-Cookie') if raw_headers else []):
+        attrs = [a for a in cookie.split('; ')
+                 if not a.lower().startswith('domain=')]
+        resp.headers.add('Set-Cookie', '; '.join(attrs))
+
+    token = bootstrap_token(request.query_string)
+    if token:
         # Host-scoped, so it only ever unlocks this one device.
         resp.set_cookie(
             _COOKIE,
-            request.args['t'],
+            token,
             max_age=_COOKIE_MAX_AGE,
             httponly=True,
             samesite='Lax',
