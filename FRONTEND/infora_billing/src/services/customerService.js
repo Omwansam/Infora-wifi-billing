@@ -13,9 +13,25 @@ export const customerService = {
     if (params.connection_type) queryParams.append('connection_type', params.connection_type);
     if (params.sort_by) queryParams.append('sort_by', params.sort_by);
     if (params.sort_order) queryParams.append('sort_order', params.sort_order);
+    // Operator worklists: expiring, never_paid, dark, unstable… An unknown key
+    // is ignored server-side, so a stale bookmark still returns the full list.
+    if (params.segment && params.segment !== 'all') queryParams.append('segment', params.segment);
 
     const url = `${API_ENDPOINTS.CUSTOMERS}?${queryParams.toString()}`;
     return authenticatedApiCall(url, getAccessToken());
+  },
+
+  /** The segment catalogue plus a live count per segment, for the filter chips. */
+  async getSegments(params = {}) {
+    const queryParams = new URLSearchParams();
+    if (params.connection_type && params.connection_type !== 'all') {
+      queryParams.append('connection_type', params.connection_type);
+    }
+    const query = queryParams.toString();
+    return authenticatedApiCall(
+      `${API_ENDPOINTS.CUSTOMERS}/segments${query ? `?${query}` : ''}`,
+      getAccessToken(),
+    );
   },
 
   async getCustomer(customerId) {

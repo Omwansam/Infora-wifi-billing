@@ -35,6 +35,14 @@ const TYPE_TABS = [
   { key: 'hotspot', label: 'Hotspot', path: '/clients/hotspot', icon: Wifi },
 ];
 
+/** Chip colour by urgency. Money-critical reds, service ambers, policy blues. */
+const SEGMENT_TONE = {
+  critical: 'bg-rose-50 text-rose-700 hover:bg-rose-100',
+  warning: 'bg-amber-50 text-amber-700 hover:bg-amber-100',
+  info: 'bg-sky-50 text-sky-700 hover:bg-sky-100',
+  neutral: 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+};
+
 const STATUS_FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'connected', label: 'Connected' },
@@ -87,6 +95,12 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [statusFilter, setStatusFilter] = useState('all');
+  // Worklist segments (expiring, never paid, dark…). Separate from statusFilter
+  // because they answer a different question: status is what a subscriber IS,
+  // a segment is what a subscriber NEEDS.
+  const [segment, setSegment] = useState('all');
+  const [segments, setSegments] = useState([]);
+  const [segmentCounts, setSegmentCounts] = useState({});
   const [actionId, setActionId] = useState(null);
   // Selection is by id, so it survives a re-render but is cleared whenever the
   // filters change — a selection made under one filter must not be acted on
@@ -100,7 +114,7 @@ export default function ClientsPage() {
   const pager = useServerPagination({
     storageKey: 'clients',
     defaultPageSize: 25,
-    resetOn: [search, connectionType, statusFilter],
+    resetOn: [search, connectionType, statusFilter, segment],
   });
   const { page, pageSize, setTotals, total: totalMatching } = pager;
 
@@ -113,6 +127,18 @@ export default function ClientsPage() {
     }
   }, []);
 
+  // Counts come from the server against the same scoping the list uses, so a
+  // chip never promises rows the operator cannot then open.
+  const loadSegments = useCallback(async () => {
+    const result = await customerService.getSegments({ connection_type: connectionType });
+    if (result.success) {
+      setSegments(result.data?.segments || []);
+      setSegmentCounts(result.data?.counts || {});
+    }
+  }, [connectionType]);
+
+  useEffect(() => { loadSegments(); }, [loadSegments]);
+
   const loadClients = useCallback(async () => {
     try {
       setLoading(true);
@@ -122,6 +148,7 @@ export default function ClientsPage() {
         search: search || undefined,
         ...(connectionType !== 'all' ? { connection_type: connectionType } : {}),
         status: statusFilter === 'connected' ? 'active' : statusFilter === 'offline' ? 'suspended' : statusFilter !== 'all' ? statusFilter : undefined,
+        segment,
       });
       if (result.success) {
         setClients(result.data.customers || []);
@@ -134,7 +161,7 @@ export default function ClientsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, connectionType, statusFilter, page, pageSize, setTotals]);
+  }, [search, connectionType, statusFilter, segment, page, pageSize, setTotals]);
 
   // Any change to what is being shown invalidates the selection — a new page
   // of rows included, since ids selected on page 1 are no longer on screen to
@@ -142,7 +169,7 @@ export default function ClientsPage() {
   useEffect(() => {
     setSelectedIds(new Set());
     setSelectAllMatching(false);
-  }, [search, connectionType, statusFilter, page, pageSize]);
+  }, [search, connectionType, statusFilter, segment, page, pageSize]);
 
   useEffect(() => {
     const q = searchParams.get('search') || '';
@@ -156,6 +183,7 @@ export default function ClientsPage() {
 
   useEffect(() => {
     setStatusFilter('all');
+    setSegment('all');
   }, [connectionType]);
 
   useEffect(() => {
@@ -297,6 +325,7 @@ export default function ClientsPage() {
     const parts = [];
     if (connectionType !== 'all') parts.push(connectionType === 'pppoe' ? 'PPPoE' : 'hotspot');
     if (statusFilter !== 'all') parts.push(statusFilter);
+    if (segment !== 'all') parts.push(segments.find((x) => x.key === segment)?.label || segment);
     if (search) parts.push(`matching “${search}”`);
     return parts.length ? parts.join(' · ') : null;
   };
@@ -304,7 +333,7 @@ export default function ClientsPage() {
   const handleBulkDelete = async () => {
     if (!selectedCount || bulkBusy) return;
 
-    const noFilters = connectionType === 'all' && statusFilter === 'all' && !search;
+    const noFilters = connectionType === 'all' && statusFilter === 'all' && segment === 'all' && !search;
     // "Everything" is about coverage, not the escalation banner: on an account
     // with fewer subscribers than one page, ticking the header box already
     // selects the entire list without the banner ever appearing.
@@ -520,6 +549,59 @@ export default function ClientsPage() {
               ))}
             </div>
           </div>
+
+          {/* Worklists. A second row rather than more status pills, because these
+              answer a different question: status is what a subscriber IS, a
+              segment is what a subscriber NEEDS today. Counts come from the
+              server so a chip never offers rows that are not there. */}
+          {segments.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                Worklists
+              </span>
+              <button
+                type="button"
+                onClick={() => setSegment('all')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  segment === 'all'
+                    ? 'bg-slate-800 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Everyone
+              </button>
+              {segments.map((item) => {
+                const count = segmentCounts[item.key];
+                const active = segment === item.key;
+                // An empty worklist is still worth showing, greyed: "nobody is
+                // lapsed today" is information, and hiding the chip would make
+                // the row jump around as the fleet changes.
+                const empty = count === 0;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setSegment(active ? 'all' : item.key)}
+                    title={item.description}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      active
+                        ? 'bg-slate-800 text-white'
+                        : empty
+                          ? 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+                          : `${SEGMENT_TONE[item.tone] || SEGMENT_TONE.neutral} hover:opacity-80`
+                    }`}
+                  >
+                    {item.label}
+                    {count !== null && count !== undefined && (
+                      <span className={`tabular-nums ${active ? 'text-white/70' : 'opacity-60'}`}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Selection toolbar — only present once something is selected, so it
               never competes with the filters for attention. */}

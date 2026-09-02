@@ -19,6 +19,7 @@ from services.radius_provisioning import (
 )
 from services.system_log import record_system_log
 from services import customer_events
+from services import subscriber_segments
 import secrets
 
 customers_bp = Blueprint('customers', __name__, url_prefix='/api/customers')
@@ -131,8 +132,11 @@ def get_customers():
         connection_type = request.args.get('connection_type')
         sort_by = request.args.get('sort_by', 'created_at')
         sort_order = request.args.get('sort_order', 'desc')
-        
-        
+        # Operator worklists — "expiring", "never_paid", "dark" and friends. See
+        # services/subscriber_segments.py; an unknown key falls through to the
+        # full list rather than erroring, so a stale bookmark still works.
+        segment = request.args.get('segment')
+
         query = Customer.query
 
         if connection_type:
@@ -160,6 +164,9 @@ def get_customers():
             except ValueError:
                 return jsonify({'error': 'Invalid status value'}), 400
         
+        if segment:
+            query = subscriber_segments.apply_segment(query, segment)
+
         # Sorting
         if hasattr(Customer, sort_by):
             sort_column = getattr(Customer, sort_by)
@@ -180,13 +187,34 @@ def get_customers():
             'total': customers.total,
             'pages': customers.pages,
             'current_page': page,
-            'per_page': per_page
+            'per_page': per_page,
+            'segment': segment or 'all',
         }
-        
+
         return jsonify(response_data), 200
         
     except Exception as e:
         return jsonify({'error': f'Failed to get customers: {str(e)}'}), 500
+
+
+@customers_bp.route('/segments', methods=['GET'])
+@jwt_required()
+def get_segments():
+    """The worklist catalogue, with a live count against each one.
+
+    Counted off the same scoping the list itself uses, so a chip never promises
+    rows the operator cannot open.
+    """
+    query = Customer.query
+    connection_type = request.args.get('connection_type')
+    if connection_type in ('hotspot', 'pppoe', 'wireguard'):
+        query = query.filter_by(connection_type=connection_type)
+
+    return jsonify({
+        'segments': subscriber_segments.catalogue(),
+        'counts': subscriber_segments.counts(query),
+        'total': query.count(),
+    }), 200
 
 
 def _resolve_session_customer(record, customer_by_id, customer_by_email):
