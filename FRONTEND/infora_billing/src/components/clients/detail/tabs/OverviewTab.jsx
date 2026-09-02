@@ -106,6 +106,60 @@ function DiagnosisPanel({ diagnosis }) {
   );
 }
 
+const RISK_TONE = { high: 'critical', medium: 'warning', low: 'info', none: 'good' };
+const RISK_LABEL = {
+  high: 'High risk of leaving',
+  medium: 'Worth a call',
+  low: 'Minor concerns',
+  none: 'Nothing of concern',
+};
+
+/**
+ * Why this subscriber might not renew.
+ *
+ * Every signal here was already stored and none were read together, so a
+ * subscriber who stopped using the line, missed a payment and opened a ticket
+ * showed up as three unrelated rows on three different tabs. Retaining someone
+ * costs one SMS; replacing them costs an acquisition.
+ *
+ * The reasons carry the weight, not the number — "score 62" is not actionable,
+ * "never paid, and their line keeps dropping" is. The score is shown small for
+ * sorting and comparison, and the reasons are shown large.
+ */
+function RiskPanel({ risk }) {
+  if (!risk || risk.band === 'none') return null;
+
+  return (
+    <Panel
+      icon={AlertTriangle}
+      title="Retention risk"
+      subtitle="Signals that this subscriber may not renew"
+      action={<Chip tone={RISK_TONE[risk.band]}>{RISK_LABEL[risk.band]}</Chip>}
+    >
+      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+        {risk.reasons.map((reason) => (
+          <li key={reason.key} className="flex items-center gap-3 px-5 py-2.5">
+            <span
+              aria-hidden="true"
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                reason.weight >= 25 ? 'bg-rose-500'
+                  : reason.weight >= 15 ? 'bg-amber-500' : 'bg-slate-400'
+              }`}
+            />
+            <span className="text-sm text-slate-700 dark:text-slate-200">{reason.label}</span>
+          </li>
+        ))}
+      </ul>
+      {/* Said out loud because the weights are a starting position, not a fitted
+          model — there is no churn history in this system to fit against yet. */}
+      <p className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+        Weighted from signals already on this page. The reasons matter more than the
+        score, which is there for comparison between subscribers.
+      </p>
+    </Panel>
+  );
+}
+
 /**
  * Which automated messages are actually switched on.
  *
@@ -164,6 +218,7 @@ export default function OverviewTab({
   const reference = overview?.reference || {};
   const fup = overview?.fup || {};
   const diagnosis = overview?.diagnosis;
+  const risk = overview?.risk;
   const lifecycle = overview?.lifecycle_messages;
 
   return (
@@ -173,6 +228,7 @@ export default function OverviewTab({
             because something is wrong, and the answer should not be below a
             year of history. */}
         <DiagnosisPanel diagnosis={diagnosis} />
+        <RiskPanel risk={risk} />
         <Panel
           icon={History}
           title="Subscription lifecycle"

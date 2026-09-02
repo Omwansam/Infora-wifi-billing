@@ -177,6 +177,11 @@ def get_overview(customer_id):
         # a table, and a table hides the shape of what it holds — ten payments say
         # nothing about whether this subscriber pays on time.
         'summaries': insights.tab_summaries(customer, now),
+        # Deliberately not a list-page segment: the score needs several radacct
+        # queries per subscriber, so running it across a fleet would be one
+        # round trip per row. The billing half of it is already available there
+        # as the expiring / lapsed / never-paid worklists.
+        'risk': insights.retention_risk(customer, now),
         'reference': {
             'account_id': customer.id,
             'account_number': customer.account_number,

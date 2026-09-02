@@ -831,6 +831,125 @@ def throughput_vs_plan(customer, days=30, now=None):
     }
 
 # ---------------------------------------------------------------------------
+# Retention risk
+# ---------------------------------------------------------------------------
+
+# Each signal is a reason a subscriber might not renew, weighted by how strongly
+# it has predicted churn in this business: money first, then service quality,
+# then engagement. Weights are a starting position, not a fitted model -- there
+# is no churn history in this system yet to fit against, so they are stated
+# plainly here to be argued with rather than buried in a formula.
+RISK_SIGNALS = {
+    'never_paid':      (35, 'Has never completed a payment'),
+    'payment_lapsed':  (25, 'No payment in over 60 days'),
+    'expiring_soon':   (15, 'Subscription ends within 7 days'),
+    'expired':         (30, 'Subscription has lapsed'),
+    'usage_collapsed': (20, 'Data use has fallen sharply against their own average'),
+    'unstable_line':   (20, 'Line keeps dropping'),
+    'went_dark':       (25, 'No session for over a week'),
+    'open_ticket':     (10, 'Has an unresolved support ticket'),
+}
+
+
+def retention_risk(customer, now=None):
+    """How likely this subscriber is to leave, and what to do about it.
+
+    Retaining a subscriber costs one SMS; replacing one costs an acquisition. The
+    signals are all already stored -- what was missing was anything that read
+    them together, so a subscriber who stopped using the line, missed a payment
+    and opened a ticket looked like three unrelated rows on three tabs.
+
+    Returns a 0-100 score with the reasons that produced it. The reasons matter
+    more than the number: "score 62" is not actionable, "never paid, and their
+    line keeps dropping" is.
+    """
+    now = now or datetime.now()
+    reasons = []
+
+    def flag(key):
+        weight, label = RISK_SIGNALS[key]
+        reasons.append({'key': key, 'weight': weight, 'label': label})
+
+    # --- Money ------------------------------------------------------------
+    lifetime, last_payment = _payment_totals(customer, now)
+    if not lifetime:
+        flag('never_paid')
+    elif last_payment and last_payment.get('date'):
+        try:
+            paid_at = datetime.fromisoformat(last_payment['date'])
+            if (now - paid_at).days > 60:
+                flag('payment_lapsed')
+        except (TypeError, ValueError):
+            pass
+
+    subscription = subscription_state(customer)
+    if subscription.get('state') == 'expired':
+        flag('expired')
+    elif subscription.get('state') == 'active' and (subscription.get('days_remaining') or 99) <= 7:
+        flag('expiring_soon')
+
+    # --- Service quality --------------------------------------------------
+    stability = connection_stability(customer, hours=24, now=now)
+    if stability.get('flapping'):
+        flag('unstable_line')
+
+    last = last_session(customer, now)
+    last_at = (last or {}).get('ended_at') or (last or {}).get('started_at')
+    if last_at:
+        try:
+            if (now - datetime.fromisoformat(last_at)).days >= 7:
+                flag('went_dark')
+        except (TypeError, ValueError):
+            pass
+
+    # --- Engagement -------------------------------------------------------
+    # Compare the last week against the three before it. A subscriber whose use
+    # collapses is often already trialling somebody else's line.
+    recent = _bytes_between(customer, now - timedelta(days=7), now)
+    baseline = _bytes_between(customer, now - timedelta(days=28), now - timedelta(days=7))
+    weekly_baseline = baseline / 3 if baseline else 0
+    # Only meaningful above a floor: dropping from 40 MB to 10 MB is noise.
+    if weekly_baseline > 500_000_000 and recent < weekly_baseline * 0.3:
+        flag('usage_collapsed')
+
+    from models import Ticket, TicketStatus
+    open_states = (TicketStatus.OPEN, TicketStatus.PENDING, TicketStatus.IN_PROGRESS)
+    if Ticket.query.filter(Ticket.customer_id == customer.id,
+                           Ticket.ticket_status.in_(open_states)).count():
+        flag('open_ticket')
+
+    score = min(100, sum(r['weight'] for r in reasons))
+    if score >= 60:
+        band = 'high'
+    elif score >= 30:
+        band = 'medium'
+    elif score > 0:
+        band = 'low'
+    else:
+        band = 'none'
+
+    return {
+        'score': score,
+        'band': band,
+        'reasons': sorted(reasons, key=lambda r: -r['weight']),
+        'checked_at': now.isoformat(),
+    }
+
+
+def _bytes_between(customer, start, end):
+    """Accounted traffic in a window, for the usage-trend signal."""
+    total = (
+        acct_query(customer)
+        .filter(RadAcct.acctstarttime >= start, RadAcct.acctstarttime < end)
+        .with_entities(
+            func.coalesce(func.sum(func.coalesce(RadAcct.acctoutputoctets, 0)), 0)
+            + func.coalesce(func.sum(func.coalesce(RadAcct.acctinputoctets, 0)), 0),
+        )
+        .scalar()
+    )
+    return int(total or 0)
+
+# ---------------------------------------------------------------------------
 # MAC vendor lookup
 # ---------------------------------------------------------------------------
 
