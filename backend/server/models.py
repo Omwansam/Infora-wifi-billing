@@ -2250,6 +2250,14 @@ class ISP(db.Model):
     account_number_prefix = db.Column(db.String(12), nullable=True)
     account_number_seq = db.Column(db.Integer, default=100000, nullable=True)
 
+    # --- TR-069 bring-up window ---
+    # While this is in the future, an unknown CPE that informs may self-register
+    # as `pending` rather than being rejected. An installer standing at a site
+    # rarely has the CPE's serial to pre-enrol it, and the ACS is reachable only
+    # over the management tunnel, so the relaxation is bounded by topology as well
+    # as by the clock. NULL/past = closed. See routes/cpe.py + routes/tr069.py.
+    cpe_enrollment_until = db.Column(db.DateTime, nullable=True)
+
     # --- Operator automation (Settings > Operator alerts) ---
     # Crediting downtime back to subscribers, and the revenue digest. Both are
     # scalars rather than their own table because they are per-ISP switches with

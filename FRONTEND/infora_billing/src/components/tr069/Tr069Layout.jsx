@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Check, Copy, Radio, ServerCog } from 'lucide-react';
+import { ArrowLeft, Check, Copy, Loader2, Radio, ServerCog, ShieldAlert,
+         ShieldCheck, ShieldQuestion } from 'lucide-react';
 import PageShell from '../layout/PageShell';
 
 function CopyButton({ value }) {
@@ -28,6 +29,39 @@ function CopyButton({ value }) {
 }
 
 /**
+ * Whether CPE can actually reach the endpoint printed beside it.
+ *
+ * A configured ACS URL proves nothing — the path runs CPE -> MikroTik -> WireGuard
+ * -> container DNAT -> Flask, and any hop can be down while the URL still looks
+ * right. This turns that into one glance, and the deep probe into one click.
+ */
+function AcsHealth({ health }) {
+  if (!health) return null;
+  const { state, verdict, onCheck, checking } = health;
+  const tone = {
+    ok: { cls: 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/30', Icon: ShieldCheck },
+    warn: { cls: 'bg-amber-500/10 text-amber-300 ring-amber-500/30', Icon: ShieldAlert },
+    fail: { cls: 'bg-rose-500/10 text-rose-300 ring-rose-500/30', Icon: ShieldAlert },
+  }[state] || { cls: 'bg-white/5 text-slate-300 ring-white/10', Icon: ShieldQuestion };
+  const Icon = checking ? Loader2 : tone.Icon;
+
+  return (
+    <button
+      type="button"
+      onClick={onCheck}
+      disabled={checking}
+      title={verdict || 'Check whether routers can reach the ACS'}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs
+                  font-medium ring-1 ring-inset transition-opacity hover:opacity-80
+                  disabled:cursor-wait ${tone.cls}`}
+    >
+      <Icon className={`h-3 w-3 ${checking ? 'animate-spin' : ''}`} />
+      {checking ? 'Checking\u2026' : (state === 'ok' ? 'Reachable' : state === 'unknown' ? 'Check path' : 'Path problem')}
+    </button>
+  );
+}
+
+/**
  * Console chrome for the ACS.
  *
  * Deliberately not the Devices header: TR-069 is a protocol surface where the
@@ -40,6 +74,7 @@ export default function Tr069Layout({
   subtitle,
   action,
   acsUrl,
+  acsHealth,
   chips = [],
   backTo,
   backLabel,
@@ -88,6 +123,7 @@ export default function Tr069Layout({
                   <>
                     <code className="truncate rounded bg-black/30 px-2 py-1 font-mono text-xs text-cyan-100">{acsUrl}</code>
                     <CopyButton value={acsUrl} />
+                    <AcsHealth health={acsHealth} />
                   </>
                 ) : (
                   <span className="text-xs text-amber-300">

@@ -76,10 +76,28 @@ ensure_acs_forward() {
         iptables -t nat -A PREROUTING -i wg-mgmt -d 10.250.0.1 -p tcp -j INFORA_ACS
     fi
     iptables -t nat -A INFORA_ACS -p tcp --dport 7547 -j DNAT --to-destination "$FLASK_IP:5000"
-    # Masquerade only this flow, so replies come back through us.
-    if ! iptables -t nat -C POSTROUTING -d "$FLASK_IP" -p tcp --dport 5000 -j MASQUERADE 2>/dev/null; then
-        iptables -t nat -A POSTROUTING -d "$FLASK_IP" -p tcp --dport 5000 -j MASQUERADE
+
+    # Masquerade only this flow, so replies come back through us — in its own
+    # flushable chain for exactly the reason the DNAT is in one. This used to be a
+    # -C guarded rule appended straight to POSTROUTING, which cannot be corrected:
+    # the guard only matches the CURRENT Flask IP, so recreating flask_app appended
+    # a second rule and orphaned the first, one dead entry per redeploy forever.
+    iptables -t nat -N INFORA_ACS_SNAT 2>/dev/null || true
+    iptables -t nat -F INFORA_ACS_SNAT 2>/dev/null || true
+    if ! iptables -t nat -C POSTROUTING -p tcp --dport 5000 -j INFORA_ACS_SNAT 2>/dev/null; then
+        iptables -t nat -A POSTROUTING -p tcp --dport 5000 -j INFORA_ACS_SNAT
     fi
+    iptables -t nat -A INFORA_ACS_SNAT -d "$FLASK_IP" -p tcp --dport 5000 -j MASQUERADE
+
+    # Sweep up whatever the old form already leaked. Idempotent: matches nothing
+    # once the rules are gone.
+    iptables -t nat -S POSTROUTING 2>/dev/null \
+        | grep -E '^-A POSTROUTING -d [0-9.]+/32 -p tcp -m tcp --dport 5000 -j MASQUERADE$' \
+        | sed 's/^-A /-D /' \
+        | while read -r stale; do
+              # shellcheck disable=SC2086
+              iptables -t nat $stale 2>/dev/null || true
+          done
     echo "[infora-wg] ACS DNAT tcp/7547 -> $FLASK_IP:5000"
 }
 
@@ -149,9 +167,21 @@ configs_signature() {
     } 2>/dev/null | sort | md5sum | awk '{print $1}'
 }
 
+# The container IPs the RADIUS/ACS DNAT rules point at. No config mtime reflects a
+# `docker compose up -d flask_app`, so without this the watch loop leaves the DNAT
+# aimed at a dead address until the two-minute re-assert below — a silent ACS
+# outage of up to 2 minutes after every backend redeploy.
+upstream_ips_signature() {
+    {
+        getent hosts infora_freeradius freeradius 2>/dev/null | awk '{print $1; exit}'
+        getent hosts infora_flask flask_app 2>/dev/null | awk '{print $1; exit}'
+    } 2>/dev/null | tr '\n' ' '
+}
+
 # Initial apply at container start.
 apply_all
 LAST_SIG="$(configs_signature)"
+LAST_IPS="$(upstream_ips_signature)"
 
 # Watch for Flask-written config changes and re-apply within seconds — no more
 # periodic teardown. A peer added during provisioning takes effect almost
@@ -170,9 +200,17 @@ LAST_SIG="$(configs_signature)"
             apply_all
             LAST_SIG="$SIG"
         fi
-        # Re-assert NAT / RADIUS / ACS DNAT roughly every 2 min in case the
-        # freeradius or flask container IP changed. All are idempotent
-        # (-C guarded) and do not disturb the live tunnel.
+        # An upstream container moving IP needs the DNAT redone within seconds,
+        # not on the two-minute cadence — that gap is a dead ACS after a redeploy.
+        IPS="$(upstream_ips_signature)"
+        if [ "$IPS" != "$LAST_IPS" ]; then
+            echo "[infora-wg] upstream container IP changed — re-applying DNAT"
+            ensure_radius_forward 2>/dev/null || true
+            ensure_acs_forward 2>/dev/null || true
+            LAST_IPS="$IPS"
+        fi
+        # Belt and braces: re-assert everything roughly every 2 min anyway. All are
+        # idempotent (dedicated flushable chains) and never disturb a live tunnel.
         ticks=$((ticks + 1))
         if [ "$ticks" -ge 24 ]; then
             ensure_mgmt_nat 2>/dev/null || true

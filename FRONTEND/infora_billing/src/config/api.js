@@ -115,6 +115,8 @@ export const API_ENDPOINTS = {
   CPE_STATS: `${API_BASE_URL}/api/cpe/stats`,
   CPE_PROFILES: `${API_BASE_URL}/api/cpe/profiles`,
   CPE_ENROLLMENT: `${API_BASE_URL}/api/cpe/enrollment`,
+  CPE_ENROLLMENT_WINDOW: `${API_BASE_URL}/api/cpe/enrollment-window`,
+  CPE_DIAGNOSE: `${API_BASE_URL}/api/cpe/diagnose`,
   cpeDevice: (id) => `${API_BASE_URL}/api/cpe/${id}`,
   cpeApprove: (id) => `${API_BASE_URL}/api/cpe/${id}/approve`,
   cpeRefresh: (id) => `${API_BASE_URL}/api/cpe/${id}/refresh`,

@@ -123,6 +123,13 @@ export default function Tr069EnrollDialog({ onClose, onEnrolled }) {
             <p className="text-sm text-slate-500 dark:text-slate-400">
               Register the device before it ships so the installer can configure it at the bench.
             </p>
+            {/* Saves an installer half an hour hunting through menus for a page
+                that was never in the firmware. */}
+            <p className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+              Check the device actually has a <strong>TR-069 / CWMP</strong> page first. GPON ONTs
+              almost always do; many consumer routers — stock Tenda firmware included — ship no CWMP
+              client at all, and nothing here can reach one that does not exist.
+            </p>
             <div>
               <label className={labelCls}>Serial number *</label>
               <input value={form.serial_number} onChange={set('serial_number')} className={inputCls} placeholder="48575443XXXXXXXX" />

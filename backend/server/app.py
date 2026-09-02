@@ -179,6 +179,11 @@ def ensure_schema_upgrades():
             # integration_settings keyed by the same provider id.
             'sms_provider': 'VARCHAR(40)',
             'whatsapp_provider': 'VARCHAR(40)',
+            # TR-069 bring-up: while this is in the future, an unknown CPE that
+            # informs is allowed to self-register as `pending` instead of being
+            # rejected outright. Needed because an installer rarely has the CPE's
+            # serial in hand to pre-enrol it. See routes/cpe.py.
+            'cpe_enrollment_until': 'TIMESTAMP',
             # Operator automation + AI assistant (Settings).
             'outage_compensation_enabled': 'BOOLEAN DEFAULT FALSE',
             'outage_min_minutes': 'INTEGER DEFAULT 15',
@@ -709,6 +714,30 @@ def diagnose_device_command(device):
         report = diagnose_device(row)
         click.echo(f"=== {report['device_name']} (id={report['device_id']}) ===")
         click.echo(f"Stored status: {report['device_status']}  last_synced: {report['last_synced']}")
+        click.echo('')
+        for check in report['checks']:
+            mark = 'PASS' if check['ok'] else ('warn' if check['severity'] == 'warn' else 'FAIL')
+            click.echo(f"  [{mark:4}] {check['label']}")
+            if check['detail']:
+                click.echo(f"         {check['detail']}")
+        click.echo('')
+        click.echo(f"Verdict: {report['verdict']}")
+
+
+@app.cli.command('diagnose-acs')
+@click.option('--probe', is_flag=True,
+              help='Also fetch the ACS from each router over the tunnel (slow: router '
+                   'SSH runs to tens of seconds, but it is the only end-to-end proof).')
+def diagnose_acs_command(probe):
+    """Explain why a CPE cannot reach the TR-069 ACS."""
+    from services.acs_diagnostics import diagnose_acs
+
+    with app.app_context():
+        report = diagnose_acs(probe=probe)
+        click.echo(f"=== TR-069 ACS ===")
+        click.echo(f"ACS URL: {report['acs_url'] or '(unset)'}   CPE known: {report['cpe_count']}")
+        if not probe:
+            click.echo('(run with --probe to test the path from each router)')
         click.echo('')
         for check in report['checks']:
             mark = 'PASS' if check['ok'] else ('warn' if check['severity'] == 'warn' else 'FAIL')

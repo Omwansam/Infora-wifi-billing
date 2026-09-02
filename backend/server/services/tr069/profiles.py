@@ -131,11 +131,17 @@ _ZTE_ONT = _extend(
     optical_scale=1.0,
 )
 
-# Tenda. TR-069 is present on some models only (the vendor's own docs say
-# "available only for some models") — the UI exposes ACS URL, ACS
-# username/password, periodic notification + interval, connection request
-# username/password/port, and STUN for NAT traversal. Firmware is TR-098 based;
-# no optical parameters, these are copper/WiFi routers rather than ONTs.
+# Tenda. This profile is for ISP-branded builds only. TR-069 is present on some
+# models only (the vendor's own docs say "available only for some models"), and the
+# stock consumer firmware seen in this deployment — V12.01.01.55_multi, on units
+# dialling PPPoE behind our own MikroTiks — has NO TR-069 page anywhere in its menus
+# and therefore no CWMP client to talk to. Confirm the CPE exposes ACS settings
+# before enrolling it; nothing here can make an absent client appear.
+#
+# Where it IS present the UI exposes ACS URL, ACS username/password, periodic
+# notification + interval, connection request username/password/port, and STUN for
+# NAT traversal. Firmware is TR-098 based; no optical parameters, these are
+# copper/WiFi routers rather than ONTs.
 _TENDA = _extend(
     _TR098, 'tenda', 'Tenda router (TR-098)',
     params={

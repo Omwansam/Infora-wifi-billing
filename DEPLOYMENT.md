@@ -817,13 +817,29 @@ docker exec -w /app/server infora_flask python -c "from models import Customer; 
 
 ---
 
-## Appendix A — Optional: TR-069 / CWMP ACS
+## Appendix A — TR-069 / CWMP ACS over a public vhost
 
-**Not wired up in production.** The prod overlay publishes only `5080`, and nginx
-proxies only `/api/` — so `/tr069` has no route in and no CPE can reach the ACS.
-Leave `TR069_ACS_URL` empty unless you enable it deliberately.
+> **The ACS is already running in production over the management tunnel — this
+> appendix is not how it is deployed, and you almost certainly do not need it.**
+>
+> The live configuration is `TR069_ACS_URL=http://10.250.0.1:7547/tr069`. **Do not
+> blank it.** An earlier version of this appendix said TR-069 had "no route in
+> production" and told you to leave the variable empty; that was true only of the
+> public-vhost path below, and following it now switches off a working ACS.
+>
+> Nothing is published to the internet: the wireguard container DNATs
+> `10.250.0.1:7547` → `flask_app:5000` (`ensure_acs_forward` in
+> `config/wireguard/custom-cont-init.d/99-apply-flask-wg.sh`), and every managed
+> router already routes `10.250.0.1/32` down the tunnel. Port 7547 being unpublished
+> and nginx proxying only `/api/` is the *point*, not a gap. Verify the path with
+> `flask diagnose-acs`.
 
-To enable, in `docker-compose.prod.yml` under `flask_app`:
+**This appendix applies to one case only: CPE that are NOT behind a managed
+MikroTik**, and so cannot reach `10.250.0.1`. For everything else use the tunnel —
+no internet exposure, no CDN/WAF mangling SOAP, no TLS-chain failures on budget
+ONT firmware. See `TR069.md`.
+
+To expose a public ACS anyway, in `docker-compose.prod.yml` under `flask_app`:
 
 ```yaml
     ports: !override
@@ -841,6 +857,10 @@ TR069_ALLOW_UNKNOWN=false
 Grey cloud is mandatory: a CDN/WAF in front of CWMP mangles the SOAP POSTs, and
 budget ONTs fail on modern TLS chains. Keep `TR069_ALLOW_UNKNOWN=false` — the ACS
 faces the whole internet. See `TR069.md`.
+
+Switching to a public ACS URL also disables the enrolment window
+(`POST /api/cpe/enrollment-window`), which refuses to open unless the ACS is
+tunnel-only. On a public vhost, pre-enrol every CPE by serial instead.
 
 ---
 

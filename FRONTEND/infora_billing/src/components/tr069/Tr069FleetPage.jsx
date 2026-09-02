@@ -194,6 +194,11 @@ export default function Tr069FleetPage() {
   const [view, setView] = useState('grid');
   const [actionId, setActionId] = useState(null);
   const [enrolling, setEnrolling] = useState(false);
+  // Diagnosis is a separate, slower concern from the fleet list, so it gets its
+  // own state and is never awaited on page load.
+  const [acsReport, setAcsReport] = useState(null);
+  const [checkingAcs, setCheckingAcs] = useState(false);
+  const [windowBusy, setWindowBusy] = useState(false);
 
   // The list endpoint has no pagination, so it returns the whole fleet either
   // way — filtering here instead of refetching keeps segment counts honest and
@@ -289,6 +294,36 @@ export default function Tr069FleetPage() {
     }
   };
 
+  // Cheap check on load (no router SSH); the badge re-runs it with --probe on
+  // click, which is the only end-to-end proof but costs tens of seconds.
+  const checkAcs = useCallback(async (probe = false) => {
+    setCheckingAcs(true);
+    try {
+      setAcsReport(await cpeService.diagnoseAcs(getAccessToken(), { probe }));
+    } catch (error) {
+      toast.error(error.message || 'ACS check failed');
+    } finally {
+      setCheckingAcs(false);
+    }
+  }, []);
+
+  useEffect(() => { checkAcs(false); }, [checkAcs]);
+
+  const handleWindow = async (open) => {
+    setWindowBusy(true);
+    try {
+      const result = open
+        ? await cpeService.openEnrollmentWindow(getAccessToken(), 30)
+        : await cpeService.closeEnrollmentWindow(getAccessToken());
+      toast.success(result?.message || (open ? 'Window open' : 'Window closed'));
+      await load();
+    } catch (error) {
+      toast.error(error.message || 'Could not change the enrolment window');
+    } finally {
+      setWindowBusy(false);
+    }
+  };
+
   const handleRefresh = async (device) => {
     try {
       setActionId(device.id);
@@ -307,6 +342,15 @@ export default function Tr069FleetPage() {
       title="TR-069 ACS"
       subtitle="Customer premises equipment — GPON ONTs and vendor routers that dial into this server"
       acsUrl={stats?.acs_url}
+      acsHealth={{
+        state: !acsReport ? 'unknown'
+          : acsReport.checks?.some((c) => !c.ok && c.severity === 'error') ? 'fail'
+          : acsReport.checks?.some((c) => !c.ok) ? 'warn' : 'ok',
+        verdict: acsReport?.verdict,
+        checking: checkingAcs,
+        // The click runs the deep probe — that is the point of asking for it.
+        onCheck: () => checkAcs(true),
+      }}
       chips={[
         { value: stats?.total ?? devices.length, label: 'devices', icon: Cpu },
         { value: stats?.online ?? 0, label: 'online', icon: Activity, tone: 'text-emerald-400' },
@@ -378,6 +422,45 @@ export default function Tr069FleetPage() {
         </aside>
 
         <div className="min-w-0 space-y-4">
+          {/* Enrolment window — the escape hatch for an installer holding a CPE
+              whose serial they never recorded. Hidden entirely when the ACS is
+              public, where the relaxation is not defensible. */}
+          {stats?.enrollment_window?.available && (
+            <section className={`flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3 ${
+              stats.enrollment_window.open
+                ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-500/30 dark:bg-emerald-500/5'
+                : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+            }`}>
+              <ShieldQuestion className={`h-4 w-4 shrink-0 ${
+                stats.enrollment_window.open ? 'text-emerald-600' : 'text-slate-400'
+              }`} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {stats.enrollment_window.open
+                    ? `Enrolment window open — ${Math.ceil(stats.enrollment_window.seconds_remaining / 60)} min left`
+                    : 'Enrolment window closed'}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  {stats.enrollment_window.open
+                    ? 'An unknown CPE that informs now lands in the approval queue below. It is still issued nothing until you approve it.'
+                    : 'Open this only while installing a CPE whose serial you cannot pre-enrol. Unknown devices are rejected the rest of the time.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleWindow(!stats.enrollment_window.open)}
+                disabled={windowBusy}
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold disabled:opacity-50 ${
+                  stats.enrollment_window.open
+                    ? 'bg-slate-200 text-slate-800 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                }`}
+              >
+                {stats.enrollment_window.open ? 'Close now' : 'Open for 30 min'}
+              </button>
+            </section>
+          )}
+
           {/* Approval inbox — a queue you work through, not a banner you read */}
           {pending.length > 0 && (
             <section className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/5">

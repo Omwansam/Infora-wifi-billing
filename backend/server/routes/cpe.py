@@ -19,6 +19,7 @@ from extensions import db
 from models import Customer, CpeDevice, CpeSession, CpeTask, ISP
 from services.encryption import encrypt_value
 from services.rate_limit import rate_limit
+from services.tr069 import enrollment
 from services.tr069 import profiles
 from services.tr069 import session as cwmp_session
 
@@ -200,6 +201,10 @@ def cpe_stats():
     devices = query.all()
     degraded = [d for d in devices
                 if _optical_health(d.rx_power_dbm) in ('marginal', 'critical')]
+    # Admins see every ISP's CPE, so there is no single window to report; fall back
+    # to the first active tenant, which is the one `open_window_isp_id` would pick.
+    summary_isp = (ISP.query.get(current_user.isp_id) if current_user.isp_id
+                   else ISP.query.filter_by(is_active=True).order_by(ISP.id.asc()).first())
     return jsonify({
         'total': len(devices),
         'active': sum(1 for d in devices if d.status == 'active'),
@@ -209,6 +214,13 @@ def cpe_stats():
         # The console shows the endpoint operators must point a CPE at. Blank
         # when TR069_ACS_URL is unset, so the UI can say so rather than invent one.
         'acs_url': current_app.config.get('TR069_ACS_URL') or None,
+        # Drives the window countdown next to it. `available` is false on a public
+        # ACS, where the UI should offer pre-enrolment only.
+        'enrollment_window': {
+            **(enrollment.window_state(summary_isp) if summary_isp
+               else {'open': False, 'until': None, 'seconds_remaining': 0}),
+            'available': enrollment.acs_is_tunnel_only(),
+        },
     }), 200
 
 
@@ -549,6 +561,76 @@ def create_enrollment():
             'periodic_inform_interval': device.periodic_inform_interval,
         },
     }), 201
+
+
+def _isp_for_window():
+    """The ISP whose window this user may operate. Returns (isp, error_response)."""
+    user = get_current_user()
+    if not user:
+        return None, (jsonify({'error': 'User not found'}), 404)
+    if user.role == 'admin':
+        isp = (ISP.query.get(request.args.get('isp_id') or 0)
+               or ISP.query.filter_by(is_active=True).order_by(ISP.id.asc()).first())
+    else:
+        isp = ISP.query.get(user.isp_id) if user.isp_id else None
+    if not isp:
+        return None, (jsonify({'error': 'No ISP to open a window for'}), 400)
+    return isp, None
+
+
+@cpe_bp.route('/diagnose', methods=['GET'])
+@rate_limit(limit=10, window=60, scope='acs-diagnose')
+@jwt_required()
+def diagnose_acs_route():
+    """Layer-by-layer report on whether CPE can reach the ACS.
+
+    Answers "is TR-069 actually working" with the failing hop rather than a
+    boolean. `?probe=1` adds a live fetch from each router — accurate but slow,
+    so the UI should only ask for it on demand.
+    """
+    if not get_current_user():
+        return jsonify({'error': 'User not found'}), 404
+    from services.acs_diagnostics import diagnose_acs
+
+    probe = request.args.get('probe') in ('1', 'true', 'yes')
+    try:
+        return jsonify(diagnose_acs(probe=probe)), 200
+    except Exception as exc:
+        current_app.logger.exception('ACS diagnosis failed')
+        return jsonify({'error': f'Diagnosis failed: {exc}'}), 500
+
+
+@cpe_bp.route('/enrollment-window', methods=['GET', 'POST', 'DELETE'])
+@jwt_required()
+def enrollment_window():
+    """Open, close, or read the time-boxed self-registration window.
+
+    The counterpart to `create_enrollment` above: that one needs the CPE's serial
+    up front, this one covers the installer who is holding a device and does not
+    have it. An unknown CPE informing while the window is open lands in `pending`,
+    exactly where an approved-by-hand device starts.
+
+    Refused unless the ACS is tunnel-only — see services/tr069/enrollment.py for
+    why that is the whole safety argument.
+    """
+    isp, err = _isp_for_window()
+    if err:
+        return err
+
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        state, error = enrollment.open_window(
+            isp, data.get('minutes', enrollment.DEFAULT_WINDOW_MINUTES),
+        )
+        if error:
+            return jsonify({'error': error}), 400
+        return jsonify({'message': 'Enrolment window open', **state}), 200
+
+    if request.method == 'DELETE':
+        return jsonify({'message': 'Enrolment window closed',
+                        **enrollment.close_window(isp)}), 200
+
+    return jsonify(enrollment.window_state(isp)), 200
 
 
 @cpe_bp.route('/profiles', methods=['GET'])

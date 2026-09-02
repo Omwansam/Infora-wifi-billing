@@ -97,6 +97,36 @@ class CpeService {
   async listProfiles(token) {
     return this.#request(API_ENDPOINTS.CPE_PROFILES, token);
   }
+
+  /**
+   * The time-boxed self-registration window. The counterpart to `enroll` above:
+   * that one needs the CPE's serial up front, this one covers an installer who is
+   * holding a device and does not have it. Unavailable on a public ACS.
+   */
+  async getEnrollmentWindow(token) {
+    return this.#request(API_ENDPOINTS.CPE_ENROLLMENT_WINDOW, token);
+  }
+
+  async openEnrollmentWindow(token, minutes) {
+    return this.#request(API_ENDPOINTS.CPE_ENROLLMENT_WINDOW, token, {
+      method: 'POST',
+      body: { minutes },
+    });
+  }
+
+  async closeEnrollmentWindow(token) {
+    return this.#request(API_ENDPOINTS.CPE_ENROLLMENT_WINDOW, token, { method: 'DELETE' });
+  }
+
+  /**
+   * Layer-by-layer report on whether CPE can reach the ACS. `probe` adds a live
+   * fetch from each router, which is accurate but runs to tens of seconds — only
+   * ask for it on an explicit user action, never on page load.
+   */
+  async diagnoseAcs(token, { probe = false } = {}) {
+    const url = probe ? `${API_ENDPOINTS.CPE_DIAGNOSE}?probe=1` : API_ENDPOINTS.CPE_DIAGNOSE;
+    return this.#request(url, token);
+  }
 }
 
 export default new CpeService();

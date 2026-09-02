@@ -11,12 +11,19 @@ Session flow (see services/tr069/session.py for the full picture):
     POST <empty>           -> next queued RPC, or 204 to end the session
     POST <RpcResponse>     -> next queued RPC, or 204
 
-Auth: the CPE presents HTTP Basic credentials it was configured with. Two modes,
-selected by TR069_ALLOW_UNKNOWN:
+Auth: the CPE presents HTTP Basic credentials it was configured with. Three ways in,
+in descending order of strictness:
 
   * strict (default)  — credentials must match a known device
-  * onboarding        — an unknown device may register, landing in 'pending'
-                        where it receives no tasks until an operator approves it
+  * enrolment window  — while an ISP's window is open, an unknown device may
+                        register under it, landing in 'pending'. Time-boxed, named
+                        to one ISP, and refused unless the ACS is tunnel-only.
+                        See services/tr069/enrollment.py
+  * TR069_ALLOW_UNKNOWN — the same relaxation, but permanent and global. Only for
+                        a deployment that genuinely wants open registration
+
+A 'pending' device receives no tasks until an operator approves it, so none of
+these grant control of anything — they decide who may knock.
 
 Port: served on the normal Flask app. In production give it its own vhost/port
 (7547 is the IANA CWMP port) and keep it off the CDN — see TR069.md.
@@ -30,6 +37,7 @@ from extensions import db
 from models import CpeDevice, CpeTask, ISP
 from services.encryption import decrypt_value
 from services.rate_limit import client_ip as get_client_ip, is_rate_limited
+from services.tr069 import enrollment
 from services.tr069 import session as cwmp_session
 from services.tr069 import soap
 
@@ -156,10 +164,25 @@ def _handle_inform(payload, peer_ip, cwmp_ns, request_id, username, password):
         # Known username, wrong password — always reject, regardless of mode.
         current_app.logger.warning('CWMP auth failed for %s from %s', username, peer_ip)
         return _unauthorized()
-    if not device and not allow_unknown:
-        return _unauthorized()
 
-    isp_id = device.isp_id if device else _default_isp_id()
+    # An unknown device is normally rejected outright. An open enrolment window is
+    # the deliberate exception: it lets an installer bring up a CPE whose serial
+    # they never recorded. The device still lands in `pending` and still needs
+    # approving, so this widens who may knock, not what they may do.
+    window_isp_id = None
+    if not device and not allow_unknown:
+        window_isp_id, reason = enrollment.open_window_isp_id()
+        if window_isp_id is None:
+            current_app.logger.info(
+                'CWMP Inform from unknown CPE at %s rejected: %s', peer_ip, reason,
+            )
+            return _unauthorized()
+        current_app.logger.info(
+            'CWMP Inform from unknown CPE at %s accepted under the enrolment '
+            'window for ISP %s', peer_ip, window_isp_id,
+        )
+
+    isp_id = device.isp_id if device else (window_isp_id or _default_isp_id())
     if not isp_id:
         current_app.logger.error('CWMP Inform rejected: no active ISP to attribute it to')
         return _xml(soap.build_fault('9002', 'Server not configured', cwmp_ns), status=500)
