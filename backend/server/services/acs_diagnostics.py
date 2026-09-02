@@ -76,14 +76,14 @@ def _diagnose_router(device, probe=False):
     label = f'{device.device_name} (id={device.id})'
     if not (device.management_wg_enabled and device.management_wg_ip):
         return [_check(
-            f'router_{device.id}_tunnel', f'{label}: management tunnel enabled', False,
+            f'router_{device.id}_tunnel', f'{label}: has a management tunnel', False,
             'No management tunnel — CPE behind this router cannot reach the ACS at all.',
             severity='warn',
         )]
 
     result = probe_tunnel(device, timeout=2, attempts=3)
     checks = [_check(
-        f'router_{device.id}_tunnel', f'{label}: tunnel is up', result['up'],
+        f'router_{device.id}_tunnel', f'{label}: answers on the tunnel', result['up'],
         result['detail'],
         severity='warn',
     )]
@@ -101,10 +101,16 @@ def _diagnose_router(device, probe=False):
             if probe:
                 # The end-to-end proof: reaches Flask only if the route, the
                 # masquerade, WireGuard's allowed-ips and the container DNAT all
-                # line up. output=user keeps it off the router's filesystem.
+                # line up.
+                #
+                # `:put [...]` is load-bearing. A bare `as-value` fetch prints
+                # nothing at all over SSH, and plain `output=user` prints only a
+                # progress table; wrapping it returns a parseable value map
+                # (`status=finished;code=200;data=...`) and keeps the response off
+                # the router's filesystem, which dst-path would not.
                 fetched, _ = client.run_cli(
-                    f'/tool fetch url="http://{server_ip}:7547/tr069" '
-                    'http-method=get output=user as-value'
+                    f':put [/tool fetch url="http://{server_ip}:7547/tr069" '
+                    'http-method=get output=user as-value]'
                 )
     except DeviceBusy:
         checks.append(_check(
@@ -139,12 +145,18 @@ def _diagnose_router(device, probe=False):
     ))
 
     if probe:
-        ok = 'status: finished' in (fetched or '') or 'finished' in (fetched or '')
+        body = fetched or ''
+        # Insist on our own greeting, not merely a 200: anything else answering on
+        # that address means the DNAT is pointing somewhere unexpected.
+        from routes.tr069 import GET_GREETING
+        ok = ('status=finished' in body and 'code=200' in body
+              and GET_GREETING.strip()[:20] in body)
         checks.append(_check(
             f'router_{device.id}_fetch', f'{label}: ACS answers over the tunnel', ok,
-            'Fetched http://%s:7547/tr069 successfully' % server_ip if ok else
-            'The router could not fetch the ACS. This is the check that catches a '
-            'stale DNAT in the wireguard container after flask_app was recreated.',
+            f'Fetched http://{server_ip}:7547/tr069 and got the ACS greeting' if ok else
+            f'The router could not reach the ACS. Router said: {body.strip()[:160] or "(no output)"}. '
+            'This is the check that catches a stale DNAT in the wireguard container '
+            'after flask_app was recreated.',
         ))
     return checks
 

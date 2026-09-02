@@ -43,6 +43,12 @@ from services.tr069 import soap
 
 tr069_bp = Blueprint('tr069', __name__, url_prefix='/tr069')
 
+# Served on a plain GET, which is not CWMP but is exactly what an operator or a
+# health check reaches for. acs_diagnostics asserts on this text to prove a router
+# reached OUR ACS rather than merely something answering on that address, so the
+# two must not drift — hence a constant rather than a literal in each place.
+GET_GREETING = 'Infora ACS (TR-069). CPE must POST a CWMP envelope.\n'
+
 # A CPE in a reboot loop can hammer this. Generous enough for a normal session
 # (one Inform + a handful of RPC turns) but caps a runaway device.
 _RATE_WINDOW_SECONDS = 60
@@ -124,7 +130,7 @@ def acs_endpoint():
     # operator hitting the URL in a browser gets a useful signal, without
     # revealing anything about enrolled devices.
     if request.method == 'GET':
-        return Response('Infora ACS (TR-069). CPE must POST a CWMP envelope.\n',
+        return Response(GET_GREETING,
                         status=200, mimetype='text/plain')
 
     body = request.get_data() or b''
