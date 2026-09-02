@@ -769,6 +769,253 @@ def fup_snapshot(customer, now=None):
     }
 
 
+def throughput_vs_plan(customer, days=30, now=None):
+    """What this subscriber actually got, against what they pay for.
+
+    "The internet is slow" is the most common complaint an ISP takes and the
+    hardest to answer, because the console showed live speed only -- which is
+    blank precisely when someone is complaining about a line that has dropped.
+    Averaging finished sessions gives the conversation a number.
+
+    This is an average over accounted traffic, not a speed test: a subscriber who
+    barely uses the line will show a low figure without anything being wrong. It
+    answers "were they ever able to pull their plan speed", not "how fast is it
+    right now".
+    """
+    now = now or datetime.now()
+    window_start = now - timedelta(days=days)
+
+    rows = (
+        acct_query(customer)
+        .filter(RadAcct.acctstarttime >= window_start)
+        .filter(RadAcct.acctsessiontime > 0)
+        .all()
+    )
+
+    plan = customer.service_plan
+    speeds = get_plan_speed_mbps(plan) if plan else {'download_mbps': None, 'upload_mbps': None}
+
+    best_down = best_up = 0.0
+    total_seconds = total_down = total_up = 0
+    for row in rows:
+        seconds = int(row.acctsessiontime or 0)
+        if seconds <= 0:
+            continue
+        down = int(row.acctoutputoctets or 0)
+        up = int(row.acctinputoctets or 0)
+        total_seconds += seconds
+        total_down += down
+        total_up += up
+        best_down = max(best_down, (down * 8) / seconds / 1_000_000)
+        best_up = max(best_up, (up * 8) / seconds / 1_000_000)
+
+    def avg(octets):
+        return round((octets * 8) / total_seconds / 1_000_000, 2) if total_seconds else 0.0
+
+    plan_down = speeds.get('download_mbps')
+    # Share of the plan the best session actually reached. Peak rather than mean,
+    # because the mean is dragged down by idle time and would libel a healthy line.
+    achieved_pct = round(min(best_down / plan_down, 1.0) * 100) if plan_down and best_down else None
+
+    return {
+        'days': days,
+        'sessions': len(rows),
+        'plan_down_mbps': plan_down,
+        'plan_up_mbps': speeds.get('upload_mbps'),
+        'avg_down_mbps': avg(total_down),
+        'avg_up_mbps': avg(total_up),
+        'peak_down_mbps': round(best_down, 2),
+        'peak_up_mbps': round(best_up, 2),
+        'achieved_percent': achieved_pct,
+        'total_bytes': total_down + total_up,
+    }
+
+# ---------------------------------------------------------------------------
+# MAC vendor lookup
+# ---------------------------------------------------------------------------
+
+# A curated OUI table, not a copy of the IEEE registry. The full list is tens of
+# thousands of rows and would need shipping and updating; what an ISP support desk
+# actually needs is "is this the CPE we installed, or the customer's phone?", and
+# that question is answered by a few dozen prefixes.
+#
+# Add rows as the fleet grows -- an unknown prefix degrades to the raw MAC, which
+# is exactly what the tab showed before, so a gap here costs nothing.
+MAC_VENDORS = {
+    # CPE / ONT / routers seen on this network
+    'B4:0F:3B': 'Tenda', 'C8:3A:35': 'Tenda', '00:B0:0C': 'Tenda',
+    '00:E0:4C': 'Realtek', '48:57:02': 'Huawei', '00:25:9E': 'Huawei',
+    '80:B6:86': 'Huawei', 'E0:24:7F': 'Huawei', 'AC:E2:D3': 'Huawei',
+    '00:1E:73': 'ZTE', '4C:AC:0A': 'ZTE', '9C:9D:7E': 'ZTE',
+    '00:0C:42': 'MikroTik', '4C:5E:0C': 'MikroTik', '6C:3B:6B': 'MikroTik',
+    '48:8F:5A': 'MikroTik', '2C:C8:1B': 'MikroTik', 'DC:2C:6E': 'MikroTik',
+    'D4:CA:6D': 'MikroTik', 'E4:8D:8C': 'MikroTik', '18:FD:74': 'MikroTik',
+    '50:C7:BF': 'TP-Link', 'A4:2B:B0': 'TP-Link', 'C0:25:E9': 'TP-Link',
+    'EC:08:6B': 'TP-Link', '14:CC:20': 'TP-Link',
+    '00:15:6D': 'Ubiquiti', '24:A4:3C': 'Ubiquiti', '78:8A:20': 'Ubiquiti',
+    'FC:EC:DA': 'Ubiquiti', '04:18:D6': 'Ubiquiti',
+    '00:17:88': 'Philips Hue', 'B8:27:EB': 'Raspberry Pi', 'DC:A6:32': 'Raspberry Pi',
+    # Client devices -- useful because they say "this is a phone, not the CPE"
+    'A4:83:E7': 'Apple', 'F0:18:98': 'Apple', '3C:15:C2': 'Apple',
+    'AC:BC:32': 'Apple', '68:AB:1E': 'Apple', '90:B0:ED': 'Apple',
+    '00:1A:11': 'Google', '54:60:09': 'Google', 'F4:F5:D8': 'Google',
+    '8C:77:12': 'Samsung', '00:26:37': 'Samsung', '78:A8:73': 'Samsung',
+    'D0:37:45': 'Samsung', '5C:0A:5B': 'Samsung',
+    '00:1B:44': 'Intel', '3C:97:0E': 'Intel', '9C:B6:D0': 'Intel',
+    '00:50:56': 'VMware', '52:54:00': 'QEMU/KVM',
+}
+
+
+def mac_vendor(mac):
+    """Vendor behind a MAC's OUI, or None when the prefix is not one we know.
+
+    Locally-administered addresses are called out rather than guessed at: modern
+    phones randomise their MAC per network, so a device that looks new every week
+    is usually one phone with privacy turned on, not a succession of devices.
+    """
+    if not mac or len(mac) < 8:
+        return None
+    prefix = mac.upper().replace('-', ':')[:8]
+    known = MAC_VENDORS.get(prefix)
+    if known:
+        return known
+    try:
+        first = int(prefix[:2], 16)
+    except ValueError:
+        return None
+    # Bit 1 of the first octet set = locally administered, i.e. randomised.
+    return 'Randomised MAC' if first & 0b10 else None
+
+# ---------------------------------------------------------------------------
+# Per-tab summaries
+# ---------------------------------------------------------------------------
+
+def _money(value):
+    return float(value or 0)
+
+
+def tab_summaries(customer, now=None):
+    """One summary strip per tab, computed over the whole history.
+
+    Every tab is a table, and a table answers "what happened" while hiding "what
+    is the shape of this". Ten payments tell you nothing about whether this
+    subscriber pays on time; four tickets tell you nothing about whether any are
+    still open.
+
+    Computed here rather than in the browser on purpose: the payments and tickets
+    endpoints paginate at 50, so a client-side total would quietly be a total of
+    the first page -- right for this subscriber today, wrong for the one who has
+    been with you three years.
+    """
+    now = now or datetime.now()
+
+    # --- Payments ---------------------------------------------------------
+    pay_rows = (
+        Payment.query.filter_by(customer_id=customer.id)
+        .order_by(Payment.payment_date.desc().nullslast())
+        .all()
+    )
+    completed = [p for p in pay_rows
+                 if getattr(p.payment_status, 'value', p.payment_status) == 'completed']
+    methods = {}
+    for p in completed:
+        methods[p.payment_method] = methods.get(p.payment_method, 0) + 1
+    total_paid = sum(_money(p.amount) for p in completed)
+    last_paid_at = completed[0].payment_date if completed else None
+
+    payments = {
+        'total_paid': round(total_paid, 2),
+        'count': len(pay_rows),
+        'completed': len(completed),
+        # The distinction the "Ksh 0.00" tile could not make: a subscriber who has
+        # never paid is a billing problem, one who simply has not paid this month
+        # is a calendar entry.
+        'ever_paid': bool(completed),
+        'average': round(total_paid / len(completed), 2) if completed else 0.0,
+        'top_method': max(methods.items(), key=lambda kv: kv[1])[0] if methods else None,
+        'last_paid_at': last_paid_at.isoformat() if last_paid_at else None,
+        'days_since_last': (now - last_paid_at).days if last_paid_at else None,
+        'failed': len(pay_rows) - len(completed),
+    }
+
+    # --- Tickets ----------------------------------------------------------
+    ticket_rows = Ticket.query.filter_by(customer_id=customer.id).all()
+    open_states = {'open', 'pending', 'in_progress', 'on_hold'}
+    open_tickets = [t for t in ticket_rows
+                    if getattr(t.ticket_status, 'value', t.ticket_status) in open_states]
+    oldest_open = min((t.created_at for t in open_tickets if t.created_at), default=None)
+
+    tickets = {
+        'total': len(ticket_rows),
+        'open': len(open_tickets),
+        'resolved': len(ticket_rows) - len(open_tickets),
+        'oldest_open_at': oldest_open.isoformat() if oldest_open else None,
+        'oldest_open_days': (now - oldest_open).days if oldest_open else None,
+    }
+
+    # --- Messages ---------------------------------------------------------
+    message_rows = (
+        Notification.query.filter_by(customer_id=customer.id)
+        .order_by(Notification.created_at.desc())
+        .all()
+    )
+    channels = {}
+    for m in message_rows:
+        channels[m.notification_type] = channels.get(m.notification_type, 0) + 1
+
+    messages = {
+        'total': len(message_rows),
+        'by_channel': channels,
+        'last_at': message_rows[0].created_at.isoformat()
+                   if message_rows and message_rows[0].created_at else None,
+        'unread': sum(1 for m in message_rows if not m.is_read),
+    }
+
+    # --- Notes ------------------------------------------------------------
+    note_rows = (
+        CustomerNote.query.filter_by(customer_id=customer.id)
+        .order_by(CustomerNote.created_at.desc())
+        .all()
+    )
+    notes = {
+        'total': len(note_rows),
+        'private': sum(1 for n in note_rows if n.is_private),
+        'last_at': note_rows[0].created_at.isoformat()
+                   if note_rows and note_rows[0].created_at else None,
+    }
+
+    # --- Sessions ---------------------------------------------------------
+    month_start = now - timedelta(days=30)
+    recent = (
+        acct_query(customer)
+        .filter(RadAcct.acctstarttime >= month_start)
+        .all()
+    )
+    longest = max((int(r.acctsessiontime or 0) for r in recent), default=0)
+    sessions = {
+        'count_30d': len(recent),
+        'bytes_30d': sum(int(r.acctoutputoctets or 0) + int(r.acctinputoctets or 0) for r in recent),
+        'longest_seconds': longest,
+        'stability': connection_stability(customer, hours=24, now=now),
+    }
+
+    # --- Devices ----------------------------------------------------------
+    device_rows = devices(customer, limit=200)
+    device_summary = {
+        'total': len(device_rows),
+        'registered': sum(1 for d in device_rows if d.get('source') == 'registered'),
+        'seen_only': sum(1 for d in device_rows if d.get('source') != 'registered'),
+    }
+
+    return {
+        'payments': payments,
+        'tickets': tickets,
+        'messages': messages,
+        'notes': notes,
+        'sessions': sessions,
+        'devices': device_summary,
+    }
+
 # ---------------------------------------------------------------------------
 # Counts for the tab bar
 # ---------------------------------------------------------------------------
@@ -858,6 +1105,12 @@ def devices(customer, limit=50):
             'sessions': sessions,
             'last_seen': last_seen.isoformat() if last_seen else None,
         })
+
+    # A MAC nobody registered is just a hex string, and the tab rendered it as
+    # "Unnamed device". The OUI turns most of them into the answer support
+    # actually wants: is this the CPE we installed, or the customer's phone?
+    for row in out:
+        row['vendor'] = mac_vendor(row.get('mac'))
     return out
 
 

@@ -173,6 +173,10 @@ def get_overview(customer_id):
         # Which automatic messages are armed for this tenant. An empty message log
         # usually means an event was never switched on, not that nothing happened.
         'lifecycle_messages': notification_events.subscriber_lifecycle_status(customer.isp_id),
+        # One summary strip per tab, computed over the whole history. Every tab is
+        # a table, and a table hides the shape of what it holds — ten payments say
+        # nothing about whether this subscriber pays on time.
+        'summaries': insights.tab_summaries(customer, now),
         'reference': {
             'account_id': customer.id,
             'account_number': customer.account_number,
@@ -267,6 +271,11 @@ def get_reports(customer_id):
         'payment_trend': insights.payment_trend(customer, months=12, now=now),
         'daily_usage': insights.daily_usage(customer, now),
         'peak_hours': insights.peak_hours(customer, days=30, now=now),
+        # Delivered vs contracted. The live meters are blank exactly when someone
+        # rings to complain about a line that has dropped, so the tab needs a
+        # figure that survives the session ending.
+        'throughput': insights.throughput_vs_plan(customer, days=30, now=now),
+        'stability': insights.connection_stability(customer, hours=168, now=now),
         'plan': _plan_summary(customer.service_plan),
         'generated_at': now.isoformat(),
     })

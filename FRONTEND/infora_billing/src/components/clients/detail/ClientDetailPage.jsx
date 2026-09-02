@@ -253,6 +253,9 @@ export default function ClientDetailPage() {
   }
 
   const counts = overview?.counts || {};
+  // Per-tab summary strips. They ride on the overview call, which always loads,
+  // so a tab can show the shape of its data before its own rows arrive.
+  const summaries = overview?.summaries || {};
   const subscription = overview?.subscription || {};
   const lastSession = overview?.last_session;
   const wallet = overview?.wallet || {};
@@ -349,15 +352,21 @@ export default function ClientDetailPage() {
             loading={tabLoading.sessions && !tabData.sessions}
             page={sessionPage}
             onPage={setSessionPage}
+            summary={summaries.sessions}
           />
         )}
         {activeTab === 'payments' && (
-          <PaymentsTab data={tabData.payments} loading={tabLoading.payments && !tabData.payments} />
+          <PaymentsTab
+            data={tabData.payments}
+            loading={tabLoading.payments && !tabData.payments}
+            summary={summaries.payments}
+          />
         )}
         {activeTab === 'packages' && (
           <PackageHistoryTab
             events={tabData.packages?.events}
             loading={tabLoading.packages && !tabData.packages}
+            joinedAt={overview?.reference?.joined_at}
           />
         )}
         {activeTab === 'sms' && (
@@ -365,21 +374,29 @@ export default function ClientDetailPage() {
             messages={tabData.sms?.messages}
             loading={tabLoading.sms && !tabData.sms}
             onSendSms={() => setModal('sms')}
+            summary={summaries.messages}
+            lifecycle={overview?.lifecycle_messages}
           />
         )}
         {activeTab === 'tickets' && (
-          <TicketsTab data={tabData.tickets} loading={tabLoading.tickets && !tabData.tickets} />
+          <TicketsTab
+            data={tabData.tickets}
+            loading={tabLoading.tickets && !tabData.tickets}
+            summary={summaries.tickets}
+          />
         )}
         {activeTab === 'devices' && (
           <DevicesTab
             devices={tabData.devices?.devices}
             loading={tabLoading.devices && !tabData.devices}
+            summary={summaries.devices}
           />
         )}
         {activeTab === 'notes' && (
           <NotesTab
             notes={tabData.notes?.notes}
             loading={tabLoading.notes && !tabData.notes}
+            summary={summaries.notes}
             saving={busy === 'note'}
             onAdd={(content) => run('note',
               () => customerService.addNote(customerId, content),

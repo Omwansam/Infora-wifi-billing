@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Activity, ArrowDown, ArrowUp, BarChart3, Clock, Loader2, Radio, RefreshCw, TrendingUp, Wifi,
+  Activity, ArrowDown, ArrowUp, BarChart3, Clock, Gauge, Loader2, Radio, RefreshCw, TrendingUp, Wifi,
 } from 'lucide-react';
 import { Panel, Chip, PanelSkeleton, BLOCK } from '../parts';
 import TrafficChart from '../charts/TrafficChart';
@@ -92,9 +92,52 @@ export default function ReportsTab({ reports, loading, onRefresh, refreshing }) 
                 sub={`peak ${reports?.daily_usage?.peak_bytes ? formatBytes(reports.daily_usage.peak_bytes) : '—'} in a day`} />
           <Cell icon={Wifi} label="Connection"
                 value={connectionLabel(live.connection_type)}
-                sub={live.nas_ip ? `via ${live.nas_ip}` : 'no NAS recorded'} />
+                /* Falls back to the last known NAS: "no NAS recorded" was shown
+                   for every offline subscriber, which is who gets looked up. */
+                sub={live.nas_ip
+                  ? `via ${live.nas_ip}`
+                  : (reports?.throughput?.sessions ? 'via last known router' : 'no NAS recorded')} />
         </dl>
       </Panel>
+
+      {reports?.throughput?.sessions > 0 && (
+        <Panel
+          icon={Gauge}
+          title="Speed delivered"
+          subtitle={`Measured across ${reports.throughput.sessions} session${reports.throughput.sessions === 1 ? '' : 's'} in the last ${reports.throughput.days} days`}
+        >
+          <dl className="grid grid-cols-2 gap-px bg-slate-100 sm:grid-cols-4 dark:bg-slate-800">
+            <Cell icon={ArrowDown} label="Best download"
+                  value={`${reports.throughput.peak_down_mbps} Mbps`}
+                  sub={reports.throughput.plan_down_mbps
+                    ? `plan is ${reports.throughput.plan_down_mbps} Mbps` : 'no plan speed set'} />
+            <Cell icon={ArrowUp} label="Best upload"
+                  value={`${reports.throughput.peak_up_mbps} Mbps`}
+                  sub={reports.throughput.plan_up_mbps
+                    ? `plan is ${reports.throughput.plan_up_mbps} Mbps` : 'no plan speed set'} />
+            <Cell icon={TrendingUp} label="Proven at least"
+                  value={reports.throughput.achieved_percent !== null
+                    ? `${reports.throughput.achieved_percent}%` : '—'}
+                  sub="of plan speed" />
+            <Cell icon={Activity} label="Average"
+                  value={`${reports.throughput.avg_down_mbps} Mbps`}
+                  sub="across all accounted time" />
+          </dl>
+          {/* An average over accounted traffic is not a speed test. A light user
+              looks slow without anything being wrong, so say what the number is
+              rather than letting it be read as a diagnosis. */}
+          {/* This measures demand, not capacity, so it can only ever prove a
+              floor. Saying so in the panel is the difference between a useful
+              number and one that gets a healthy line escalated. */}
+          <p className="border-t border-slate-100 px-5 py-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+            Measured from RADIUS accounting, not a speed test. It shows the fastest this
+            line has been <em>observed</em> running, so a low figure usually means light
+            use rather than a slow connection — it proves what the line reached, never
+            what it is capable of. A high figure rules the network out; a low one rules
+            nothing in.
+          </p>
+        </Panel>
+      )}
 
       <Panel icon={Activity} title="Last 24 hours" subtitle="Hourly download and upload">
         <TrafficChart data={reports?.traffic_24h} />

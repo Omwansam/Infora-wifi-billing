@@ -111,6 +111,38 @@ const CHIP_TONES = {
   critical: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-400/30',
 };
 
+/**
+ * The shape of what a tab holds, above the rows that hold it.
+ *
+ * Every tab on this page is a table, and a table answers "what happened" while
+ * hiding "what is the shape of this" — ten payments say nothing about whether
+ * this subscriber pays on time, four tickets say nothing about whether any are
+ * still open. Each entry is `{ label, value, sub, tone }`; falsy entries are
+ * dropped so a caller can build the list conditionally without ternary noise.
+ */
+export function SummaryStrip({ items }) {
+  const shown = (items || []).filter(Boolean);
+  if (!shown.length) return null;
+
+  return (
+    <dl className="grid grid-cols-2 gap-px border-b border-slate-100 bg-slate-100 sm:grid-cols-4 dark:border-slate-800 dark:bg-slate-800">
+      {shown.map((item) => (
+        <div key={item.label} className="bg-white px-5 py-3.5 dark:bg-slate-900">
+          <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            {item.label}
+          </dt>
+          <dd className={`mt-0.5 text-lg font-semibold tabular-nums ${TILE_TONES[item.tone || 'neutral']}`}>
+            {item.value}
+          </dd>
+          {item.sub && (
+            <dd className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{item.sub}</dd>
+          )}
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function Chip({ icon: Icon, children, tone = 'neutral', className = '' }) {
   return (
     <span

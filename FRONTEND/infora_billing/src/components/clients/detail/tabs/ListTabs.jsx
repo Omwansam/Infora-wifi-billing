@@ -4,7 +4,7 @@ import {
   Clock, CreditCard, LifeBuoy, Loader2, MessageSquare, Package, Send, Smartphone,
   StickyNote, Trash2, Wifi,
 } from 'lucide-react';
-import { Panel, DataTable, Td, Chip, EmptyState, PanelSkeleton, INPUT } from '../parts';
+import { Panel, DataTable, Td, Chip, EmptyState, PanelSkeleton, INPUT, SummaryStrip } from '../parts';
 import { formatBytes } from '../../../../lib/networkUtils';
 import { formatCurrency } from '../../../../lib/utils';
 import { formatPaymentMethod } from '../../../../lib/billingFormatters';
@@ -45,9 +45,10 @@ const CAUSE_TONE = {
   unknown: 'neutral',
 };
 
-export function SessionsTab({ data, loading, page, onPage }) {
+export function SessionsTab({ data, loading, page, onPage, summary }) {
   if (loading) return <Panel title="Sessions"><PanelSkeleton rows={6} /></Panel>;
   const sessions = data?.sessions || [];
+  const stability = summary?.stability;
 
   return (
     <Panel
@@ -55,6 +56,26 @@ export function SessionsTab({ data, loading, page, onPage }) {
       title="Sessions"
       subtitle={`${data?.total || 0} RADIUS accounting record${data?.total === 1 ? '' : 's'}`}
     >
+      {summary && (
+        <SummaryStrip
+          items={[
+            { label: 'Last 30 days', value: summary.count_30d, sub: 'sessions' },
+            { label: 'Data moved', value: formatBytes(summary.bytes_30d), sub: 'last 30 days' },
+            summary.longest_seconds > 0 && {
+              label: 'Longest', value: duration(summary.longest_seconds), sub: 'single session',
+            },
+            /* Repeated short sessions are a fault announcing itself, and every
+               individual row looks unremarkable -- counting them is what makes
+               the pattern visible. */
+            stability && {
+              label: 'Stability',
+              value: stability.flapping ? 'Unstable' : 'Steady',
+              sub: stability.summary,
+              tone: stability.flapping ? 'critical' : 'good',
+            },
+          ]}
+        />
+      )}
       <DataTable
         head={[
           { label: 'Started' }, { label: 'Duration' }, { label: 'IP' },
@@ -143,12 +164,40 @@ function PagerButton({ children, ...props }) {
 
 const PAYMENT_TONE = { completed: 'good', pending: 'warning', failed: 'critical', refunded: 'neutral' };
 
-export function PaymentsTab({ data, loading }) {
+export function PaymentsTab({ data, loading, summary }) {
   if (loading) return <Panel title="Payments"><PanelSkeleton rows={5} /></Panel>;
   const payments = data?.payments || [];
 
   return (
     <Panel icon={CreditCard} title="Payments" subtitle={`${data?.total || 0} recorded`}>
+      {summary && (
+        <SummaryStrip
+          items={[
+            {
+              label: 'Total paid',
+              value: formatCurrency(summary.total_paid),
+              /* "Never paid" is a billing problem; "nothing this month" is a
+                 calendar entry. The lifetime-value tile could not tell them
+                 apart, so it said Ksh 0.00 to both. */
+              sub: summary.ever_paid ? `${summary.completed} payment${summary.completed === 1 ? '' : 's'}` : 'Never paid',
+              tone: summary.ever_paid ? 'good' : 'warning',
+            },
+            summary.ever_paid && {
+              label: 'Average', value: formatCurrency(summary.average),
+              sub: summary.top_method ? `mostly ${formatPaymentMethod(summary.top_method)}` : null,
+            },
+            summary.ever_paid && {
+              label: 'Last payment',
+              value: summary.days_since_last === 0 ? 'Today' : `${summary.days_since_last}d ago`,
+              sub: when(summary.last_paid_at, false),
+            },
+            summary.failed > 0 && {
+              label: 'Not completed', value: summary.failed,
+              sub: 'failed or pending', tone: 'warning',
+            },
+          ]}
+        />
+      )}
       <DataTable
         head={[
           { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Method' },
@@ -180,8 +229,16 @@ export function PaymentsTab({ data, loading }) {
 
 // --- Package history -------------------------------------------------------
 
-export function PackageHistoryTab({ events, loading }) {
+export function PackageHistoryTab({ events, loading, joinedAt }) {
   if (loading) return <Panel title="Package history"><PanelSkeleton rows={5} /></Panel>;
+
+  const changes = events?.length || 0;
+  // No change recorded means they are still on what they signed up with, so the
+  // clock starts at the join date rather than reading as "unknown".
+  const since = events?.[0]?.created_at || joinedAt;
+  const days = since
+    ? Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 86400000))
+    : null;
 
   return (
     <Panel
@@ -189,6 +246,19 @@ export function PackageHistoryTab({ events, loading }) {
       title="Package history"
       subtitle="Every change to what this subscriber pays for"
     >
+      {(changes > 0 || since) && (
+        <SummaryStrip
+          items={[
+            { label: 'Changes', value: changes,
+              sub: changes === 0 ? 'still on the original plan' : null },
+            days !== null && {
+              label: 'On this plan',
+              value: days === 0 ? 'Today' : `${days} day${days === 1 ? '' : 's'}`,
+              sub: when(since, false),
+            },
+          ]}
+        />
+      )}
       <DataTable
         head={[{ label: 'When' }, { label: 'Change' }, { label: 'From → to' }, { label: 'By' }]}
         empty={!events?.length && (
@@ -214,8 +284,9 @@ export function PackageHistoryTab({ events, loading }) {
 
 // --- Messages --------------------------------------------------------------
 
-export function MessagesTab({ messages, loading, onSendSms }) {
+export function MessagesTab({ messages, loading, onSendSms, summary, lifecycle }) {
   if (loading) return <Panel title="SMS"><PanelSkeleton rows={5} /></Panel>;
+  const armed = (lifecycle || []).filter((e) => e.enabled);
 
   return (
     <Panel
@@ -233,6 +304,34 @@ export function MessagesTab({ messages, loading, onSendSms }) {
         </button>
       }
     >
+      {summary?.total > 0 && (
+        <SummaryStrip
+          items={[
+            { label: 'Sent', value: summary.total, sub: 'all channels' },
+            summary.by_channel?.sms && { label: 'SMS', value: summary.by_channel.sms },
+            summary.by_channel?.email && { label: 'Email', value: summary.by_channel.email },
+            summary.last_at && { label: 'Last sent', value: when(summary.last_at, false) },
+          ]}
+        />
+      )}
+      {/* An empty log reads as "nothing has happened", but most lifecycle events
+          ship switched off — so the usual reason nothing was sent is that nothing
+          was ever armed. Say which, rather than leaving it to be discovered. */}
+      {lifecycle?.length > 0 && (
+        <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-3 text-xs dark:border-slate-800 dark:bg-slate-800/30">
+          {armed.length > 0 ? (
+            <p className="text-slate-600 dark:text-slate-300">
+              <span className="font-semibold">{armed.length} automatic message{armed.length === 1 ? '' : 's'}</span>
+              {' '}armed for this subscriber: {armed.map((e) => e.label).join(', ')}.
+            </p>
+          ) : (
+            <p className="text-amber-700 dark:text-amber-400">
+              No automatic messages are switched on — nothing will reach this
+              subscriber unless someone sends it by hand.
+            </p>
+          )}
+        </div>
+      )}
       {messages?.length ? (
         <ul className="divide-y divide-slate-100 dark:divide-slate-800">
           {messages.map((message) => (
@@ -269,12 +368,32 @@ export function MessagesTab({ messages, loading, onSendSms }) {
 
 const TICKET_TONE = { open: 'warning', in_progress: 'info', resolved: 'good', closed: 'neutral' };
 
-export function TicketsTab({ data, loading }) {
+export function TicketsTab({ data, loading, summary }) {
   if (loading) return <Panel title="Tickets"><PanelSkeleton rows={4} /></Panel>;
   const tickets = data?.tickets || [];
 
   return (
     <Panel icon={LifeBuoy} title="Tickets" subtitle={`${data?.total || 0} support ticket${data?.total === 1 ? '' : 's'}`}>
+      {summary?.total > 0 && (
+        <SummaryStrip
+          items={[
+            {
+              label: 'Still open', value: summary.open,
+              tone: summary.open > 0 ? 'warning' : 'good',
+              sub: summary.open === 0 ? 'nothing outstanding' : null,
+            },
+            { label: 'Resolved', value: summary.resolved },
+            /* An open ticket's age is the number that matters -- a list sorted by
+               date buries the one that has been waiting three weeks. */
+            summary.oldest_open_days !== null && summary.oldest_open_days !== undefined && {
+              label: 'Oldest open',
+              value: `${summary.oldest_open_days}d`,
+              sub: when(summary.oldest_open_at, false),
+              tone: summary.oldest_open_days > 7 ? 'critical' : 'neutral',
+            },
+          ]}
+        />
+      )}
       <DataTable
         head={[{ label: 'Ticket' }, { label: 'Subject' }, { label: 'Priority' }, { label: 'Status' }, { label: 'Opened' }]}
         empty={!tickets.length && (
@@ -301,7 +420,7 @@ export function TicketsTab({ data, loading }) {
 
 // --- Devices ---------------------------------------------------------------
 
-export function DevicesTab({ devices, loading }) {
+export function DevicesTab({ devices, loading, summary }) {
   if (loading) return <Panel title="Devices"><PanelSkeleton rows={4} /></Panel>;
 
   return (
@@ -310,6 +429,16 @@ export function DevicesTab({ devices, loading }) {
       title="Devices"
       subtitle="Registered hardware, plus every MAC that has authenticated"
     >
+      {summary?.total > 0 && (
+        <SummaryStrip
+          items={[
+            { label: 'Devices seen', value: summary.total },
+            { label: 'Registered', value: summary.registered,
+              sub: summary.registered === 0 ? 'none added by hand' : null },
+            { label: 'From RADIUS only', value: summary.seen_only },
+          ]}
+        />
+      )}
       <DataTable
         head={[{ label: 'Device' }, { label: 'MAC' }, { label: 'Last IP' }, { label: 'Source' }, { label: 'Last seen' }]}
         empty={!devices?.length && (
@@ -323,7 +452,15 @@ export function DevicesTab({ devices, loading }) {
         {(devices || []).map((device, index) => (
           <tr key={device.mac || index} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
             <Td className="font-medium">
-              {device.name || device.model || 'Unnamed device'}
+              {/* An unregistered MAC used to render as "Unnamed device". The OUI
+                  answers the question support actually has: is this the CPE we
+                  installed, or the customer's phone? */}
+              {device.name || device.model || device.vendor || 'Unnamed device'}
+              {!device.name && !device.model && device.vendor && (
+                <span className="ml-1.5 text-xs font-normal text-slate-400 dark:text-slate-500">
+                  (from MAC)
+                </span>
+              )}
               {device.sessions ? (
                 <span className="ml-2 text-xs text-slate-400 dark:text-slate-500">
                   {device.sessions} session{device.sessions === 1 ? '' : 's'}
@@ -347,7 +484,7 @@ export function DevicesTab({ devices, loading }) {
 
 // --- Notes -----------------------------------------------------------------
 
-export function NotesTab({ notes, loading, onAdd, onDelete, saving }) {
+export function NotesTab({ notes, loading, onAdd, onDelete, saving, summary }) {
   const [draft, setDraft] = useState('');
 
   if (loading) return <Panel title="Notes"><PanelSkeleton rows={4} /></Panel>;
@@ -365,6 +502,16 @@ export function NotesTab({ notes, loading, onAdd, onDelete, saving }) {
       title="Notes"
       subtitle="Internal thread — operators only, never shown to the subscriber"
     >
+      {summary?.total > 0 && (
+        <SummaryStrip
+          items={[
+            { label: 'Notes', value: summary.total },
+            summary.private > 0 && { label: 'Internal only', value: summary.private,
+              sub: 'not shown to the subscriber' },
+            summary.last_at && { label: 'Last note', value: when(summary.last_at, false) },
+          ]}
+        />
+      )}
       <form onSubmit={submit} className="border-b border-slate-100 p-5 dark:border-slate-800">
         <textarea
           value={draft}
