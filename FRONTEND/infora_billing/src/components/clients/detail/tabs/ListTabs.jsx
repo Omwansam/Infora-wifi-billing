@@ -32,6 +32,19 @@ function duration(seconds) {
 
 // --- Sessions --------------------------------------------------------------
 
+/**
+ * Colour follows blame, not severity: a subscriber switching off their router is
+ * not a problem, and a line that keeps dropping is, even though both are just
+ * "the session ended".
+ */
+const CAUSE_TONE = {
+  line: 'critical',
+  network: 'warning',
+  policy: 'info',
+  subscriber: 'neutral',
+  unknown: 'neutral',
+};
+
 export function SessionsTab({ data, loading, page, onPage }) {
   if (loading) return <Panel title="Sessions"><PanelSkeleton rows={6} /></Panel>;
   const sessions = data?.sessions || [];
@@ -46,7 +59,7 @@ export function SessionsTab({ data, loading, page, onPage }) {
         head={[
           { label: 'Started' }, { label: 'Duration' }, { label: 'IP' },
           { label: 'Download', align: 'right' }, { label: 'Upload', align: 'right' },
-          { label: 'Ended' },
+          { label: 'Ended' }, { label: 'Why it ended' },
         ]}
         empty={!sessions.length && (
           <EmptyState
@@ -74,13 +87,26 @@ export function SessionsTab({ data, loading, page, onPage }) {
             <Td align="right">{formatBytes(session.down_bytes)}</Td>
             <Td align="right">{formatBytes(session.up_bytes)}</Td>
             <Td muted>
-              {session.live
-                ? <Chip tone="good">Live</Chip>
-                : (
-                  <span title={session.terminate_cause || undefined}>
-                    {when(session.ended_at)}
-                  </span>
-                )}
+              {session.live ? <Chip tone="good">Live</Chip> : when(session.ended_at)}
+            </Td>
+            {/* The disconnect reason used to live in a title= tooltip, which is
+                invisible on touch and to anyone not hovering the exact word — and
+                it is the field that says whether a drop was the customer, our
+                router, or the line. */}
+            <Td muted>
+              {session.live ? '—' : (
+                session.cause
+                  ? (
+                    /* Chip takes no title, so the explanation hangs off a wrapper —
+                       the chip itself has to carry the meaning without it. */
+                    <span title={session.cause.detail}>
+                      <Chip tone={CAUSE_TONE[session.cause.blame] || 'neutral'}>
+                        {session.cause.label}
+                      </Chip>
+                    </span>
+                  )
+                  : <span className="text-slate-400 dark:text-slate-500">Not reported</span>
+              )}
             </Td>
           </tr>
         ))}

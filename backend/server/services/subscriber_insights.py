@@ -227,8 +227,218 @@ def last_session(customer, now=None):
         'up_bytes': int(row.acctinputoctets or 0),
         'ip_address': row.framedipaddress,
         'live': row.acctstoptime is None,
+        # The NAS and the disconnect reason survive the session ending, which is
+        # the whole point: an offline subscriber is the one being asked about, and
+        # "which router" and "why did it drop" are the two questions on the call.
+        'nas_ip': row.nasipaddress,
+        'mac_address': row.callingstationid,
+        'terminate_cause': row.acctterminatecause,
     }
 
+
+# ---------------------------------------------------------------------------
+# Disconnect reasons
+# ---------------------------------------------------------------------------
+
+# RADIUS terminate causes, translated into who owns the problem. The raw value is
+# the most diagnostic field in accounting, and it was previously rendered only as
+# a hover tooltip -- so most of the fleet's disconnect history has never actually
+# been read by anyone.
+#
+# `blame` drives the colour and the triage: 'subscriber' is normal behaviour,
+# 'network' is ours, 'line' points at the physical path, 'policy' is a decision
+# the billing system itself made.
+TERMINATE_CAUSES = {
+    'User-Request':        ('Signed off', 'subscriber', 'The subscriber or their router ended the session normally.'),
+    'Lost-Carrier':        ('Line dropped', 'line', 'The physical link went away - fibre, ONT power, or a loose cable.'),
+    'Lost-Service':        ('Service lost', 'line', 'The link stayed up but the service behind it went away.'),
+    'Idle-Timeout':        ('Idle timeout', 'subscriber', 'Closed after a period with no traffic.'),
+    'Session-Timeout':     ('Session limit', 'policy', 'Hit the configured maximum session length.'),
+    'Admin-Reset':         ('Reset by operator', 'policy', 'Someone disconnected this session from the router or the console.'),
+    'Admin-Reboot':        ('Router rebooted', 'network', 'The router was rebooted by an operator.'),
+    'Port-Error':          ('Port error', 'network', 'The router reported a fault on the port.'),
+    'NAS-Error':           ('Router error', 'network', 'The router reported an internal error.'),
+    'NAS-Request':         ('Closed by router', 'network', 'The router ended the session deliberately.'),
+    'NAS-Reboot':          ('Router rebooted', 'network', 'The router restarted and dropped every session on it.'),
+    'Port-Unneeded':       ('Port released', 'network', 'The router released the port.'),
+    'Port-Preempted':      ('Port taken', 'network', 'The port was claimed for something else.'),
+    'Port-Suspended':      ('Port suspended', 'network', 'The port was suspended.'),
+    'Service-Unavailable': ('Service unavailable', 'network', 'The router could not provide the service.'),
+    'User-Error':          ('Login error', 'subscriber', 'The subscriber side failed the exchange.'),
+    'Host-Request':        ('Ended by host', 'network', 'Ended at the far end.'),
+}
+
+
+def explain_terminate_cause(raw):
+    """Turn a RADIUS terminate cause into something an agent can act on.
+
+    Returns None when there is nothing to explain, so callers can omit the field
+    rather than render an empty row.
+    """
+    if not raw:
+        return None
+    label, blame, detail = TERMINATE_CAUSES.get(
+        raw, (raw, 'unknown', 'Reported by the router; not a cause this console recognises.'),
+    )
+    return {'code': raw, 'label': label, 'blame': blame, 'detail': detail}
+
+
+def connection_stability(customer, hours=24, now=None):
+    """Is this line flapping? Repeated short sessions are a fault announcing itself.
+
+    A bad drop-wire, a failing ONT or a dying PSU all produce the same shape --
+    sessions that start, run briefly and drop, over and over -- and each individual
+    row looks unremarkable in a list. Counting them is what makes the pattern
+    visible, ideally before the subscriber rings to report it.
+    """
+    now = now or datetime.now()
+    window_start = now - timedelta(hours=hours)
+
+    rows = (
+        acct_query(customer)
+        .filter(RadAcct.acctstarttime >= window_start)
+        .order_by(RadAcct.acctstarttime.desc())
+        .all()
+    )
+
+    sessions = len(rows)
+    # Under five minutes is not a session anyone used; it is a line failing to hold.
+    short = [r for r in rows if 0 < int(r.acctsessiontime or 0) < 300]
+    causes = {}
+    for row in rows:
+        if row.acctterminatecause:
+            causes[row.acctterminatecause] = causes.get(row.acctterminatecause, 0) + 1
+
+    dominant = max(causes.items(), key=lambda kv: kv[1])[0] if causes else None
+
+    # Three reconnects in a day is a coincidence; five is a pattern. Short sessions
+    # lower the bar because they cannot be explained by normal use.
+    flapping = sessions >= 5 or len(short) >= 3
+
+    return {
+        'window_hours': hours,
+        'sessions': sessions,
+        'short_sessions': len(short),
+        'flapping': flapping,
+        'dominant_cause': explain_terminate_cause(dominant),
+        'summary': (
+            f'{sessions} session{"" if sessions == 1 else "s"} in the last {hours}h'
+            + (f', {len(short)} under 5 minutes' if short else '')
+        ) if sessions else f'No sessions in the last {hours}h',
+    }
+
+
+# ---------------------------------------------------------------------------
+# Why is this subscriber offline?
+# ---------------------------------------------------------------------------
+
+def _reason(code, headline, detail, blame, fix=None):
+    return {'code': code, 'headline': headline, 'detail': detail, 'blame': blame, 'fix': fix}
+
+
+def diagnose_connection(customer, now=None):
+    """Answer the question the agent is actually being asked on the phone.
+
+    The console used to show a bare "Offline" chip, leaving the agent to guess
+    between an expired subscription, a FUP cap, a suspension, a router that is
+    itself down, and a bad line. Every one of those is already known here -- they
+    were just never brought together into a single answer.
+
+    Ordered by precedence, because more than one can be true at once and only the
+    first one matters: there is no point discussing a flapping line with someone
+    whose subscription lapsed a week ago.
+    """
+    now = now or datetime.now()
+    live = live_snapshot(customer, now)
+    if live.get('online'):
+        return {
+            'online': True,
+            'reason': _reason(
+                'online', 'Connected',
+                'The router has an open session for this subscriber.', 'none',
+            ),
+            'checked_at': now.isoformat(),
+        }
+
+    last = last_session(customer, now)
+    subscription = subscription_state(customer)
+    fup = fup_snapshot(customer, now)
+    stability = connection_stability(customer, hours=24, now=now)
+
+    reason = None
+
+    # 1. Billing decisions first -- these are deliberate and explain everything else.
+    status = getattr(customer.status, 'value', customer.status)
+    if status == 'suspended':
+        reason = _reason(
+            'suspended', 'Account suspended',
+            'This account is suspended, so RADIUS rejects its logins.',
+            'policy', 'Reactivate the subscriber if this was not intended.',
+        )
+    elif status == 'pending':
+        reason = _reason(
+            'pending', 'Account not activated',
+            'The account is still pending and has never been allowed onto the network.',
+            'policy', 'Activate the account once onboarding is complete.',
+        )
+    elif subscription.get('state') == 'expired':
+        reason = _reason(
+            'expired', 'Subscription expired',
+            'The subscription and its grace period have both run out, so access is cut off.',
+            'policy', 'Take payment, or extend the expiry date to restore service.',
+        )
+    elif subscription.get('state') == 'grace':
+        reason = _reason(
+            'grace', 'In grace period',
+            'The subscription has lapsed but the grace period is still running, so this '
+            'is not yet what is keeping them off.',
+            'policy', 'Take payment before the grace period ends.',
+        )
+
+    # 2. Then policy the system applied on its own.
+    if reason is None and fup.get('throttled'):
+        reason = _reason(
+            'fup', 'Throttled by fair use',
+            f'Usage passed the plan cap ({fup.get("cap_display") or "the FUP threshold"}), '
+            'so the speed limit was applied. This slows the line rather than cutting it.',
+            'policy', 'Override the FUP for this subscriber, or move them to a larger plan.',
+        )
+
+    # 3. Then the physical picture, in the order that costs least to check.
+    if reason is None:
+        cause = explain_terminate_cause(last.get('terminate_cause')) if last else None
+        if cause and cause['blame'] in ('line', 'network'):
+            reason = _reason(
+                'disconnect', cause['label'], cause['detail'], cause['blame'],
+                'Check the drop cable and ONT power at the premises.'
+                if cause['blame'] == 'line' else
+                'Check the router this subscriber connects through.',
+            )
+        elif stability.get('flapping'):
+            reason = _reason(
+                'flapping', 'Line is unstable',
+                stability['summary'] + ' -- that pattern is a fault, not normal use.',
+                'line', 'Check the physical path before treating this as a billing issue.',
+            )
+        elif cause:
+            reason = _reason('disconnect', cause['label'], cause['detail'], cause['blame'])
+
+    if reason is None:
+        reason = _reason(
+            'idle', 'No fault found',
+            'Nothing on our side is blocking this subscriber -- the subscription is '
+            'current and the last session ended normally. Their equipment is most '
+            'likely switched off.',
+            'subscriber', 'Ask the subscriber to power-cycle their router.',
+        )
+
+    return {
+        'online': False,
+        'reason': reason,
+        'last_seen': last.get('ended_at') or last.get('started_at') if last else None,
+        'stability': stability,
+        'checked_at': now.isoformat(),
+    }
 
 # ---------------------------------------------------------------------------
 # Time series

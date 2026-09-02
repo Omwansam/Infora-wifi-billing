@@ -28,6 +28,7 @@ from models import (
     PaymentStatus, RadAcct, ServicePlan, Ticket,
 )
 from services import customer_events as events
+from services import notification_events
 from services import subscriber_insights as insights
 from services import subscriber_messages as messages
 from services import subscription_pause as pause_service
@@ -165,6 +166,13 @@ def get_overview(customer_id):
         'fup': insights.fup_snapshot(customer, now),
         'plan': _plan_summary(plan),
         'network': _network_card(customer),
+        # The answer to "why is this subscriber offline", assembled from the
+        # subscription, FUP, account status and the last disconnect reason -- all
+        # of which were already computed and none of which reached the screen.
+        'diagnosis': insights.diagnose_connection(customer, now),
+        # Which automatic messages are armed for this tenant. An empty message log
+        # usually means an event was never switched on, not that nothing happened.
+        'lifecycle_messages': notification_events.subscriber_lifecycle_status(customer.isp_id),
         'reference': {
             'account_id': customer.id,
             'account_number': customer.account_number,
@@ -180,29 +188,44 @@ def get_overview(customer_id):
     })
 
 
+def _resolve_router(nas_ip):
+    """Turn a NAS address into a router card, managed or not."""
+    if not nas_ip:
+        return None
+    from models import MikrotikDevice
+    device = MikrotikDevice.query.filter_by(device_ip=nas_ip).first()
+    if device:
+        return {'id': device.id, 'name': device.device_name, 'ip': device.device_ip,
+                'model': device.device_model, 'location': device.location}
+    # The NAS answered but is not a router we manage -- show the address rather
+    # than nothing, so the operator can still see where they are.
+    return {'id': None, 'name': nas_ip, 'ip': nas_ip, 'model': None, 'location': None}
+
+
 def _network_card(customer):
     """Router, connection type and login for the Device & network panel."""
     live = insights.live_snapshot(customer)
-    router = None
-    if live.get('nas_ip'):
-        from models import MikrotikDevice
-        device = MikrotikDevice.query.filter_by(device_ip=live['nas_ip']).first()
-        if device:
-            router = {'id': device.id, 'name': device.device_name, 'ip': device.device_ip,
-                      'model': device.device_model, 'location': device.location}
-        else:
-            # The NAS answered but is not a router we manage — show the address
-            # rather than nothing, so the operator can still see where they are.
-            router = {'id': None, 'name': live['nas_ip'], 'ip': live['nas_ip'],
-                      'model': None, 'location': None}
+    last = insights.last_session(customer)
+
+    # Resolve from the live session when there is one, and fall back to the last
+    # closed session otherwise. Reading only the live snapshot left this blank for
+    # every offline subscriber -- which is exactly who is being looked up, because
+    # nobody calls support while their internet is working.
+    router = _resolve_router(live.get('nas_ip'))
+    router_is_live = router is not None
+    if router is None and last:
+        router = _resolve_router(last.get('nas_ip'))
 
     return {
         'router': router,
+        'router_is_live': router_is_live,
+        # Where the subscriber last actually appeared, for the "last seen on" line.
+        'last_seen_at': (last or {}).get('ended_at') or (last or {}).get('started_at'),
         'connection_type': customer.connection_type or 'pppoe',
         'username': radius_username(customer),
         'has_password': bool(customer.radius_password_encrypted),
-        'ip_address': live.get('ip_address'),
-        'mac_address': live.get('mac_address'),
+        'ip_address': live.get('ip_address') or (last or {}).get('ip_address'),
+        'mac_address': live.get('mac_address') or (last or {}).get('mac_address'),
         'online': live.get('online'),
         'static_ip': customer.service_plan.static_ip if customer.service_plan else None,
     }
@@ -278,6 +301,9 @@ def get_sessions(customer_id):
             'mac_address': row.callingstationid,
             'nas_ip': row.nasipaddress,
             'terminate_cause': row.acctterminatecause,
+            # Translated here rather than in the browser so the CLI, the
+            # diagnosis panel and this table all agree on what a cause means.
+            'cause': insights.explain_terminate_cause(row.acctterminatecause),
             'live': row.acctstoptime is None,
         } for row in paged.items],
         'total': paged.total,

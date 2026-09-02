@@ -35,6 +35,127 @@ function formatWhen(value) {
   });
 }
 
+/**
+ * Who owns the problem. Kept separate from the FUP/status tones so a line fault
+ * never reads as a billing decision, and vice versa.
+ */
+const BLAME_TONE = {
+  line: 'critical',
+  network: 'warning',
+  policy: 'info',
+  subscriber: 'neutral',
+  none: 'good',
+  unknown: 'neutral',
+};
+
+const BLAME_LABEL = {
+  line: 'Physical line',
+  network: 'Our network',
+  policy: 'Billing policy',
+  subscriber: 'Subscriber side',
+  none: 'Connected',
+  unknown: 'Unclassified',
+};
+
+/**
+ * The answer to the question the agent is being asked on the phone.
+ *
+ * Everything here was already computed somewhere — the subscription state, the
+ * FUP snapshot, the account status, the last disconnect reason — but the page
+ * only ever showed a bare "Offline" chip, so the agent had to guess which of the
+ * five possible causes it was. This states one, and says what to do about it.
+ */
+function DiagnosisPanel({ diagnosis }) {
+  if (!diagnosis?.reason) return null;
+  const { online, reason, stability, last_seen: lastSeen } = diagnosis;
+  const tone = BLAME_TONE[reason.blame] || 'neutral';
+
+  return (
+    <Panel
+      icon={online ? CheckCircle2 : AlertTriangle}
+      title={online ? 'Connection' : 'Why this subscriber is offline'}
+      subtitle={online ? 'Live session on the router' : `Last seen ${formatWhen(lastSeen)}`}
+    >
+      <div className="space-y-3 px-5 py-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-base font-semibold text-slate-900 dark:text-white">
+            {reason.headline}
+          </p>
+          <Chip tone={tone}>{BLAME_LABEL[reason.blame] || reason.blame}</Chip>
+          {stability?.flapping && <Chip tone="critical" icon={Zap}>Unstable line</Chip>}
+        </div>
+
+        <p className="text-sm text-slate-600 dark:text-slate-300">{reason.detail}</p>
+
+        {reason.fix && (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
+            <span className="font-semibold">Next: </span>{reason.fix}
+          </p>
+        )}
+
+        {stability?.sessions > 0 && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {stability.summary}
+            {stability.dominant_cause && (
+              <> · mostly <span className="font-medium">{stability.dominant_cause.label}</span></>
+            )}
+          </p>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+/**
+ * Which automated messages are actually switched on.
+ *
+ * An empty message log reads as "nothing has happened yet", but most catalogue
+ * events ship disabled, so the usual reason nothing was sent is that nothing was
+ * ever armed. Saying so is the difference between an operator who knows their
+ * welcome SMS is off and one who finds out from a subscriber.
+ */
+function LifecycleMessages({ events }) {
+  if (!events?.length) return null;
+  const armed = events.filter((e) => e.enabled);
+  const off = events.filter((e) => !e.enabled);
+
+  return (
+    <div className="border-t border-slate-100 px-5 py-4 dark:border-slate-800">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          Automatic messages
+        </p>
+        <Link
+          to="/settings/notifications"
+          className="text-[11px] font-semibold text-emerald-700 hover:underline dark:text-emerald-400"
+        >
+          Configure
+        </Link>
+      </div>
+
+      {armed.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {armed.map((e) => (
+            <Chip key={`${e.key}-${e.channel}`} tone="good">{e.label}</Chip>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+          No automatic messages are switched on — this subscriber will never be
+          messaged unless someone does it by hand.
+        </p>
+      )}
+
+      {off.length > 0 && (
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          {off.length} more {off.length === 1 ? 'is' : 'are'} switched off, including{' '}
+          <span className="font-medium">{off.slice(0, 2).map((e) => e.label).join(', ')}</span>.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function OverviewTab({
   overview, client, onSendSms, onRevealPassword, password, revealing, onCopy,
 }) {
@@ -42,10 +163,16 @@ export default function OverviewTab({
   const network = overview?.network || {};
   const reference = overview?.reference || {};
   const fup = overview?.fup || {};
+  const diagnosis = overview?.diagnosis;
+  const lifecycle = overview?.lifecycle_messages;
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="space-y-5 lg:col-span-2">
+        {/* Above the lifecycle timeline on purpose: an agent opens this page
+            because something is wrong, and the answer should not be below a
+            year of history. */}
+        <DiagnosisPanel diagnosis={diagnosis} />
         <Panel
           icon={History}
           title="Subscription lifecycle"
@@ -113,12 +240,17 @@ export default function OverviewTab({
         <Panel icon={Wifi} title="Device & network">
           <DataRow
             icon={Router}
-            label="Router"
+            /* Offline subscribers are the ones being looked up, so the router has
+               to survive the session ending — it comes from the last closed
+               session when there is no live one. */
+            label={network.router && !network.router_is_live ? 'Router (last seen)' : 'Router'}
             value={network.router
               ? (network.router.id
                   ? <Link to={`/devices/${network.router.id}`} className="text-emerald-700 hover:underline dark:text-emerald-400">{network.router.name}</Link>
                   : network.router.name)
               : '—'}
+            tone={network.router && !network.router_is_live
+              ? 'text-slate-500 dark:text-slate-400' : undefined}
           />
           <DataRow icon={Smartphone} label="Type" value={connectionLabel(network.connection_type)} />
           <DataRow
@@ -214,6 +346,7 @@ export default function OverviewTab({
               }
             />
           )}
+          <LifecycleMessages events={lifecycle} />
         </Panel>
 
         <Panel icon={Hash} title="Reference">

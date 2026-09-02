@@ -299,3 +299,51 @@ def event_index():
 
 def is_valid_event(event_key, channel):
     return (event_key, channel) in event_index()
+
+# Events that fire because of something that happens to one subscriber, in the
+# order a subscriber meets them. Reseller and router-health events are excluded:
+# they are about the business and the network, not about this person, so listing
+# them on a subscriber's page would be noise.
+SUBSCRIBER_LIFECYCLE = [
+    'welcome_sms', 'welcome_email', 'payment_received', 'subscription_renewed',
+    'expiry_date_changed', 'expiry_reminder', 'near_expiry_alert',
+    'disconnected_expired', 'account_suspended', 'account_reactivated',
+]
+
+
+def subscriber_lifecycle_status(isp_id):
+    """Which automatic messages are actually armed for this tenant.
+
+    The console shows "Nothing sent to this subscriber yet" whenever the message
+    log is empty, which reads as "nothing has happened yet" -- but most catalogue
+    events ship `default_enabled: False`, so the usual reason nothing was sent is
+    that nothing was ever switched on. An operator who believes their welcome SMS
+    is working will not discover otherwise from an empty list.
+    """
+    from models import NotificationSetting
+
+    overrides = {}
+    if isp_id:
+        for row in NotificationSetting.query.filter_by(isp_id=isp_id).all():
+            overrides[(row.event_key, row.channel)] = bool(row.enabled)
+
+    index = event_index()
+    out = []
+    for key in SUBSCRIBER_LIFECYCLE:
+        for channel in ('sms', 'email'):
+            event = index.get((key, channel))
+            if not event:
+                continue
+            enabled = overrides.get((key, channel), bool(event.get('default_enabled')))
+            out.append({
+                'key': key,
+                'channel': channel,
+                'label': event['label'],
+                'description': event.get('description'),
+                'enabled': enabled,
+                # True when it is off purely because nobody ever turned it on --
+                # worth saying out loud, because it looks identical to "not due yet".
+                'never_configured': (key, channel) not in overrides and not enabled,
+            })
+    return out
+
