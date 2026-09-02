@@ -104,3 +104,121 @@ def test_path_comes_from_the_raw_uri_not_the_decoded_one():
 
 def test_empty_query_adds_no_question_mark():
     assert _upstream_url(ROUTER, '/webfig/', b'') == f'http://{ROUTER}/webfig/'
+
+
+# --- The body actually has to arrive ---------------------------------------
+#
+# The helpers above are pure, so they cannot see a proxy that builds a perfect
+# URL and then relays an empty body. That is exactly what happened once the
+# response started streaming: `requests.request()` closes its session on return,
+# tearing down the connection pool before the generator reads, so the router's
+# Content-Length went out with no bytes behind it and every client reported a
+# truncated response. These drive the real thing against a stub router.
+
+@pytest.fixture
+def router():
+    """A stub RouterOS that records request lines and answers like the real one."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def do_GET(self):
+            seen.append(self.requestline)
+            if self.path.startswith('/graphs'):
+                # RouterOS really does send a body with its 303.
+                body = b'<!doctype html>\n<title>Error 303 : See Other</title>\n'
+                self.send_response(303)
+                self.send_header('Location', '/graphs/')
+            else:
+                body = b'ROUTER-BODY-BYTES'
+                self.send_response(200)
+                self.send_header('Set-Cookie', 'a=1; Domain=10.250.0.3; Path=/')
+                self.send_header('Set-Cookie', 'b=2; Path=/')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_POST = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server.server_address[1], seen
+    server.shutdown()
+
+
+@pytest.fixture
+def proxy(router, monkeypatch):
+    """`serve_webfig_host` wired to the stub router, with no database."""
+    from flask import Flask
+
+    import routes.webfig_proxy as wp
+
+    port, seen = router
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = 'test-secret'
+
+    class Device:
+        management_wg_enabled = True
+        management_wg_ip = '10.250.0.3'
+
+    monkeypatch.setattr(wp, 'connection_host', lambda device: f'127.0.0.1:{port}')
+    monkeypatch.setattr(
+        wp, 'MikrotikDevice',
+        type('M', (), {'query': type('Q', (), {'get': staticmethod(lambda _: Device())})}),
+    )
+    with app.test_request_context('/'):
+        token = wp._serializer().dumps({'d': 6, 'u': 1})
+    return app, wp, token, seen
+
+
+def _fetch(proxy, path, query=b''):
+    app, wp, token, seen = proxy
+    raw = path + ('?' + query.decode('latin-1') if query else '')
+    with app.test_request_context(
+        raw,
+        environ_overrides={'RAW_URI': raw, 'HTTP_COOKIE': f'infora_webfig={token}'},
+    ):
+        response = wp.serve_webfig_host()
+        return response, b''.join(response.response)
+
+
+def test_body_survives_the_streamed_relay(proxy):
+    """The regression guard for the empty-body relay."""
+    response, body = _fetch(proxy, '/webfig/')
+
+    assert response.status_code == 200
+    assert body == b'ROUTER-BODY-BYTES'
+    assert int(response.headers['Content-Length']) == len(body)
+
+
+def test_redirect_body_is_relayed_too(proxy):
+    """RouterOS sends a body with its 303, and Content-Length must match it."""
+    response, body = _fetch(proxy, '/graphs')
+
+    assert response.status_code == 303
+    assert response.headers['Location'] == '/graphs/'
+    assert len(body) == int(response.headers['Content-Length'])
+
+
+@pytest.mark.parametrize('query', JSPROXY_QUERIES)
+def test_jsproxy_query_reaches_the_stub_router_verbatim(proxy, query):
+    """The whole point, end to end: what the router receives is what WebFig sent."""
+    _, _, _, seen = proxy
+    _fetch(proxy, '/jsproxy/', query)
+
+    assert seen[-1] == f'GET /jsproxy/?{query.decode("latin-1")} HTTP/1.1'
+
+
+def test_repeated_set_cookie_is_not_collapsed(proxy):
+    """Two cookies must stay two headers, and the router's Domain must go."""
+    response, _ = _fetch(proxy, '/webfig/')
+    cookies = [c for c in response.headers.getlist('Set-Cookie') if 'infora_webfig' not in c]
+
+    assert sorted(cookies) == ['a=1; Path=/', 'b=2; Path=/']

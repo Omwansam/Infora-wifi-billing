@@ -298,8 +298,14 @@ def serve_webfig_host(pinned_device_id=None):
         k: v for k, v in request.cookies.items() if not k.startswith('infora_webfig')
     }
 
+    # An explicit Session, NOT requests.request(): the module-level helper closes
+    # its session on return, which drops the connection pool before a streamed body
+    # has been read. That silently yields an empty response with the router's
+    # Content-Length still on it — the body never arrives and the client reports a
+    # truncated response. The session is closed in `relay`'s finally instead.
+    session = requests.Session()
     try:
-        upstream = requests.request(
+        upstream = session.request(
             method=request.method,
             url=target,
             data=request.get_data(),
@@ -313,6 +319,7 @@ def serve_webfig_host(pinned_device_id=None):
             timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
         )
     except requests.ReadTimeout:
+        session.close()
         return Response(
             f'The router accepted the connection but sent no reply within '
             f'{_READ_TIMEOUT}s.\nIt is reachable over the tunnel but not answering '
@@ -320,6 +327,7 @@ def serve_webfig_host(pinned_device_id=None):
             status=504, mimetype='text/plain',
         )
     except requests.RequestException as exc:
+        session.close()
         return Response(
             f'Could not reach the router over the tunnel ({exc}).\n'
             'Confirm the device is Online, then reopen WebFig.',
@@ -329,10 +337,19 @@ def serve_webfig_host(pinned_device_id=None):
     def relay():
         """Byte-for-byte, undecoded — Content-Encoding is passed through with it."""
         try:
-            for chunk in upstream.raw.stream(65536, decode_content=False):
-                yield chunk
+            if upstream._content_consumed:
+                # On a redirect, requests drains the socket into .content before
+                # working out where it points, even with allow_redirects=False —
+                # so raw is already empty and streaming it would send the router's
+                # Content-Length with no body behind it. RouterOS does redirect
+                # with a body (303 on /graphs), so this branch is load-bearing.
+                yield upstream.content
+            else:
+                for chunk in upstream.raw.stream(65536, decode_content=False):
+                    yield chunk
         finally:
             upstream.close()
+            session.close()
 
     resp = Response(stream_with_context(relay()), status=upstream.status_code)
     for key, value in upstream.headers.items():
