@@ -161,6 +161,33 @@ def _diagnose_router(device, probe=False):
     return checks
 
 
+def grade(checks, acs_url):
+    """(state, verdict) for a set of checks. Pure, so the rule can be tested.
+
+    Severity is the whole point here:
+
+      * ``error`` — the path is broken; nothing can reach the ACS.
+      * ``warn``  — part of the path is down, e.g. one router of several.
+      * ``info``  — an observation, **never** a fault. An empty CPE fleet is the
+        standing example: perfectly normal before the first install, and grading
+        it as a warning made the console badge report a healthy ACS as broken
+        indefinitely.
+    """
+    blocking = [c for c in checks if not c['ok'] and c['severity'] == 'error']
+    warnings = [c for c in checks if not c['ok'] and c['severity'] == 'warn']
+
+    if blocking:
+        return 'fail', f"Blocked at: {blocking[0]['label']}."
+    if not acs_url:
+        return 'fail', 'ACS is not configured.'
+    if warnings:
+        return 'warn', (
+            f'ACS is serving, with {len(warnings)} warning(s) — '
+            f"first: {warnings[0]['label']}."
+        )
+    return 'ok', 'ACS is reachable and every router carries a path to it.'
+
+
 def diagnose_acs(probe=False):
     """Run every layer and return a structured report.
 
@@ -185,28 +212,23 @@ def diagnose_acs(probe=False):
         'No CPE has ever informed. The ACS answering is necessary but not '
         'sufficient: something must still put the ACS URL into a device. PPPoE '
         'carries no DHCP option 43, so that is manual entry or OMCI — see TR069.md.',
-        severity='warn',
+        # INFO, not warn: an empty fleet is a fact about deployment, not a fault in
+        # the path. Grading it as a warning made the console's reachability badge
+        # read "Path problem" on a perfectly healthy ACS, and it would have stayed
+        # that way until someone installed a CPE.
+        severity='info',
     ))
 
-    blocking = [c for c in checks if not c['ok'] and c['severity'] == 'error']
-    warnings = [c for c in checks if not c['ok'] and c['severity'] == 'warn']
-
-    if blocking:
-        verdict = f"Blocked at: {blocking[0]['label']}."
-    elif not _acs_url():
-        verdict = 'ACS is not configured.'
-    elif warnings:
-        verdict = (
-            f'ACS is serving, with {len(warnings)} warning(s) — '
-            f"first: {warnings[0]['label']}."
-        )
-    else:
-        verdict = 'ACS is reachable and every router carries a path to it.'
+    state, verdict = grade(checks, _acs_url())
 
     return {
         'acs_url': _acs_url() or None,
         'probed': bool(probe),
         'cpe_count': cpe_total,
         'checks': checks,
+        # Computed here, not in the browser: the console badge and the CLI must
+        # agree about what counts as a fault, and duplicating the severity rule in
+        # JSX is how they drift.
+        'state': state,
         'verdict': verdict,
     }

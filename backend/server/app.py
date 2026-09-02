@@ -740,7 +740,12 @@ def diagnose_acs_command(probe):
             click.echo('(run with --probe to test the path from each router)')
         click.echo('')
         for check in report['checks']:
-            mark = 'PASS' if check['ok'] else ('warn' if check['severity'] == 'warn' else 'FAIL')
+            if check['ok']:
+                mark = 'PASS'
+            else:
+                # 'info' is an observation, not a fault — printing it as FAIL is
+                # what made an empty CPE fleet look like a broken ACS.
+                mark = {'warn': 'warn', 'info': 'info'}.get(check['severity'], 'FAIL')
             click.echo(f"  [{mark:4}] {check['label']}")
             if check['detail']:
                 click.echo(f"         {check['detail']}")

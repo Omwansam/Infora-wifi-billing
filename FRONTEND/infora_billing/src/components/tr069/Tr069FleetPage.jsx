@@ -343,9 +343,9 @@ export default function Tr069FleetPage() {
       subtitle="Customer premises equipment — GPON ONTs and vendor routers that dial into this server"
       acsUrl={stats?.acs_url}
       acsHealth={{
-        state: !acsReport ? 'unknown'
-          : acsReport.checks?.some((c) => !c.ok && c.severity === 'error') ? 'fail'
-          : acsReport.checks?.some((c) => !c.ok) ? 'warn' : 'ok',
+        // Straight from the server. Re-deriving it from `checks` here is how the
+        // badge ended up calling an empty CPE fleet a path problem.
+        state: acsReport?.state || 'unknown',
         verdict: acsReport?.verdict,
         checking: checkingAcs,
         // The click runs the deep probe — that is the point of asking for it.

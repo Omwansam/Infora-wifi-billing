@@ -56,7 +56,13 @@ function AcsHealth({ health }) {
                   disabled:cursor-wait ${tone.cls}`}
     >
       <Icon className={`h-3 w-3 ${checking ? 'animate-spin' : ''}`} />
-      {checking ? 'Checking\u2026' : (state === 'ok' ? 'Reachable' : state === 'unknown' ? 'Check path' : 'Path problem')}
+      {checking ? 'Checking\u2026'
+        : state === 'ok' ? 'Reachable'
+        // 'warn' is a partial path — one router down out of several — not the same
+        // as a broken ACS, and labelling both "Path problem" cried wolf.
+        : state === 'warn' ? 'Degraded'
+        : state === 'fail' ? 'Path problem'
+        : 'Check path'}
     </button>
   );
 }
