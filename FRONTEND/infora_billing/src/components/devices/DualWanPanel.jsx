@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Loader2, Network, Download, Play, Info, AlertTriangle, Power, RefreshCw, RotateCcw,
+  CheckCircle2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
@@ -50,7 +51,26 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
   const [busy, setBusy] = useState('');
   // Seconds the current push has been running, fed by the job poller.
   const [elapsed, setElapsed] = useState(0);            // '', 'download', 'apply', 'disable'
+  // What is actually running on the router, as distinct from what the form is
+  // currently showing. The two diverge the moment someone changes the dropdown,
+  // and conflating them let the panel claim a method was in force when the apply
+  // had failed verification and saved nothing.
+  const [liveMode, setLiveMode] = useState(initial.mode || 'off');
   const [result, setResult] = useState(null);
+
+  // The parent refetches the device after a successful apply, so pick the new
+  // config up rather than staying on whatever was mounted.
+  useEffect(() => {
+    const applied = device?.wan_config || {};
+    setLiveMode(applied.mode || 'off');
+    if (applied.mode) {
+      setMode(applied.mode);
+      if (applied.wan1) setWan1((w) => ({ ...w, ...applied.wan1 }));
+      if (applied.wan2) setWan2((w) => ({ ...w, ...applied.wan2 }));
+      if (applied.primary_wan) setPrimaryWan(applied.primary_wan);
+      if (applied.pin_management_to !== undefined) setPinMgmt(applied.pin_management_to || '');
+    }
+  }, [device?.wan_config]);
 
   useEffect(() => {
     deviceService.getInterfaces(getAccessToken(), deviceId)
@@ -101,8 +121,18 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
         getAccessToken(), deviceId, buildConfig(), true, setElapsed,
       );
       setResult(res);
-      if (res.applied) { toast.success('Dual-WAN applied to the router'); onApplied?.(); }
-      else toast.error(res.error || 'Applied with errors — see the log');
+      // `applied` only means every command ran. `ok` means the router was read
+      // back and came up as configured — that is the one worth telling the
+      // operator about, and the only one that changes what is live.
+      if (res.ok) {
+        setLiveMode(res.wan_config?.mode || mode);
+        toast.success(`Dual-WAN applied — ${modeMeta.short} is live on the router`);
+        onApplied?.();
+      } else if (res.applied) {
+        toast.error(res.error || 'Applied, but the router did not verify — see the log');
+      } else {
+        toast.error(res.error || 'Apply failed — see the log');
+      }
     } catch (e) {
       toast.error(e.message || 'Apply failed');
     } finally { setBusy(''); setElapsed(0); }
@@ -160,8 +190,15 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-1 flex items-center justify-between">
         <h3 className="text-base font-semibold text-slate-900">Dual-WAN — Load balancing & failover</h3>
-        {initial.mode && initial.mode !== 'off' && (
-          <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">Currently: {initial.mode.replace('_', ' ')}</span>
+        {liveMode && liveMode !== 'off' ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+            <CheckCircle2 className="h-3 w-3" />
+            Live on router: {(MODES.find((m) => m.value === liveMode) || {}).short || liveMode.replace('_', ' ')}
+          </span>
+        ) : (
+          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+            No dual-WAN on this router
+          </span>
         )}
       </div>
       <p className="mb-4 text-sm text-slate-500">Two uplinks that share load and cover for each other. Pick a method — the router config is generated for you.</p>
@@ -172,10 +209,19 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
           {MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </Field>
-      <div className="mt-3 flex gap-2 rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-sm text-indigo-900">
+      <div className="mt-3 flex gap-2 rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-sm text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
         <Info className="h-4 w-4 shrink-0 text-indigo-500 mt-0.5" />
         <span>{modeMeta.blurb}</span>
       </div>
+      {/* The dropdown is a draft until Apply verifies. Saying which is which stops
+          the panel reading as though picking a method had changed the router. */}
+      {mode !== liveMode && (
+        <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+          Not applied yet — the router is still running
+          {liveMode === 'off' ? ' a single WAN' : ` ${(MODES.find((m) => m.value === liveMode) || {}).short || liveMode}`}.
+          Press <strong>Apply now</strong> to change it.
+        </p>
+      )}
 
       {isOn && (
         <>

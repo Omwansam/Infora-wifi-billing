@@ -265,7 +265,20 @@ def build_lb_steps(device, config):
         f':do {{/ip dhcp-client set [find comment="defconf"] '
         f'default-route-distance={FALLBACK_ROUTE_DISTANCE}}} on-error={{}}')
 
-    # --- 2. WAN addressing (static address / dhcp client) ---------------------
+    # --- 2. Routing tables, BEFORE anything routes into them ------------------
+    #     These have to exist first. The DHCP seed and the lease script both add
+    #     routes with routing-table=to_WAN1/to_WAN2, and RouterOS rejects a route
+    #     naming a table that does not exist yet. Because the seed is one
+    #     `:if ... do={ ...; ...; ... }` block, that rejection aborts the rest of
+    #     the block — so the probe /32 at the end never got added, and the
+    #     recursive default that resolves through it was left invalid. Creating
+    #     the tables afterwards, as this used to, made the failure look like a
+    #     DHCP problem on Fusion when it was purely an ordering one.
+    if ros7:
+        add('table-wan1', f':do {{/routing table add name=to_WAN1 fib comment="{LB_COMMENT}"}} on-error={{}}')
+        add('table-wan2', f':do {{/routing table add name=to_WAN2 fib comment="{LB_COMMENT}"}} on-error={{}}')
+
+    # --- 3. WAN addressing (static address / dhcp client) ---------------------
     add('wan-addr-reset', f':do {{/ip address remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
     # (own_table, other_table) so each WAN also seeds the other table's backup.
     wan_plan = (
@@ -301,11 +314,6 @@ def build_lb_steps(device, config):
             # WAN flagged invalid. The script still owns future lease changes.
             add(f'{key}-dhcp-seed',
                 _seed_routes_cmd(key, own_tbl, other_tbl, probe, ros7, port))
-
-    # --- 3. Routing tables (v7 only; v6 uses routing-mark on the route) --------
-    if ros7:
-        add('table-wan1', f':do {{/routing table add name=to_WAN1 fib comment="{LB_COMMENT}"}} on-error={{}}')
-        add('table-wan2', f':do {{/routing table add name=to_WAN2 fib comment="{LB_COMMENT}"}} on-error={{}}')
 
     # --- 4. Gateway-dependent routes: static emits directly; dhcp via lease ----
     for key, wan, own_tbl, other_tbl, probe in wan_plan:

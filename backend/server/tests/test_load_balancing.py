@@ -534,3 +534,29 @@ def test_the_lease_script_still_guards_on_bind():
 
     assert script.startswith(':if (\\$bound=1)')
     assert '\\"' in script, 'quotes must stay escaped inside script="..."'
+
+
+def test_routing_tables_exist_before_anything_routes_into_them():
+    """RouterOS rejects a route naming a routing-table that does not exist yet.
+
+    The DHCP seed and the lease script both add routes with
+    routing-table=to_WAN1/to_WAN2, and the seed is a single
+    `:if ... do={ ...; ...; ... }` block — so one rejection aborts the rest of the
+    block and the probe /32 at the end is never added. The recursive default that
+    resolves through that probe is then flagged invalid.
+
+    On Fusion this read as a DHCP fault for two applies running. It was ordering.
+    """
+    labels = [label for label, _ in lb.build_lb_steps(FakeDevice(), _config())]
+
+    for wan in ('wan1', 'wan2'):
+        assert labels.index('table-wan1') < labels.index(f'{wan}-dhcp-seed')
+        assert labels.index('table-wan2') < labels.index(f'{wan}-dhcp-seed')
+
+
+def test_the_seed_names_a_routing_table_at_all():
+    """Guards the assumption above: if the seed stopped using routing tables the
+    ordering test would pass vacuously."""
+    seed = dict(lb.build_lb_steps(FakeDevice(), _config()))['wan1-dhcp-seed']
+
+    assert 'to_WAN1' in seed and 'to_WAN2' in seed
