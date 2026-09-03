@@ -375,6 +375,7 @@ def update_device(device_id):
 DEVICE_REFERENCE_CLEANUP = {
     # table.column: 'delete' | 'null'
     'device_backups.device_id': 'delete',      # + its file on disk, see below
+    'device_jobs.device_id': 'delete',         # push history; meaningless without the router
     'device_outages.device_id': 'delete',
     'radius_sessions.mikrotik_device_id': 'delete',
     'equipment.device_id': 'null',
@@ -388,7 +389,7 @@ DEVICE_REFERENCE_CLEANUP = {
 
 def detach_device_references(device):
     """Clear every foreign key onto this device so it can actually be deleted."""
-    from models import (DeviceOutage, Equipment, FiberNode, HotspotAccessCode,
+    from models import (DeviceJob, DeviceOutage, Equipment, FiberNode, HotspotAccessCode,
                         ImportRun, RadAcct, RadiusSession, WireGuardServer)
 
     # Backups first and separately: the row owns a file on disk, so dropping it
@@ -396,6 +397,7 @@ def detach_device_references(device):
     for backup in DeviceBackup.query.filter_by(device_id=device.id).all():
         delete_backup(backup)
 
+    DeviceJob.query.filter_by(device_id=device.id).delete(synchronize_session=False)
     DeviceOutage.query.filter_by(device_id=device.id).delete(synchronize_session=False)
     RadiusSession.query.filter_by(mikrotik_device_id=device.id).delete(synchronize_session=False)
 
@@ -1285,13 +1287,18 @@ def load_balancing_script(device_id):
 @devices_bp.route('/<int:device_id>/configure-load-balancing', methods=['POST'])
 @jwt_required()
 def configure_load_balancing(device_id):
-    """Validate + persist wan_config; push over the tunnel when apply=true."""
+    """Validate + persist wan_config; push over the tunnel when apply=true.
+
+    A save-only request answers inline. An apply starts a background job and
+    returns 202 with its id, because the push runs three SSH sessions and
+    sixteen `print` commands against a router that answers in tens of seconds —
+    comfortably past Cloudflare's ~100s ceiling, which used to return a 524
+    while the work carried on holding the device's SSH lock.
+    """
     device, denied = _lb_authz(device_id)
     if denied:
         return denied
-    from services.load_balancing import (
-        build_lb_steps, preflight_wan_config, push_lb_steps, validate_wan_config, verify_lb,
-    )
+    from services.load_balancing import validate_wan_config
 
     payload = request.get_json(silent=True) or {}
     apply_now = bool(payload.get('apply'))
@@ -1299,51 +1306,131 @@ def configure_load_balancing(device_id):
     if err:
         return jsonify({'error': err}), 400
 
+    if not (apply_now and config['mode'] != 'off'):
+        # A draft: nothing touches the router, so there is nothing to wait for.
+        device.wan_config = json.dumps(config)
+        db.session.commit()
+        return jsonify({
+            'ok': True, 'saved': True, 'applied': False,
+            'mode': config['mode'], 'wan_config': config,
+        }), 200
+
+    from services.device_jobs import running_job_for, start_job
+
+    # One push at a time. Without this an operator who saw a 524 and clicked
+    # again queued a second job behind the first, which then failed on the SSH
+    # lock and read as a second unrelated error.
+    existing = running_job_for(device.id, 'load_balancing')
+    if existing:
+        return jsonify({
+            'ok': True, 'status': 'running', 'job': existing.to_dict(),
+            'message': 'A dual-WAN push is already running for this router.',
+        }), 202
+
+    user = get_current_user()
+    job = start_job(
+        current_app._get_current_object(), device, 'load_balancing', payload,
+        getattr(user, 'id', None),
+        lambda target: _apply_load_balancing(target, config, force=bool(payload.get('force'))),
+    )
+    return jsonify({
+        'ok': True, 'status': 'running', 'job': job.to_dict(),
+        'message': 'Applying dual-WAN configuration — this takes a few minutes.',
+    }), 202
+
+
+def _apply_load_balancing(device, config, force=False):
+    """Preflight, push, verify, persist. Runs on the job thread, not a request.
+
+    Returns the same shape the endpoint used to return inline, so the console
+    renders one result whether it came back immediately or from a poll.
+    """
+    from services.load_balancing import (
+        build_lb_steps, preflight_wan_config, push_lb_steps, verify_lb,
+    )
+
     result = {'ok': True, 'saved': False, 'applied': False, 'mode': config['mode']}
 
-    if apply_now and config['mode'] != 'off':
-        # Ask the router before touching it. validate_wan_config only sees the
-        # dict; a port that is a bridge slave or patched into our own LAN yields
-        # rules RouterOS accepts and then flags invalid, which used to look like
-        # a clean apply.
-        blockers, warnings = preflight_wan_config(device, config)
-        result['warnings'] = warnings
-        if blockers and not payload.get('force'):
-            return jsonify({
-                'ok': False, 'saved': False, 'applied': False,
-                'error': blockers[0],
-                'blockers': blockers,
-                'warnings': warnings,
-                'hint': 'Fix the wiring, or resend with force=true to push anyway.',
-            }), 409
+    # Ask the router before touching it. validate_wan_config only sees the dict;
+    # a port that is a bridge slave or patched into our own LAN yields rules
+    # RouterOS accepts and then flags invalid, which used to look like a clean
+    # apply.
+    blockers, warnings = preflight_wan_config(device, config)
+    result['warnings'] = warnings
+    if blockers and not force:
+        result.update({
+            'ok': False,
+            'error': blockers[0],
+            'blockers': blockers,
+            'hint': 'Fix the wiring, or resend with force=true to push anyway.',
+        })
+        return result
 
-        push = push_lb_steps(device, build_lb_steps(device, config))
-        result['applied'] = push['success']
-        result['log'] = push['log']
-        result['ok'] = push['success']
+    push = push_lb_steps(device, build_lb_steps(device, config))
+    result['applied'] = push['success']
+    result['log'] = push['log']
+    result['ok'] = push['success']
 
-        # "Every command ran" is not evidence the router is doing anything, so
-        # read it back and let the checks decide.
-        if push['success']:
-            checks = verify_lb(device, config)
-            result['verification'] = checks
-            failed = [c for c in checks if not c['ok']]
-            if failed:
-                result['ok'] = False
-                result['error'] = (
-                    f'Applied, but the router did not come up as configured: '
-                    f'{failed[0]["label"]} — {failed[0]["detail"]}'
-                )
+    # "Every command ran" is not evidence the router is doing anything, so read
+    # it back and let the checks decide.
+    if push['success']:
+        checks = verify_lb(device, config)
+        result['verification'] = checks
+        failed = [c for c in checks if not c['ok']]
+        if failed:
+            result['ok'] = False
+            result['error'] = (
+                f'Applied, but the router did not come up as configured: '
+                f'{failed[0]["label"]} — {failed[0]["detail"]}'
+            )
 
-    # Persist only what the router actually confirms. A save-only request
-    # (apply=false) is a draft and always persists; an apply that failed
+    # Persist only what the router actually confirms. An apply that failed
     # verification must not leave the console claiming LB is live.
     if result['ok']:
         device.wan_config = json.dumps(config)
         db.session.commit()
         result['saved'] = True
         result['wan_config'] = config
-    return jsonify(result), (200 if result['ok'] else 502)
+    return result
+
+
+@devices_bp.route('/<int:device_id>/jobs/<int:job_id>', methods=['GET'])
+@jwt_required()
+def get_device_job(device_id, job_id):
+    """Poll a background router job. The console calls this until it settles."""
+    device, denied = _lb_authz(device_id)
+    if denied:
+        return denied
+    from models import DeviceJob
+
+    job = DeviceJob.query.filter_by(id=job_id, device_id=device.id).first()
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    return jsonify({'ok': True, 'job': job.to_dict()}), 200
+
+
+@devices_bp.route('/<int:device_id>/jobs', methods=['GET'])
+@jwt_required()
+def list_device_jobs(device_id):
+    """Recent background jobs for a router, newest first.
+
+    Also how the console recovers a push it lost track of — a reloaded tab, or a
+    browser closed mid-apply.
+    """
+    device, denied = _lb_authz(device_id)
+    if denied:
+        return denied
+    from models import DeviceJob
+    from services.device_jobs import running_job_for
+
+    kind = request.args.get('kind') or 'load_balancing'
+    running_job_for(device.id, kind)  # reaps a job whose worker died
+    jobs = (
+        DeviceJob.query.filter_by(device_id=device.id, kind=kind)
+        .order_by(DeviceJob.created_at.desc())
+        .limit(10).all()
+    )
+    return jsonify({'ok': True, 'jobs': [j.to_dict() for j in jobs]}), 200
 
 
 @devices_bp.route('/<int:device_id>/load-balancing/status', methods=['GET'])

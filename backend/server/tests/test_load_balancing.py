@@ -387,14 +387,35 @@ def test_verification_reports_an_unreachable_router(monkeypatch):
 
 # --- endpoint contract ------------------------------------------------------
 
-def test_configure_endpoint_preflights_verifies_and_gates_the_save():
-    """Persisting an unverified config is what let the console claim LB was live
-    while the router ignored it."""
+def _devices_source():
     import pathlib
 
-    source = (pathlib.Path(__file__).resolve().parents[1]
-              / 'routes' / 'devices.py').read_text()
-    body = source.split('def configure_load_balancing')[1].split('\n@devices_bp')[0]
+    return (pathlib.Path(__file__).resolve().parents[1] / 'routes' / 'devices.py').read_text()
+
+
+def _function_body(name):
+    """Source of one top-level function.
+
+    Stops at the next top-level `def`, not the next `@devices_bp` — the helper
+    that does the actual pushing sits between the route and the next decorated
+    one, so splitting on the decorator swept it into the route's body and the
+    "nothing blocking in the request" assertion could never fail.
+    """
+    import re
+
+    body = _devices_source().split(f'def {name}')[1]
+    match = re.search(r'\n(?=@devices_bp|def )', body)
+    return body[:match.start()] if match else body
+
+
+def test_apply_preflights_verifies_and_gates_the_save():
+    """Persisting an unverified config is what let the console claim LB was live
+    while the router ignored it.
+
+    Asserted against `_apply_load_balancing`, which is where the push moved when
+    it became a background job — the route itself now only starts the job.
+    """
+    body = _function_body('_apply_load_balancing')
 
     assert 'preflight_wan_config' in body, 'no pre-flight before pushing'
     assert 'verify_lb' in body, 'no verification after pushing'
@@ -402,3 +423,26 @@ def test_configure_endpoint_preflights_verifies_and_gates_the_save():
     assert body.index('push_lb_steps') < body.index('verify_lb')
     # The save must sit behind result['ok'], which verification can clear.
     assert body.index('verify_lb') < body.index('device.wan_config = json.dumps')
+
+
+def test_applying_never_blocks_the_request():
+    """The push must not run inside the HTTP handler.
+
+    Three SSH sessions against a router that answers in tens of seconds passes
+    Cloudflare's ~100s ceiling, which returned a 524 while the work carried on
+    holding the device's SSH lock — so the operator's retry then failed with
+    "device busy" and one slow push looked like two unrelated errors.
+    """
+    route = _function_body('configure_load_balancing')
+
+    assert 'start_job' in route, 'apply must be handed to a background job'
+    for blocking in ('push_lb_steps(', 'verify_lb(', 'preflight_wan_config('):
+        assert blocking not in route, f'{blocking} still runs inside the request'
+
+
+def test_a_second_apply_returns_the_running_job():
+    """Two concurrent pushes to one router is how a half-applied config happens."""
+    route = _function_body('configure_load_balancing')
+
+    assert 'running_job_for' in route
+    assert route.index('running_job_for') < route.index('start_job')

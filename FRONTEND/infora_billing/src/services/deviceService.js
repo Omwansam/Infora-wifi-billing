@@ -608,18 +608,74 @@ class DeviceService {
     window.URL.revokeObjectURL(url);
   }
 
-  /** Persist wan_config; push over the tunnel when apply=true. */
-  async configureLoadBalancing(token, deviceId, wanConfig, apply = false) {
+  /**
+   * Save a dual-WAN config, and optionally push it to the router.
+   *
+   * A save answers immediately. An apply returns 202 with a job id and this
+   * polls until it settles, because the push runs three SSH sessions against a
+   * router that answers in tens of seconds — the request used to sit open past
+   * Cloudflare's ~100s ceiling and come back as a 524 while the work carried on.
+   *
+   * `onProgress` is called with elapsed seconds so the panel can say how long it
+   * has been going rather than spinning silently for three minutes.
+   */
+  async configureLoadBalancing(token, deviceId, wanConfig, apply = false, onProgress) {
     const response = await fetch(API_ENDPOINTS.deviceConfigureLoadBalancing(deviceId), {
       method: 'POST',
       headers: getAuthHeaders(token),
       body: JSON.stringify({ wan_config: wanConfig, apply }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok && response.status !== 502) {
+    if (!response.ok && response.status !== 502 && response.status !== 202) {
       throw new Error(data.error || `Failed (${response.status})`);
     }
-    return data;
+    if (response.status !== 202 || !data?.job?.id) return data;
+    return this.waitForDeviceJob(token, deviceId, data.job.id, onProgress);
+  }
+
+  /** Poll a background router job until it finishes, fails, or times out. */
+  async waitForDeviceJob(token, deviceId, jobId, onProgress, { timeoutMs = 480000 } = {}) {
+    const started = Date.now();
+    // Every 3s: fast enough that a short push still feels immediate, slow
+    // enough that a four-minute one is 80 requests rather than 800.
+    const interval = 3000;
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, interval));
+      const elapsed = Math.round((Date.now() - started) / 1000);
+      onProgress?.(elapsed);
+
+      if (Date.now() - started > timeoutMs) {
+        throw new Error(
+          'Still running after 8 minutes. The push is continuing on the server — '
+          + 'check the load-balancing status before trying again.',
+        );
+      }
+
+      const res = await fetch(API_ENDPOINTS.deviceJob(deviceId, jobId), {
+        headers: getAuthHeaders(token),
+      });
+      const body = await res.json().catch(() => ({}));
+      // A dropped poll is not a failed job — the router is still being
+      // configured, so keep asking rather than reporting a false failure.
+      if (!res.ok) continue;
+
+      const job = body?.job;
+      if (!job || job.status === 'running') continue;
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'The dual-WAN push failed.');
+      }
+      return job.result || {};
+    }
+  }
+
+  /** Recent background jobs for a router — how a reloaded tab finds its push. */
+  async listDeviceJobs(token, deviceId, kind = 'load_balancing') {
+    const response = await fetch(`${API_ENDPOINTS.deviceJobs(deviceId)}?kind=${kind}`, {
+      headers: getAuthHeaders(token),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed (${response.status})`);
+    return data.jobs || [];
   }
 
   /** Push the remove-by-comment teardown and mark the device single-WAN. */

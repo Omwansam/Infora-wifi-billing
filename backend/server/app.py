@@ -271,7 +271,7 @@ def ensure_schema_upgrades():
         from models import (
             CpeDevice, CpeFirmware, CpeSession, CpeTask, ImportCandidate, ImportRun,
             CustomerEvent,
-            DeviceOutage, DeviceResourceSample,
+            DeviceJob, DeviceOutage, DeviceResourceSample,
             FiberCable, FiberNode, FiberSplice,
             OnboardingSignup, PlatformInvoice,
         )
@@ -280,6 +280,8 @@ def ensure_schema_upgrades():
                       OnboardingSignup, PlatformInvoice,
                       # The device detail page's two history tabs read these.
                       DeviceOutage, DeviceResourceSample,
+                      # Long router pushes that outlive an HTTP request.
+                      DeviceJob,
                       # The subscriber's lifecycle and package-history tabs.
                       CustomerEvent,
                       # Nodes first: cables and splices reference them.

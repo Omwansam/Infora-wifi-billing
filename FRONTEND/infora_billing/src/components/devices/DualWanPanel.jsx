@@ -47,7 +47,9 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
   const [pinMgmt, setPinMgmt] = useState(initial.pin_management_to || '');
 
   const [ifaces, setIfaces] = useState([]);
-  const [busy, setBusy] = useState('');            // '', 'download', 'apply', 'disable'
+  const [busy, setBusy] = useState('');
+  // Seconds the current push has been running, fed by the job poller.
+  const [elapsed, setElapsed] = useState(0);            // '', 'download', 'apply', 'disable'
   const [result, setResult] = useState(null);
 
   useEffect(() => {
@@ -90,15 +92,20 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
   };
 
   const apply = async () => {
-    setBusy('apply'); setResult(null);
+    setBusy('apply'); setResult(null); setElapsed(0);
     try {
-      const res = await deviceService.configureLoadBalancing(getAccessToken(), deviceId, buildConfig(), true);
+      // Minutes, not seconds: three SSH sessions against a router that answers
+      // in tens of seconds. The elapsed counter is what stops an operator
+      // concluding it has hung and clicking again.
+      const res = await deviceService.configureLoadBalancing(
+        getAccessToken(), deviceId, buildConfig(), true, setElapsed,
+      );
       setResult(res);
       if (res.applied) { toast.success('Dual-WAN applied to the router'); onApplied?.(); }
-      else toast.error('Applied with errors — see the log');
+      else toast.error(res.error || 'Applied with errors — see the log');
     } catch (e) {
       toast.error(e.message || 'Apply failed');
-    } finally { setBusy(''); }
+    } finally { setBusy(''); setElapsed(0); }
   };
 
   const disable = async () => {
@@ -242,10 +249,31 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
             title="Push over the management tunnel"
           >
             {busy === 'apply' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            Apply now
+            {busy === 'apply' ? 'Applying…' : 'Apply now'}
           </button>
         </div>
       </div>
+
+      {/* A silent spinner for three minutes reads as a hang, and the operator
+          clicks again — which is how a single slow push turned into a queue of
+          them. Naming the stage and the elapsed time is the fix. */}
+      {busy === 'apply' && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm dark:border-indigo-500/30 dark:bg-indigo-500/10">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-indigo-600 dark:text-indigo-400" />
+          <span className="font-semibold text-indigo-900 dark:text-indigo-200">
+            {elapsed < 25 ? 'Checking the router\u2019s wiring\u2026'
+              : elapsed < 90 ? 'Pushing routes, mangle and NAT rules\u2026'
+              : 'Reading the configuration back to verify it\u2026'}
+          </span>
+          <span className="tabular-nums text-indigo-700/80 dark:text-indigo-300/80">
+            {elapsed}s elapsed
+          </span>
+          <span className="w-full text-xs text-indigo-700/70 dark:text-indigo-300/70">
+            This runs on the server — it keeps going if you navigate away, and a
+            few minutes is normal on a busy router.
+          </span>
+        </div>
+      )}
 
       {result?.log && (
         <div className="mt-4 max-h-56 space-y-1 overflow-auto rounded-lg bg-slate-900 p-3 font-mono text-[11px]">

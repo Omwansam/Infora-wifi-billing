@@ -2695,6 +2695,68 @@ class CpeDevice(db.Model):
         return f'<CpeDevice {self.serial_key} ({self.status})>'
 
 
+
+class DeviceJob(db.Model):
+    """A long router operation, tracked in the database rather than a request.
+
+    Configuring dual-WAN opens three SSH sessions over the management tunnel --
+    preflight, push, verify -- and each read alone runs eight `print` commands on
+    a router where one call measures in tens of seconds. That reliably exceeds
+    Cloudflare's ~100s origin ceiling, which returns a 524 to the browser.
+
+    The 524 is only half the problem. The request does not stop when Cloudflare
+    gives up: gunicorn keeps the worker running to its own 300s timeout, still
+    holding the per-device SSH lock, so the operator's retry fails with
+    "device busy" and the console looks broken twice over.
+
+    State lives here, not in process memory, because prod runs four gunicorn
+    workers -- the thread doing the work and the request polling for its result
+    are usually in different processes.
+    """
+    __tablename__ = 'device_jobs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('mikrotik_devices.id', ondelete='CASCADE'),
+                          nullable=False, index=True)
+    isp_id = db.Column(db.Integer, db.ForeignKey('isps.id'), nullable=True, index=True)
+    # 'load_balancing' today; the table is deliberately generic because
+    # configure-services has exactly the same shape and the same 524 risk.
+    kind = db.Column(db.String(40), nullable=False, default='load_balancing')
+    status = db.Column(db.String(20), nullable=False, default='running')  # running|done|failed
+    request_payload = db.Column(db.Text, nullable=True)
+    result = db.Column(db.Text, nullable=True)
+    error = db.Column(db.Text, nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    finished_at = db.Column(db.DateTime, nullable=True)
+
+    device = db.relationship('MikrotikDevice')
+
+    @property
+    def is_running(self):
+        return self.status == 'running'
+
+    def to_dict(self):
+        import json
+
+        payload = {}
+        if self.result:
+            try:
+                payload = json.loads(self.result)
+            except (TypeError, ValueError):
+                payload = {}
+        return {
+            'id': self.id,
+            'device_id': self.device_id,
+            'kind': self.kind,
+            'status': self.status,
+            'error': self.error,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+            'result': payload,
+        }
+
+
 class CpeTask(db.Model):
     """One queued CWMP RPC for a CPE.
 
