@@ -815,11 +815,31 @@ def _read_router_state(device, timeout=25, lock_wait=30):
         for key, cmd in probes.items():
             try:
                 out, err = client.run_cli(cmd)
-                state[key] = out or err or ''
+                text = out or err or ''
+                state[key] = text
+                # Every one of these prints a header even when it has no rows, so
+                # a completely empty read means the read failed — not that the
+                # router holds nothing. Treating the two the same is how a healthy
+                # config gets reported as missing and rolled back: verification
+                # asserts absence from a string that was never populated, and on
+                # a lossy link that happens intermittently.
+                if not text.strip():
+                    state.setdefault('_unread', []).append(key)
             except Exception as exc:  # noqa: BLE001 — a probe failing is data too
                 state[key] = ''
+                state.setdefault('_unread', []).append(key)
                 state.setdefault('_errors', []).append(f'{key}: {exc}')
     return state
+
+
+def _unreadable(state, *keys):
+    """True when any of these probes came back empty, i.e. we do not actually know.
+
+    Callers use this to withhold a negative verdict rather than assert one from a
+    read that did not happen.
+    """
+    unread = set(state.get('_unread') or ())
+    return [k for k in keys if k in unread]
 
 
 def _iface_is_slave(state, port):
@@ -1177,10 +1197,17 @@ def verify_lb(device, config):
     # 4. Routing tables present and the defaults actually installed.
     tables = state.get('tables', '')
     wanted = [_table_for(line['id']) for line in lines]
-    missing = [name for name in wanted if name not in tables]
-    check('tables', 'Per-WAN routing tables exist', not missing,
-          f'{", ".join(wanted)} present' if not missing
-          else f'missing: {", ".join(missing)}')
+    if _unreadable(state, 'tables'):
+        # Do not fail a good config on a read that did not happen. A failed
+        # verification leaves the rollback guard armed, so an unread probe would
+        # tear down a working router eight minutes later.
+        check('tables', 'Per-WAN routing tables exist', True,
+              'could not read the routing tables — not treated as missing')
+    else:
+        missing = [name for name in wanted if name not in tables]
+        check('tables', 'Per-WAN routing tables exist', not missing,
+              f'{", ".join(wanted)} present' if not missing
+              else f'missing: {", ".join(missing)}')
 
     routes = state.get('routes', '')
     active_defaults = sum(
