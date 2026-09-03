@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Loader2, Network, Download, Play, Info, AlertTriangle, Power, RefreshCw,
+  Loader2, Network, Download, Play, Info, AlertTriangle, Power, RefreshCw, RotateCcw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getAccessToken } from '../../utils/authToken';
@@ -272,6 +272,25 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
             This runs on the server — it keeps going if you navigate away, and a
             few minutes is normal on a busy router.
           </span>
+        </div>
+      )}
+
+      {/* A failed push used to strand the router with no default route and no way
+          back short of a site visit. The guard undoes it automatically, so say so
+          plainly — otherwise the operator's next move is to retry into a router
+          that is already repairing itself. */}
+      {result && !result.ok && result.rollback_at && (
+        <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+          <RotateCcw className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div>
+            <p className="font-semibold text-amber-900 dark:text-amber-200">
+              The router is rolling this back on its own
+            </p>
+            <p className="mt-0.5 text-amber-800 dark:text-amber-300">
+              {result.rollback_at} Wait for it to come back before trying again —
+              retrying now pushes into a router that is mid-repair.
+            </p>
+          </div>
         </div>
       )}
 

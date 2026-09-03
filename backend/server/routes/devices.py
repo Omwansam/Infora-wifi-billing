@@ -1346,7 +1346,8 @@ def _apply_load_balancing(device, config, force=False):
     renders one result whether it came back immediately or from a poll.
     """
     from services.load_balancing import (
-        build_lb_steps, preflight_wan_config, push_lb_steps, verify_lb,
+        GUARD_MINUTES, build_lb_disarm_steps, build_lb_guard_steps, build_lb_steps,
+        preflight_wan_config, push_lb_steps, verify_lb,
     )
 
     result = {'ok': True, 'saved': False, 'applied': False, 'mode': config['mode']}
@@ -1366,9 +1367,36 @@ def _apply_load_balancing(device, config, force=False):
         })
         return result
 
+    # Arm a rollback on the router BEFORE touching its routing.
+    #
+    # This changes the routing of a router we can only reach *through* that
+    # routing. The apply retires the working default route (`defconf`'s DHCP
+    # client installs a competing distance-1 default), and if the new WAN does
+    # not come up the recursive defaults never resolve — leaving the router
+    # serving its LAN with no path to the internet or to us, and no way back
+    # short of a site visit. Disable could not rescue it either, because the
+    # teardown never restored a default route.
+    #
+    # So: schedule the undo, make the change, and cancel the undo only once we
+    # have proved we still have contact.
+    guard = push_lb_steps(device, build_lb_guard_steps(config))
+    result['guard_armed'] = guard['success']
+    guard_log = guard['log']
+    if not guard['success']:
+        # Without the safety net this push can strand the router, so do not take
+        # the risk at all.
+        result['ok'] = False
+        result['log'] = guard_log
+        result['error'] = (
+            'Could not arm the rollback guard on the router, so the dual-WAN push '
+            'was not attempted — a failed push with no guard can leave the router '
+            'unreachable. Check SSH access and try again.'
+        )
+        return result
+
     push = push_lb_steps(device, build_lb_steps(device, config))
     result['applied'] = push['success']
-    result['log'] = push['log']
+    result['log'] = guard_log + push['log']
     result['ok'] = push['success']
 
     # "Every command ran" is not evidence the router is doing anything, so read
@@ -1383,6 +1411,19 @@ def _apply_load_balancing(device, config, force=False):
                 f'Applied, but the router did not come up as configured: '
                 f'{failed[0]["label"]} — {failed[0]["detail"]}'
             )
+
+    # Contact survived and the router came up as configured, so stand the guard
+    # down. Anything else leaves it armed: if we were wrong about the router
+    # still being reachable, it repairs itself within GUARD_MINUTES.
+    if result['ok']:
+        disarm = push_lb_steps(device, build_lb_disarm_steps())
+        result['log'] += disarm['log']
+        result['guard_armed'] = not disarm['success']
+    else:
+        result['rollback_at'] = (
+            f'The router will undo this automatically within {GUARD_MINUTES} minutes '
+            'unless it is reconfigured successfully first.'
+        )
 
     # Persist only what the router actually confirms. An apply that failed
     # verification must not leave the console claiming LB is live.

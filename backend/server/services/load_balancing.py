@@ -365,6 +365,89 @@ def build_lb_remove_steps(config=None):
     return steps
 
 
+# ---------------------------------------------------------------------------
+# Rollback guard — the dead-man's switch
+# ---------------------------------------------------------------------------
+
+GUARD_NAME = 'infora-lb-guard'
+# Long enough for a slow push plus verification on a busy router, short enough
+# that an operator who has cut themselves off is not waiting half an hour.
+GUARD_MINUTES = 8
+
+
+def build_lb_restore_steps(config=None):
+    """Teardown PLUS a working uplink. What the router needs to come back.
+
+    `build_lb_remove_steps` strips the dual-WAN artifacts but leaves the router
+    with no default route, because the apply deliberately retires the `defconf`
+    DHCP client (it installs a competing distance-1 default that would beat our
+    recursive ones). Removing the LB routes therefore leaves *nothing*: the
+    router keeps serving its LAN, and has no path to the internet or to us.
+
+    That is how a failed dual-WAN push takes a healthy router off the map
+    permanently — and why "Disable dual-WAN" could not rescue it either.
+
+    So the restore re-adds a plain DHCP client with a default route on each WAN
+    port. It is the same thing `defconf` did, and it is safe when the port
+    already has one: RouterOS refuses the duplicate and `on-error` swallows it.
+    """
+    steps = list(build_lb_remove_steps(config))
+    ports = []
+    for key in ('wan1', 'wan2'):
+        wan = (config or {}).get(key) or {}
+        port = wan.get('port')
+        if port and port not in ports:
+            ports.append(port)
+
+    for port in ports:
+        # A static WAN gets its address back from the operator's own config; a
+        # DHCP one needs a client. Adding a client to a static port is harmless
+        # -- it simply never binds -- and we cannot know which failed, so both
+        # get one. Getting the router back online outranks tidiness here.
+        steps.append((
+            f'restore-uplink-{port}',
+            f':do {{/ip dhcp-client add interface={port} add-default-route=yes '
+            f'use-peer-dns=yes comment="infora-lb-restore"}} on-error={{}}',
+        ))
+    return steps
+
+
+def _ros_quote(script):
+    """Escape a RouterOS script for embedding in an on-event="..." argument."""
+    return script.replace('\\', '\\\\').replace('"', '\\"')
+
+
+def build_lb_guard_steps(config, minutes=GUARD_MINUTES):
+    """Arm a scheduler that undoes the push if nobody cancels it.
+
+    Standard practice for changing the routing of a router you can only reach
+    *through* that routing: schedule the undo first, make the change, and cancel
+    the undo only once you have proved you still have contact. If the push cuts
+    the tunnel, nothing cancels it and the router repairs itself.
+
+    Without this the only recovery was someone driving to the site with a laptop.
+    """
+    rollback = '; '.join(cmd for _label, cmd in build_lb_restore_steps(config))
+    # Self-removing, so a fired guard leaves nothing behind to fire again.
+    rollback += f'; :do {{/system scheduler remove [find name="{GUARD_NAME}"]}} on-error={{}}'
+    rollback += ' ; :log warning "Infora: dual-WAN push was not confirmed - configuration rolled back"'
+
+    return [
+        ('guard-reset',
+         f':do {{/system scheduler remove [find name="{GUARD_NAME}"]}} on-error={{}}'),
+        ('guard-arm',
+         f'/system scheduler add name="{GUARD_NAME}" interval={minutes}m '
+         f'comment="{LB_COMMENT}" on-event="{_ros_quote(rollback)}"'),
+    ]
+
+
+def build_lb_disarm_steps():
+    """Cancel the guard. Only ever run after verification has passed."""
+    return [
+        ('guard-disarm',
+         f':do {{/system scheduler remove [find name="{GUARD_NAME}"]}} on-error={{}}'),
+    ]
+
 def _header(device, config):
     mode = config.get('mode', 'off')
     return [
