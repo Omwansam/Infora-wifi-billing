@@ -57,10 +57,14 @@ def _preflight(monkeypatch, port, interfaces=INTERFACES, addresses=''):
         'interfaces': interfaces, 'addresses': addresses,
         'bridge_ports': '', 'dhcp_clients': '', 'routes': '',
     })
+    # The second line must not collide with the port under test — two lines
+    # sharing a port is now rejected outright, which would mask what this is
+    # actually asserting.
+    other = 'ether1' if port != 'ether1' else 'ether2'
     config = {
         'mode': 'load_balance', 'lan_interface': 'infora-bridge',
         'wan1': {'port': port, 'type': 'dhcp', 'weight': 1},
-        'wan2': {'port': 'ether2', 'type': 'dhcp', 'weight': 1},
+        'wan2': {'port': other, 'type': 'dhcp', 'weight': 1},
     }
     return lb.preflight_wan_config(object(), config)
 
@@ -89,4 +93,4 @@ def test_a_live_port_with_no_address_warns_rather_than_blocks(monkeypatch):
     blockers, warnings = _preflight(monkeypatch, 'ether2')
 
     assert not [b for b in blockers if 'no link' in b]
-    assert any('DHCP from the ISP' in w for w in warnings)
+    assert any('DHCP from the ISP' in w for w in warnings), warnings

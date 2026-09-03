@@ -288,6 +288,17 @@ def _line_num(line_id):
     return re.sub(r'\D', '', line_id) or '1'
 
 
+def _line_name(line):
+    """How a line is named back to the operator.
+
+    Its label when it has one, because "Safaricom fibre has no upstream address"
+    is a message someone can act on and "WAN3 has no upstream address" is a
+    lookup. Falls back to the id, which is all a legacy config carries.
+    """
+    label = (line.get('label') or '').strip()
+    return f'{line["id"].upper()} ({label})' if label else line['id'].upper()
+
+
 def _table_for(line_id):
     return f'to_WAN{_line_num(line_id)}'
 
@@ -1002,6 +1013,16 @@ def preflight_wan_config(device, config):
     Warnings are things the operator should know but that the push itself fixes
     or tolerates.
     """
+    # Total, like build_lb_steps: a caller handing this a legacy {wan1, wan2}
+    # dict must get real checks rather than an empty list that reads as "all
+    # clear". Silently passing a config nobody validated is the worst possible
+    # answer from a pre-flight.
+    if 'lines' not in config:
+        normalised, err = validate_wan_config(config)
+        if err:
+            return [f'wan_config is invalid: {err}'], []
+        config = normalised
+
     blockers, warnings = [], []
     if config.get('mode') == 'off':
         return blockers, warnings
@@ -1014,8 +1035,9 @@ def preflight_wan_config(device, config):
     lan = config['lan_interface']
     interfaces = state.get('interfaces', '')
 
-    for key in ('wan1', 'wan2'):
-        port = config[key]['port']
+    for line in config.get('lines') or []:
+        key = _line_name(line)
+        port = line['port']
 
         if port and port not in interfaces:
             blockers.append(f'{key}: interface {port} does not exist on this router')
@@ -1050,7 +1072,7 @@ def preflight_wan_config(device, config):
                 f"the router's current uplink without a working replacement."
             )
             continue
-        if config[key].get('type') == 'dhcp' and not _addresses_on(state, port):
+        if line.get('type') == 'dhcp' and not _addresses_on(state, port):
             warnings.append(
                 f'{key}: {port} has link but no address yet. It must be able to get '
                 f'DHCP from the ISP — if it cannot, the router will be left without a '
@@ -1119,12 +1141,19 @@ def verify_lb(device, config):
               'no infora-lb objects remain' if not leftover else 'infora-lb objects still present')
         return checks
 
-    w1, w2 = config['wan1'], config['wan2']
+    if 'lines' not in config:
+        normalised, err = validate_wan_config(config)
+        if err:
+            return [{'id': 'config', 'label': 'Stored wan_config is valid',
+                     'ok': False, 'detail': err}]
+        config = normalised
+    lines = config.get('lines') or []
 
     # 1. Both WAN ports must be free of a bridge, or everything else is invalid.
-    for key, wan in (('wan1', w1), ('wan2', w2)):
+    for line in lines:
+        key, wan = line['id'], line
         slave = _iface_is_slave(state, wan['port'])
-        check(f'{key}-free', f'{key.upper()} port is not a bridge slave', not slave,
+        check(f'{key}-free', f'{_line_name(line)} port is not a bridge slave', not slave,
               f'{wan["port"]} is standalone' if not slave
               else f'{wan["port"]} is still enslaved — its rules will be invalid')
 
@@ -1136,19 +1165,22 @@ def verify_lb(device, config):
 
     # 3. Each WAN needs an address, and not one from our own LAN.
     lan_addr = _lan_address(state, config['lan_interface'])
-    for key, wan in (('wan1', w1), ('wan2', w2)):
+    for line in lines:
+        key, wan = line['id'], line
         addrs = _addresses_on(state, wan['port'])
         in_lan = any(_same_subnet(a, lan_addr) for a in addrs)
-        check(f'{key}-address', f'{key.upper()} has an upstream address',
+        check(f'{key}-address', f'{_line_name(line)} has an upstream address',
               bool(addrs) and not in_lan,
               (f'{wan["port"]}: {", ".join(addrs)}' if addrs else f'{wan["port"]}: no address')
               + (' — inside the LAN subnet' if in_lan else ''))
 
     # 4. Routing tables present and the defaults actually installed.
     tables = state.get('tables', '')
-    have_tables = 'to_WAN1' in tables and 'to_WAN2' in tables
-    check('tables', 'Per-WAN routing tables exist', have_tables,
-          'to_WAN1 and to_WAN2 present' if have_tables else 'routing tables missing')
+    wanted = [_table_for(line['id']) for line in lines]
+    missing = [name for name in wanted if name not in tables]
+    check('tables', 'Per-WAN routing tables exist', not missing,
+          f'{", ".join(wanted)} present' if not missing
+          else f'missing: {", ".join(missing)}')
 
     routes = state.get('routes', '')
     active_defaults = sum(
@@ -1162,11 +1194,12 @@ def verify_lb(device, config):
     #    no replies. Presence is not enough: the rule Kifaru had named a bridge
     #    slave, so RouterOS flagged it invalid while the text still matched a grep.
     nat = state.get('nat', '')
-    for key, wan in (('wan1', w1), ('wan2', w2)):
+    for line in lines:
+        key, wan = line['id'], line
         needle = f'out-interface={wan["port"]}'
         present = needle in nat
         active = _rule_is_active(nat, needle)
-        check(f'{key}-nat', f'{key.upper()} masquerade is active', active,
+        check(f'{key}-nat', f'{_line_name(line)} masquerade is active', active,
               f'srcnat masquerade out {wan["port"]}' if active
               else (f'present but rejected by RouterOS (invalid/disabled) — '
                     f'traffic out {wan["port"]} is not NAT\'d' if present

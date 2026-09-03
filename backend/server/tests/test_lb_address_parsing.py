@@ -102,6 +102,8 @@ def test_a_port_that_has_an_address_is_not_warned_about(monkeypatch):
 
     _, warnings = lb.preflight_wan_config(object(), config)
 
-    assert not [w for w in warnings if w.startswith('wan1:') and 'no address yet' in w]
+    # Lines are named for the operator now — WAN1, or "WAN1 (Safaricom)" when
+    # labelled — so match case-insensitively on the line rather than the key.
+    assert not [w for w in warnings if w.lower().startswith('wan1') and 'no address yet' in w]
     # ether2 genuinely has none, so that one should still be raised.
-    assert [w for w in warnings if w.startswith('wan2:') and 'no address yet' in w]
+    assert [w for w in warnings if w.lower().startswith('wan2') and 'no address yet' in w]
