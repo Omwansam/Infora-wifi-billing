@@ -529,6 +529,24 @@ def _iface_is_slave(state, port):
     return False
 
 
+def _iface_is_running(state, port):
+    """True when ``port`` has carrier (the ``R`` flag in /interface print).
+
+    Tri-state on purpose: None means the interface was not found in the output at
+    all, which is a parsing failure rather than a dead port, and must not be
+    reported to the operator as "nothing is plugged in".
+    """
+    for line in state.get('interfaces', '').splitlines():
+        parts = line.split()
+        if port not in parts:
+            continue
+        if line.lstrip().startswith(('Flags:', 'Columns:', '#')):
+            continue
+        # Same shape as _iface_is_slave: "0 RS ether1 ..." → flags "RS".
+        flags = ''.join(parts[:parts.index(port)])
+        return 'R' in flags
+    return None
+
 def _addresses_on(state, port):
     """Every address string currently configured on ``port``."""
     found, current = [], None
@@ -674,6 +692,29 @@ def preflight_wan_config(device, config):
                     f'it is patched into this router, not an upstream ISP'
                 )
                 break
+
+        # Nothing plugged in is a blocker, not a warning.
+        #
+        # The apply retires the router's working DHCP client before the new WAN
+        # can bind, and for a DHCP WAN every route it installs comes from the
+        # lease script firing on bind. A port with no carrier never binds, so the
+        # router ends up with no default route at all — serving its LAN, invisible
+        # to us. That is exactly how Kifaru was lost, and it is cheap to catch
+        # here, before anything on the router has been touched.
+        running = _iface_is_running(state, port)
+        if running is False:
+            blockers.append(
+                f'{key}: {port} has no link — nothing is plugged into it. A WAN port '
+                f'with no carrier can never get a lease, and applying this would drop '
+                f"the router's current uplink without a working replacement."
+            )
+            continue
+        if config[key].get('type') == 'dhcp' and not _addresses_on(state, port):
+            warnings.append(
+                f'{key}: {port} has link but no address yet. It must be able to get '
+                f'DHCP from the ISP — if it cannot, the router will be left without a '
+                f'default route until the rollback guard restores it.'
+            )
 
         if _iface_is_slave(state, port):
             warnings.append(
