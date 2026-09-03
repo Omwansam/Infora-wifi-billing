@@ -169,14 +169,6 @@ def test_an_existing_client_is_adopted_rather_than_replaced():
     assert f'default-route-distance={lb.FALLBACK_ROUTE_DISTANCE}' in steps['wan1-dhcp-configure']
 
 
-def test_the_adopted_client_is_renewed_so_its_script_runs():
-    """The lease script owns this WAN's routes and only fires on bind; an already
-    bound client would otherwise install nothing until it happened to renew."""
-    steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
-
-    assert 'dhcp-client renew' in steps['wan1-dhcp-renew']
-
-
 def test_teardown_restores_the_client_instead_of_deleting_it():
     """By teardown the infora-lb client is usually the router's original uplink
     wearing our comment. Removing it would strand the router on Disable."""
@@ -496,3 +488,49 @@ def test_a_second_apply_returns_the_running_job():
 
     assert 'running_job_for' in route
     assert route.index('running_job_for') < route.index('start_job')
+
+
+# --- routes must appear without waiting for a bind event --------------------
+
+def test_routes_are_seeded_from_the_current_lease():
+    """The lease script fires on *bind*. An adopted client is usually already
+    bound, and `renew` on a bound client renews without a bind event — so its
+    script never ran and its probe route never appeared, leaving that WAN's
+    recursive default flagged invalid. Fusion showed exactly that: WAN2's client
+    was new and bound cleanly, WAN1's was adopted and installed nothing."""
+    steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
+
+    seed = steps['wan1-dhcp-seed']
+    assert '/ip dhcp-client get [find interface=ether1] gateway' in seed
+    assert 'infora-lb-probe1' in seed, 'the probe route the default resolves through'
+    assert ':if ([:len $gw] > 0)' in seed, 'must no-op on a client that has not bound'
+    assert 'wan1-dhcp-renew' not in steps, 'renew does not fire the script'
+
+
+def test_seed_and_lease_script_install_the_same_routes():
+    """Two code paths writing the same routes drift. They share one builder, so a
+    divergence would mean a WAN behaves differently on apply than on renewal.
+
+    Compared on the route tags and destinations rather than whole command strings:
+    the two differ legitimately in how the gateway is expressed and in quoting."""
+    args = ('wan1', 'to_WAN1', 'to_WAN2', '8.8.8.8', True)
+    seed = lb._seed_routes_cmd(*args, port='ether1')
+    script = lb._lease_script(*args).replace('\\"', '"').replace('\\$', '$')
+
+    tags = {f'{lb.LB_COMMENT}-gw1', f'{lb.LB_COMMENT}-bk1', f'{lb.LB_COMMENT}-probe1'}
+    for tag in tags:
+        assert seed.count(f'"{tag}"') == 2, f'{tag}: expected one remove and one add'
+        assert script.count(f'"{tag}"') == 2
+
+    for fragment in ('dst-address=0.0.0.0/0', 'dst-address=8.8.8.8/32',
+                     'routing-table=to_WAN1', 'routing-table=to_WAN2',
+                     'distance=1', 'distance=2', 'scope=10'):
+        assert fragment in seed, f'seed missing {fragment}'
+        assert fragment in script, f'script missing {fragment}'
+
+
+def test_the_lease_script_still_guards_on_bind():
+    script = lb._lease_script('wan1', 'to_WAN1', 'to_WAN2', '8.8.8.8', True)
+
+    assert script.startswith(':if (\\$bound=1)')
+    assert '\\"' in script, 'quotes must stay escaped inside script="..."'

@@ -144,24 +144,65 @@ def _addr_route_cmds(wan_key, gw, own_table, other_table, probe, ros7):
     ]
 
 
-def _lease_script(wan_key, own_table, other_table, probe, ros7):
-    """Single-line DHCP-client script: rebuild this WAN's three gateway-dependent
-    routes (own primary, other-table backup, probe) on every lease bind using the
-    learned $"gateway-address"."""
+def _gw_route_cmds(wan_key, own_table, other_table, probe, ros7, gw):
+    """This WAN's three gateway-dependent routes, given an expression for the gateway.
+
+    Shared by the lease script and the seed step below so the two can never drift:
+    both must produce exactly the routes the recursive defaults resolve through.
+    """
     n = '1' if wan_key == 'wan1' else '2'
-    gw = '\\$\\"gateway-address\\"'
+    return [
+        f'/ip route remove [find comment~"{LB_COMMENT}-gw{n}"]',
+        f'/ip route remove [find comment~"{LB_COMMENT}-bk{n}"]',
+        f'/ip route remove [find comment~"{LB_COMMENT}-probe{n}"]',
+        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(own_table, ros7)}'
+        f' distance=1 check-gateway=ping comment="{LB_COMMENT}-gw{n}"',
+        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(other_table, ros7)}'
+        f' distance=2 check-gateway=ping comment="{LB_COMMENT}-bk{n}"',
+        f'/ip route add dst-address={probe}/32 gateway={gw} scope=10'
+        f' comment="{LB_COMMENT}-probe{n}"',
+    ]
+
+
+def _escape_for_script(command):
+    """Escape a command for embedding in a RouterOS script="..." argument."""
+    return command.replace('"', '\\"').replace('$', '\\$')
+
+
+def _lease_script(wan_key, own_table, other_table, probe, ros7):
+    """DHCP-client script: rebuild this WAN's routes on every lease bind.
+
+    Fires on bind only, which is why it cannot be the sole way these routes get
+    installed — see `_seed_routes_cmd`.
+    """
+    body = '; '.join(
+        _gw_route_cmds(wan_key, own_table, other_table, probe, ros7, '$"gateway-address"')
+    )
+    return f':if (\\$bound=1) do={{ {_escape_for_script(body)} }}'
+
+
+def _seed_routes_cmd(wan_key, own_table, other_table, probe, ros7, port):
+    """Install this WAN's routes now, from the lease the client already holds.
+
+    The lease script only runs on *bind*. A client we adopted is usually already
+    bound, and `/ip dhcp-client renew` on a bound client renews the lease without
+    producing a bind event — so its script never ran and its probe route never
+    appeared. The recursive default that resolves through that probe was then
+    flagged invalid, which is precisely what Fusion showed: WAN2's client was
+    newly created and bound cleanly, WAN1's was adopted and silently installed
+    nothing.
+
+    So the routes are seeded here from `gateway` on the current lease, and the
+    script keeps them correct across future lease changes. Guarded on a non-empty
+    gateway, because a client that has not bound yet has none and the script will
+    do the work when it does.
+    """
+    body = '; '.join(
+        _gw_route_cmds(wan_key, own_table, other_table, probe, ros7, '$gw')
+    )
     return (
-        f':if (\\$bound=1) do={{'
-        f' /ip route remove [find comment~\\"{LB_COMMENT}-gw{n}\\"];'
-        f' /ip route remove [find comment~\\"{LB_COMMENT}-bk{n}\\"];'
-        f' /ip route remove [find comment~\\"{LB_COMMENT}-probe{n}\\"];'
-        f' /ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(own_table, ros7)}'
-        f' distance=1 check-gateway=ping comment=\\"{LB_COMMENT}-gw{n}\\";'
-        f' /ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(other_table, ros7)}'
-        f' distance=2 check-gateway=ping comment=\\"{LB_COMMENT}-bk{n}\\";'
-        f' /ip route add dst-address={probe}/32 gateway={gw} scope=10'
-        f' comment=\\"{LB_COMMENT}-probe{n}\\"'
-        f' }}'
+        f':local gw [/ip dhcp-client get [find interface={port}] gateway]; '
+        f':if ([:len $gw] > 0) do={{ {body} }}'
     )
 
 
@@ -253,11 +294,13 @@ def build_lb_steps(device, config):
                 # instead of having nothing.
                 f'add-default-route=yes default-route-distance={FALLBACK_ROUTE_DISTANCE} '
                 f'use-peer-dns=no comment="{LB_COMMENT}" script="{script}"')
-            # The lease script only runs on bind, and an already-bound client will
-            # not bind again on its own — so the routes it owns would not appear
-            # until the lease happened to renew. Force it.
-            add(f'{key}-dhcp-renew',
-                f':do {{/ip dhcp-client renew [find interface={port}]}} on-error={{}}')
+            # Install the routes now from the lease the client already holds.
+            # `renew` was not enough: on an adopted, already-bound client RouterOS
+            # renews without raising a bind event, so the script never ran and the
+            # probe route never appeared — leaving the recursive default for this
+            # WAN flagged invalid. The script still owns future lease changes.
+            add(f'{key}-dhcp-seed',
+                _seed_routes_cmd(key, own_tbl, other_tbl, probe, ros7, port))
 
     # --- 3. Routing tables (v7 only; v6 uses routing-mark on the route) --------
     if ros7:
