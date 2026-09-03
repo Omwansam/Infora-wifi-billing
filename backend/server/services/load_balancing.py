@@ -26,6 +26,10 @@ DEFAULT_SUB_LIST = 'ISP2-SUBS'     # subscriber address-list RADIUS can populate
 VALID_MODES = ('off', 'failover', 'load_balance', 'app_steer')
 VALID_WAN_TYPES = ('static', 'dhcp', 'pppoe')
 DEFAULT_PROBES = ('8.8.8.8', '1.0.0.1')
+# Distance the router's pre-existing DHCP default is demoted to. High enough that
+# our distance-1/2 recursive defaults always win, low enough to still be a route
+# when they do not — so the router is never left with nothing.
+FALLBACK_ROUTE_DISTANCE = 200
 
 # Meta/Facebook (AS32934) IPv4 prefixes — starter set for app-steer. Extendable;
 # the address-list is comment-tagged so re-running refreshes it.
@@ -200,37 +204,60 @@ def build_lb_steps(device, config):
         add(f'reclaim-{key}',
             f':do {{/interface bridge port remove [find interface={wan["port"]}]}} on-error={{}}')
 
-    # --- 1b. Retire the defconf uplink -----------------------------------------
-    #     `defconf` ships a DHCP client with add-default-route=yes on the bridge
-    #     that owns ether1. Left in place it keeps installing a competing
-    #     distance-1 default, so the recursive failover defaults below never win
-    #     and the WAN the router actually uses is not one we manage. Its dynamic
-    #     address disappears with it.
-    add('retire-defconf-dhcp',
-        ':do {/ip dhcp-client remove [find comment="defconf"]} on-error={}')
-    #     Any other client already bound to a WAN port (ours from a previous run,
-    #     or one added by hand) is replaced by the one we add below.
-    for key, wan in (('wan1', w1), ('wan2', w2)):
-        add(f'clear-dhcp-{key}',
-            f':do {{/ip dhcp-client remove [find interface={wan["port"]}]}} on-error={{}}')
+    # --- 1b. Demote the existing uplink, never delete it -----------------------
+    #     `defconf` ships a DHCP client with add-default-route=yes, and on most
+    #     routers it IS the working uplink and the only default route.
+    #
+    #     This used to remove it, because a distance-1 default beats the recursive
+    #     failover defaults below and the router would keep using a WAN we do not
+    #     manage. Removing it also removed the only route the router had — and the
+    #     SSH session pushing the rest of this configuration runs over the
+    #     management tunnel, which rides that route. The push cut its own
+    #     connection, the remaining commands never landed, and the router was left
+    #     with no way out. That is how Kifaru and DADA were lost.
+    #
+    #     Demoting solves the same problem without the cliff: at distance 200 it
+    #     always loses to our distance-1/2 defaults, so it never competes — but it
+    #     is still there if ours fail to come up, and it disappears on its own when
+    #     the lease does. The router is never routeless, not even for an instant.
+    add('demote-defconf-dhcp',
+        f':do {{/ip dhcp-client set [find comment="defconf"] '
+        f'default-route-distance={FALLBACK_ROUTE_DISTANCE}}} on-error={{}}')
 
     # --- 2. WAN addressing (static address / dhcp client) ---------------------
     add('wan-addr-reset', f':do {{/ip address remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
-    add('dhcp-reset', f':do {{/ip dhcp-client remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
     # (own_table, other_table) so each WAN also seeds the other table's backup.
     wan_plan = (
         ('wan1', w1, 'to_WAN1', 'to_WAN2', p1),
         ('wan2', w2, 'to_WAN2', 'to_WAN1', p2),
     )
     for key, wan, own_tbl, other_tbl, probe in wan_plan:
+        port = wan['port']
         if wan['type'] == 'static':
             add(f'{key}-addr',
-                f'/ip address add interface={wan["port"]} address={wan["ip"]} comment="{LB_COMMENT}"')
+                f'/ip address add interface={port} address={wan["ip"]} comment="{LB_COMMENT}"')
         elif wan['type'] == 'dhcp':
             script = _lease_script(key, own_tbl, other_tbl, probe, ros7)
-            add(f'{key}-dhcp',
-                f'/ip dhcp-client add interface={wan["port"]} add-default-route=no '
+            # Adopt whatever client is already on the port rather than replacing
+            # it. RouterOS allows one client per interface, so a remove-then-add
+            # leaves the port unaddressed in between — on the WAN carrying the
+            # management tunnel that gap is the outage this whole change exists
+            # to prevent. Create one only when the port has none.
+            add(f'{key}-dhcp-ensure',
+                f':if ([:len [/ip dhcp-client find interface={port}]]=0) do={{'
+                f'/ip dhcp-client add interface={port} disabled=no}}')
+            add(f'{key}-dhcp-configure',
+                f'/ip dhcp-client set [find interface={port}] '
+                # Keep a default route, but demoted: our recursive defaults at
+                # distance 1/2 win, and this is the floor the router falls back to
+                # instead of having nothing.
+                f'add-default-route=yes default-route-distance={FALLBACK_ROUTE_DISTANCE} '
                 f'use-peer-dns=no comment="{LB_COMMENT}" script="{script}"')
+            # The lease script only runs on bind, and an already-bound client will
+            # not bind again on its own — so the routes it owns would not appear
+            # until the lease happened to renew. Force it.
+            add(f'{key}-dhcp-renew',
+                f':do {{/ip dhcp-client renew [find interface={port}]}} on-error={{}}')
 
     # --- 3. Routing tables (v7 only; v6 uses routing-mark on the route) --------
     if ros7:
@@ -349,7 +376,22 @@ def build_lb_remove_steps(config=None):
         ('remove-nat', f':do {{/ip firewall nat remove [find comment~"{LB_COMMENT}"]}} on-error={{}}'),
         ('remove-routes', f':do {{/ip route remove [find comment~"{LB_COMMENT}"]}} on-error={{}}'),
         ('remove-addr', f':do {{/ip address remove [find comment="{LB_COMMENT}"]}} on-error={{}}'),
-        ('remove-dhcp', f':do {{/ip dhcp-client remove [find comment="{LB_COMMENT}"]}} on-error={{}}'),
+        # Restore the client, do NOT remove it. The apply adopts whatever client
+        # was already on the WAN port rather than replacing it, so by teardown
+        # this is very often the router's original uplink wearing our comment.
+        # Removing it would strand the router on "Disable dual-WAN" — the exact
+        # failure this whole change exists to eliminate, arriving through the
+        # back door.
+        ('restore-dhcp',
+         f':do {{/ip dhcp-client set [find comment="{LB_COMMENT}"] script="" '
+         f'add-default-route=yes default-route-distance=1 use-peer-dns=yes '
+         f'comment="infora-uplink"}} on-error={{}}'),
+        # A client we genuinely created and that never bound leaves nothing
+        # useful behind, but it also cannot be told apart from an adopted one, so
+        # it is kept too. A spare DHCP client on a WAN port is harmless; a router
+        # with no client is not.
+        ('undemote-defconf',
+         ':do {/ip dhcp-client set [find comment="defconf"] default-route-distance=1} on-error={}'),
         ('remove-addrlist', f':do {{/ip firewall address-list remove [find comment="{LB_COMMENT}"]}} on-error={{}}'),
     ]
     steps.append(('remove-tables', f':do {{/routing table remove [find comment="{LB_COMMENT}"]}} on-error={{}}'))
@@ -758,9 +800,10 @@ def preflight_wan_config(device, config):
     # that is the only uplink, the tunnel goes with it until the new client binds.
     if 'defconf' in state.get('dhcp_clients', ''):
         warnings.append(
-            'The defconf DHCP client will be removed. It currently provides this '
-            "router's default route, so management access drops until the new WAN "
-            'client binds — take a backup and be ready for a site visit.'
+            'The existing DHCP client keeps its address and its default route — the '
+            f'route is demoted to distance {FALLBACK_ROUTE_DISTANCE} so the dual-WAN '
+            'routes win, and stays as the fallback if they do not. The router is not '
+            'left without a route at any point.'
         )
 
     return blockers, warnings

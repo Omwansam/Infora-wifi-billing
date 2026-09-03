@@ -138,19 +138,61 @@ def test_both_wan_ports_are_reclaimed_from_any_bridge():
         assert '/interface bridge port remove' in steps[label]
 
 
-def test_defconf_uplink_is_retired():
-    """defconf's client keeps installing a competing distance-1 default, so the
-    recursive failover defaults never win."""
+def test_defconf_uplink_is_demoted_not_removed():
+    """defconf's client installs a competing distance-1 default, so the recursive
+    failover defaults never win — but it is also usually the router's ONLY route,
+    and the push travels over it. Deleting it cut the connection mid-push and
+    stranded the router. Demoting settles the competition without the cliff."""
     steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
-    assert 'retire-defconf-dhcp' in steps
-    assert 'comment="defconf"' in steps['retire-defconf-dhcp']
+
+    assert 'demote-defconf-dhcp' in steps
+    assert 'retire-defconf-dhcp' not in steps, 'the uplink must never be deleted'
+    assert 'comment="defconf"' in steps['demote-defconf-dhcp']
+    assert f'default-route-distance={lb.FALLBACK_ROUTE_DISTANCE}' in steps['demote-defconf-dhcp']
+    assert 'remove' not in steps['demote-defconf-dhcp']
+
+
+def test_no_step_ever_deletes_a_dhcp_client():
+    """The whole class of outage: one command between removing the working client
+    and the replacement binding is enough to lose the router."""
+    for label, cmd in lb.build_lb_steps(FakeDevice(), _config()):
+        assert not ('dhcp-client remove' in cmd), f'{label} deletes a DHCP client'
+
+
+def test_an_existing_client_is_adopted_rather_than_replaced():
+    """RouterOS allows one client per interface, so remove-then-add leaves the WAN
+    unaddressed in between — on the WAN carrying the tunnel that gap is the outage."""
+    steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
+
+    assert '[:len [/ip dhcp-client find interface=ether1]]=0' in steps['wan1-dhcp-ensure']
+    assert '/ip dhcp-client set' in steps['wan1-dhcp-configure']
+    assert f'default-route-distance={lb.FALLBACK_ROUTE_DISTANCE}' in steps['wan1-dhcp-configure']
+
+
+def test_the_adopted_client_is_renewed_so_its_script_runs():
+    """The lease script owns this WAN's routes and only fires on bind; an already
+    bound client would otherwise install nothing until it happened to renew."""
+    steps = dict(lb.build_lb_steps(FakeDevice(), _config()))
+
+    assert 'dhcp-client renew' in steps['wan1-dhcp-renew']
+
+
+def test_teardown_restores_the_client_instead_of_deleting_it():
+    """By teardown the infora-lb client is usually the router's original uplink
+    wearing our comment. Removing it would strand the router on Disable."""
+    steps = dict(lb.build_lb_remove_steps(_config()))
+
+    assert 'restore-dhcp' in steps
+    assert 'remove-dhcp' not in steps
+    assert 'add-default-route=yes' in steps['restore-dhcp']
+    assert 'default-route-distance=1' in steps['restore-dhcp']
 
 
 def test_ports_are_reclaimed_before_addressing_is_applied():
     """Order matters: a DHCP client added to a still-enslaved port is rejected."""
     labels = [label for label, _ in lb.build_lb_steps(FakeDevice(), _config())]
-    assert labels.index('reclaim-wan1') < labels.index('wan1-dhcp')
-    assert labels.index('reclaim-wan2') < labels.index('wan2-dhcp')
+    assert labels.index('reclaim-wan1') < labels.index('wan1-dhcp-ensure')
+    assert labels.index('reclaim-wan2') < labels.index('wan2-dhcp-ensure')
 
 
 def test_masquerade_exists_for_both_wans():
@@ -308,11 +350,19 @@ def test_preflight_warns_but_does_not_block_on_a_slave_port(monkeypatch):
     assert any('bridge slave' in w for w in warnings), warnings
 
 
-def test_preflight_warns_about_losing_the_defconf_uplink(monkeypatch):
+def test_preflight_explains_what_happens_to_the_existing_uplink(monkeypatch):
+    """It used to warn the uplink would be removed and to expect a site visit.
+    It is not removed any more, so the warning must say what actually happens —
+    an operator who still believes the old one will not run this at all."""
     monkeypatch.setattr(lb, '_read_router_state',
                         lambda *a, **k: _state(dhcp_clients=BROKEN_DHCP))
+
     _, warnings = lb.preflight_wan_config(FakeDevice(), _config())
-    assert any('defconf' in w for w in warnings), warnings
+
+    text = ' '.join(warnings)
+    assert 'demoted' in text
+    assert 'without a route' in text
+    assert 'site visit' not in text
 
 
 def test_preflight_passes_on_a_healthy_router(monkeypatch):
