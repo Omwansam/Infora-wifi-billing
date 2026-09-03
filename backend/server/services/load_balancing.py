@@ -259,55 +259,101 @@ def _role_for(raw, mode, line_id, primary_wan):
     return 'active' if line_id == primary_wan else 'standby'
 
 
-def _pcc_buckets(w1, w2):
-    """Classifier buckets for a weighted 2-way PCC split, e.g. 3:1 → 4 buckets."""
-    total = w1 + w2
-    return [('WAN1_conn' if i < w1 else 'WAN2_conn', total, i) for i in range(total)]
+def _pcc_buckets(lines):
+    """Classifier buckets for a weighted N-way PCC split.
+
+    One bucket per unit of weight, walked cumulatively: weights 3/1 give four
+    buckets split 3/1, and 4/2/1 give seven split 4/2/1. Each bucket becomes one
+    mangle rule, so the rule count is the sum of the weights — worth keeping in
+    mind, since PCC also forces FastTrack off and every packet then takes the
+    firewall path.
+    """
+    total = sum(line['weight'] for line in lines)
+    buckets, edges, running = [], [], 0
+    for line in lines:
+        running += line['weight']
+        edges.append((running, f'WAN{_line_num(line["id"])}_conn'))
+    for i in range(total):
+        mark = next(m for edge, m in edges if i < edge)
+        buckets.append((mark, total, i))
+    return buckets
 
 
 def _tbl(name, ros7):
     return f'routing-table={name}' if ros7 else f'routing-mark={name}'
 
 
-def _addr_route_cmds(wan_key, gw, own_table, other_table, probe, ros7):
-    """Gateway-dependent routes contributed by one WAN's gateway:
-
-    * its own routing table's **primary** default (distance 1),
-    * the **other** table's **backup** default (distance 2) — so PCC/steered
-      traffic pinned to the other WAN fails over here when that WAN dies,
-    * its ``/32`` probe route (for the main-table recursive default).
-
-    Returned as bare ``/ip route add …`` strings so they're emitted directly
-    (static) or wrapped into the DHCP lease script (dhcp)."""
-    n = '1' if wan_key == 'wan1' else '2'
-    return [
-        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(own_table, ros7)} '
-        f'distance=1 check-gateway=ping comment="{LB_COMMENT}-gw{n}"',
-        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(other_table, ros7)} '
-        f'distance=2 check-gateway=ping comment="{LB_COMMENT}-bk{n}"',
-        f'/ip route add dst-address={probe}/32 gateway={gw} scope=10 '
-        f'comment="{LB_COMMENT}-probe{n}"',
-    ]
+def _line_num(line_id):
+    """The digits in wan3 -> '3'. Names to_WAN3, WAN3_conn, infora-lb-probe3."""
+    return re.sub(r'\D', '', line_id) or '1'
 
 
-def _gw_route_cmds(wan_key, own_table, other_table, probe, ros7, gw):
-    """This WAN's three gateway-dependent routes, given an expression for the gateway.
+def _table_for(line_id):
+    return f'to_WAN{_line_num(line_id)}'
 
-    Shared by the lease script and the seed step below so the two can never drift:
-    both must produce exactly the routes the recursive defaults resolve through.
+
+def _gw_route_cmds(line_id, own_table, backup_tables, probe, ros7, gw, replace=True):
+    """One line's gateway-dependent routes, given an expression for its gateway.
+
+    Three kinds:
+
+      * its own table's primary default (distance 1),
+      * a distance-2 backup in each table it covers for, so traffic pinned to a
+        dead line still leaves the building,
+      * its ``/32`` probe route, which the main-table recursive default resolves
+        through.
+
+    ``backup_tables`` is what keeps this O(N) rather than O(N²). Every line backs
+    up the primary, and the primary backs up everyone — so at two lines it is the
+    mutual arrangement it has always been, and at five it is fourteen routes
+    rather than twenty-five, with no lease script longer than the number of
+    lines. A full mesh would put N route-adds in every script, and these run as
+    one `:if … do={ …; … }` block where a single rejection silently abandons the
+    rest.
+
+    Shared by the lease script and the seed step so the two cannot drift.
     """
-    n = '1' if wan_key == 'wan1' else '2'
-    return [
-        f'/ip route remove [find comment~"{LB_COMMENT}-gw{n}"]',
-        f'/ip route remove [find comment~"{LB_COMMENT}-bk{n}"]',
-        f'/ip route remove [find comment~"{LB_COMMENT}-probe{n}"]',
+    n = _line_num(line_id)
+    # A bare string here would iterate per character and emit one bogus route per
+    # letter — silently, into a router's routing table. Accept it and mean it.
+    if isinstance(backup_tables, str):
+        backup_tables = [backup_tables]
+    cmds = []
+    if replace:
+        # Only the re-entrant callers need these. A lease script runs again on
+        # every bind and must clear what its last run left; the static path is
+        # emitted once, after step 0 has already removed every infora-lb route,
+        # so removes there would match nothing and just make the plan longer.
+        cmds += [
+            f'/ip route remove [find comment~"{LB_COMMENT}-gw{n}"]',
+            f'/ip route remove [find comment~"{LB_COMMENT}-bk{n}"]',
+            f'/ip route remove [find comment~"{LB_COMMENT}-probe{n}"]',
+        ]
+    cmds += [
         f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(own_table, ros7)}'
         f' distance=1 check-gateway=ping comment="{LB_COMMENT}-gw{n}"',
-        f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(other_table, ros7)}'
-        f' distance=2 check-gateway=ping comment="{LB_COMMENT}-bk{n}"',
-        f'/ip route add dst-address={probe}/32 gateway={gw} scope=10'
-        f' comment="{LB_COMMENT}-probe{n}"',
     ]
+    for table in backup_tables:
+        cmds.append(
+            f'/ip route add dst-address=0.0.0.0/0 gateway={gw} {_tbl(table, ros7)}'
+            f' distance=2 check-gateway=ping comment="{LB_COMMENT}-bk{n}"'
+        )
+    cmds.append(
+        f'/ip route add dst-address={probe}/32 gateway={gw} scope=10'
+        f' comment="{LB_COMMENT}-probe{n}"'
+    )
+    return cmds
+
+
+def _backup_tables_for(line, ordered, primary):
+    """Which tables this line provides the distance-2 fallback in.
+
+    The primary covers every other line; every other line covers the primary.
+    At two lines that is mutual, exactly as before.
+    """
+    if line['id'] == primary['id']:
+        return [_table_for(other['id']) for other in ordered if other['id'] != line['id']]
+    return [_table_for(primary['id'])]
 
 
 def _escape_for_script(command):
@@ -315,20 +361,20 @@ def _escape_for_script(command):
     return command.replace('"', '\\"').replace('$', '\\$')
 
 
-def _lease_script(wan_key, own_table, other_table, probe, ros7):
-    """DHCP-client script: rebuild this WAN's routes on every lease bind.
+def _lease_script(line_id, own_table, backup_tables, probe, ros7):
+    """DHCP-client script: rebuild this line's routes on every lease bind.
 
     Fires on bind only, which is why it cannot be the sole way these routes get
     installed — see `_seed_routes_cmd`.
     """
     body = '; '.join(
-        _gw_route_cmds(wan_key, own_table, other_table, probe, ros7, '$"gateway-address"')
+        _gw_route_cmds(line_id, own_table, backup_tables, probe, ros7, '$"gateway-address"')
     )
     return f':if (\\$bound=1) do={{ {_escape_for_script(body)} }}'
 
 
-def _seed_routes_cmd(wan_key, own_table, other_table, probe, ros7, port):
-    """Install this WAN's routes now, from the lease the client already holds.
+def _seed_routes_cmd(line_id, own_table, backup_tables, probe, ros7, port):
+    """Install this line's routes now, from the lease the client already holds.
 
     The lease script only runs on *bind*. A client we adopted is usually already
     bound, and `/ip dhcp-client renew` on a bound client renews the lease without
@@ -344,12 +390,17 @@ def _seed_routes_cmd(wan_key, own_table, other_table, probe, ros7, port):
     do the work when it does.
     """
     body = '; '.join(
-        _gw_route_cmds(wan_key, own_table, other_table, probe, ros7, '$gw')
+        _gw_route_cmds(line_id, own_table, backup_tables, probe, ros7, '$gw')
     )
     return (
         f':local gw [/ip dhcp-client get [find interface={port}] gateway]; '
         f':if ([:len $gw] > 0) do={{ {body} }}'
     )
+
+
+def _addr_route_cmds(line_id, gw, own_table, backup_tables, probe, ros7):
+    """The same routes for a static WAN, emitted directly (no lease involved)."""
+    return _gw_route_cmds(line_id, own_table, backup_tables, probe, ros7, gw, replace=False)
 
 
 def build_lb_steps(device, config):
@@ -359,14 +410,28 @@ def build_lb_steps(device, config):
     ``infora-lb`` (routes use ``infora-lb-*`` sub-tags).
     """
     ros7 = _ros_major(device) >= 7
+    # Every production caller validates first, but this is also reachable from the
+    # .rsc download and from tests. Normalising here keeps it total: a legacy
+    # {wan1, wan2} dict generates the same plan it always did rather than raising
+    # KeyError halfway through building router config.
+    if 'lines' not in config:
+        normalised, err = validate_wan_config(config)
+        if err:
+            raise ValueError(f'invalid wan_config: {err}')
+        config = normalised
+
     mode = config['mode']
     if mode == 'off':
         return build_lb_remove_steps(config)
 
     lan = config['lan_interface']
-    w1, w2 = config['wan1'], config['wan2']
-    p1, p2 = config['probe_hosts'][0], config['probe_hosts'][1]
-    primary_is_1 = config['primary_wan'] != 'wan2'
+    lines = config['lines']
+    # Ordered by failover priority, so "first" means "the line traffic prefers".
+    ordered = sorted(lines, key=lambda l: (l['priority'], l['id']))
+    primary = next((l for l in ordered if l['role'] == 'active'), ordered[0])
+    # Lines that carry a weighted share. Standby and steer lines get everything
+    # else — table, probe, masquerade, stickiness — but never a PCC bucket.
+    balanced = [l for l in ordered if l['role'] == 'active']
     steps = []
 
     def add(label, cmd):
@@ -387,9 +452,9 @@ def build_lb_steps(device, config):
     #                     (ether1) is slave - use master instead"
     #     The rules are still *accepted*, just flagged invalid, so the push looks
     #     clean while the router does nothing. Reclaim both, always.
-    for key, wan in (('wan1', w1), ('wan2', w2)):
-        add(f'reclaim-{key}',
-            f':do {{/interface bridge port remove [find interface={wan["port"]}]}} on-error={{}}')
+    for line in lines:
+        add(f'reclaim-{line["id"]}',
+            f':do {{/interface bridge port remove [find interface={line["port"]}]}} on-error={{}}')
 
     # --- 1b. Demote the existing uplink, never delete it -----------------------
     #     `defconf` ships a DHCP client with add-default-route=yes, and on most
@@ -421,23 +486,22 @@ def build_lb_steps(device, config):
     #     the tables afterwards, as this used to, made the failure look like a
     #     DHCP problem on Fusion when it was purely an ordering one.
     if ros7:
-        add('table-wan1', f':do {{/routing table add name=to_WAN1 fib comment="{LB_COMMENT}"}} on-error={{}}')
-        add('table-wan2', f':do {{/routing table add name=to_WAN2 fib comment="{LB_COMMENT}"}} on-error={{}}')
+        for line in ordered:
+            table = _table_for(line['id'])
+            add(f'table-{line["id"]}',
+                f':do {{/routing table add name={table} fib comment="{LB_COMMENT}"}} on-error={{}}')
 
     # --- 3. WAN addressing (static address / dhcp client) ---------------------
     add('wan-addr-reset', f':do {{/ip address remove [find comment="{LB_COMMENT}"]}} on-error={{}}')
-    # (own_table, other_table) so each WAN also seeds the other table's backup.
-    wan_plan = (
-        ('wan1', w1, 'to_WAN1', 'to_WAN2', p1),
-        ('wan2', w2, 'to_WAN2', 'to_WAN1', p2),
-    )
-    for key, wan, own_tbl, other_tbl, probe in wan_plan:
-        port = wan['port']
-        if wan['type'] == 'static':
+    for line in ordered:
+        key, port, probe = line['id'], line['port'], line['probe']
+        own_tbl = _table_for(key)
+        backup_tbls = _backup_tables_for(line, ordered, primary)
+        if line['type'] == 'static':
             add(f'{key}-addr',
-                f'/ip address add interface={port} address={wan["ip"]} comment="{LB_COMMENT}"')
-        elif wan['type'] == 'dhcp':
-            script = _lease_script(key, own_tbl, other_tbl, probe, ros7)
+                f'/ip address add interface={port} address={line["ip"]} comment="{LB_COMMENT}"')
+        elif line['type'] == 'dhcp':
+            script = _lease_script(key, own_tbl, backup_tbls, probe, ros7)
             # Adopt whatever client is already on the port rather than replacing
             # it. RouterOS allows one client per interface, so a remove-then-add
             # leaves the port unaddressed in between — on the WAN carrying the
@@ -459,12 +523,16 @@ def build_lb_steps(device, config):
             # probe route never appeared — leaving the recursive default for this
             # WAN flagged invalid. The script still owns future lease changes.
             add(f'{key}-dhcp-seed',
-                _seed_routes_cmd(key, own_tbl, other_tbl, probe, ros7, port))
+                _seed_routes_cmd(key, own_tbl, backup_tbls, probe, ros7, port))
 
     # --- 4. Gateway-dependent routes: static emits directly; dhcp via lease ----
-    for key, wan, own_tbl, other_tbl, probe in wan_plan:
-        if wan['type'] == 'static':
-            for i, cmd in enumerate(_addr_route_cmds(key, wan['gateway'], own_tbl, other_tbl, probe, ros7)):
+    for line in ordered:
+        if line['type'] == 'static':
+            key = line['id']
+            cmds = _addr_route_cmds(key, line['gateway'], _table_for(key),
+                                    _backup_tables_for(line, ordered, primary),
+                                    line['probe'], ros7)
+            for i, cmd in enumerate(cmds):
                 add(f'{key}-route{i}', cmd)
 
     # --- 5. Probe blackholes (safety net, proven in the field) -----------------
@@ -473,7 +541,7 @@ def build_lb_steps(device, config):
     #     route goes inactive, the probe is DROPPED here — it can't leak out the
     #     surviving WAN and falsely report the dead one healthy. distance=250 >> 1
     #     means the real route always wins the instant it returns (no shadowing).
-    for probe in (p1, p2):
+    for probe in [l['probe'] for l in ordered]:
         add(f'blackhole-{probe}',
             f'/ip route add dst-address={probe}/32 type=blackhole distance=250 '
             f'scope=10 comment="{LB_COMMENT}"')
@@ -481,33 +549,33 @@ def build_lb_steps(device, config):
     # --- 6. Recursive, distance-ordered main defaults (failover core) ----------
     #     Reached via the /32 probe routes → detects UPSTREAM outages, not just a
     #     dead local gateway.
-    d1, d2 = (1, 2) if primary_is_1 else (2, 1)
-    add('main-default-1',
-        f'/ip route add dst-address=0.0.0.0/0 gateway={p1} distance={d1} '
-        f'check-gateway=ping target-scope=11 comment="{LB_COMMENT}"')
-    add('main-default-2',
-        f'/ip route add dst-address=0.0.0.0/0 gateway={p2} distance={d2} '
-        f'check-gateway=ping target-scope=11 comment="{LB_COMMENT}"')
+    #     Distance follows the line order, so the whole failover chain is just
+    #     "first line, then the next, then the next" rather than a special case
+    #     for two.
+    for position, line in enumerate(ordered, start=1):
+        add(f'main-default-{_line_num(line["id"])}',
+            f'/ip route add dst-address=0.0.0.0/0 gateway={line["probe"]} distance={position} '
+            f'check-gateway=ping target-scope=11 comment="{LB_COMMENT}"')
 
     # --- 6. Inbound / reply stickiness (all modes) — replies leave the WAN they
     #     arrived on, so port-forwards / hotspot replies stay symmetric.
-    add('mangle-in-1', f'/ip firewall mangle add chain=input in-interface={w1["port"]} '
-        f'action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment="{LB_COMMENT}"')
-    add('mangle-in-2', f'/ip firewall mangle add chain=input in-interface={w2["port"]} '
-        f'action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment="{LB_COMMENT}"')
-    add('mangle-out-1', f'/ip firewall mangle add chain=output connection-mark=WAN1_conn '
-        f'action=mark-routing new-routing-mark=to_WAN1 comment="{LB_COMMENT}"')
-    add('mangle-out-2', f'/ip firewall mangle add chain=output connection-mark=WAN2_conn '
-        f'action=mark-routing new-routing-mark=to_WAN2 comment="{LB_COMMENT}"')
+    for line in ordered:
+        n = _line_num(line['id'])
+        add(f'mangle-in-{n}', f'/ip firewall mangle add chain=input in-interface={line["port"]} '
+            f'action=mark-connection new-connection-mark=WAN{n}_conn passthrough=yes comment="{LB_COMMENT}"')
+    for line in ordered:
+        n = _line_num(line['id'])
+        add(f'mangle-out-{n}', f'/ip firewall mangle add chain=output connection-mark=WAN{n}_conn '
+            f'action=mark-routing new-routing-mark={_table_for(line["id"])} comment="{LB_COMMENT}"')
 
     # --- 7. Classifier (the only per-mode branch) ------------------------------
     if mode == 'load_balance':
-        for i, (conn_mark, total, rem) in enumerate(_pcc_buckets(w1['weight'], w2['weight'])):
+        for i, (conn_mark, total, rem) in enumerate(_pcc_buckets(balanced)):
             add(f'pcc-{i}', f'/ip firewall mangle add chain=prerouting in-interface={lan} '
                 f'connection-state=new dst-address-type=!local action=mark-connection '
                 f'new-connection-mark={conn_mark} per-connection-classifier=both-addresses:{total}/{rem} '
                 f'passthrough=yes comment="{LB_COMMENT}"')
-        for tbl, mark in (('to_WAN1', 'WAN1_conn'), ('to_WAN2', 'WAN2_conn')):
+        for tbl, mark in [(_table_for(l['id']), f'WAN{_line_num(l["id"])}_conn') for l in balanced]:
             add(f'pcc-route-{tbl}', f'/ip firewall mangle add chain=prerouting in-interface={lan} '
                 f'connection-mark={mark} action=mark-routing new-routing-mark={tbl} comment="{LB_COMMENT}"')
 
@@ -530,8 +598,8 @@ def build_lb_steps(device, config):
 
     # --- 8. Optional: pin the management/RADIUS tunnel to one WAN --------------
     pin = config.get('pin_management_to')
-    if pin in ('wan1', 'wan2'):
-        tbl = 'to_WAN1' if pin == 'wan1' else 'to_WAN2'
+    if pin and any(line['id'] == pin for line in ordered):
+        tbl = _table_for(pin)
         add('pin-mgmt', f'/ip firewall mangle add chain=output connection-mark=no-mark '
             f'action=mark-routing new-routing-mark={tbl} comment="{LB_COMMENT}" place-before=0')
 
@@ -543,8 +611,10 @@ def build_lb_steps(device, config):
     #     no replies, while the router itself still pinged out from its own IP.
     add('nat-reset', ':do {/ip firewall nat remove [find comment="infora-masquerade"]} on-error={}')
     add('nat-defconf-reset', ':do {/ip firewall nat remove [find comment="defconf"]} on-error={}')
-    add('nat-1', f'/ip firewall nat add chain=srcnat out-interface={w1["port"]} action=masquerade comment="{LB_COMMENT}"')
-    add('nat-2', f'/ip firewall nat add chain=srcnat out-interface={w2["port"]} action=masquerade comment="{LB_COMMENT}"')
+    for line in ordered:
+        add(f'nat-{_line_num(line["id"])}',
+            f'/ip firewall nat add chain=srcnat out-interface={line["port"]} '
+            f'action=masquerade comment="{LB_COMMENT}"')
 
     # --- 10. FastTrack policy — the generator owns this per mode ----------------
     if mode == 'load_balance':
@@ -558,7 +628,7 @@ def build_lb_steps(device, config):
     add('wg-keepalive', f':do {{/interface wireguard peers set [find comment~"infora"] persistent-keepalive=25s}} on-error={{}}')
 
     # --- 12. MSS clamp (harmless in general; required for any PPPoE WAN) -------
-    if any(w['type'] == 'pppoe' for w in (w1, w2)):
+    if any(line['type'] == 'pppoe' for line in ordered):
         add('mss-clamp', f'/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn '
             f'action=change-mss new-mss=clamp-to-pmtu passthrough=yes comment="{LB_COMMENT}"')
 
