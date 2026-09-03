@@ -18,12 +18,23 @@ Every command is a single line so the same list drives both the **download** (jo
 ``device_config_ops.build_services_commands`` / ``configure_services``.
 """
 import ipaddress
+import re
 
 LB_COMMENT = 'infora-lb'
 DEFAULT_LAN = 'infora-bridge'
 META_LIST = 'infora-meta'          # address-list of Meta/Facebook prefixes (app_steer)
 DEFAULT_SUB_LIST = 'ISP2-SUBS'     # subscriber address-list RADIUS can populate (app_steer)
 VALID_MODES = ('off', 'failover', 'load_balance', 'app_steer')
+# A line's job. Carried in the model from the start even while `mode` still
+# derives it, so exposing per-line roles later does not mean a second pass over
+# every stored config and every consumer.
+#   active  — carries a weighted share of new connections
+#   standby — carries nothing until every active line is down
+#   steer   — carries only what is explicitly steered to it
+VALID_ROLES = ('active', 'standby', 'steer')
+# Beyond this the ceiling is the router, not the software: PCC forces FastTrack
+# off, so every packet takes the firewall path and CPU becomes the limit.
+MAX_LINES = 5
 VALID_WAN_TYPES = ('static', 'dhcp', 'pppoe')
 DEFAULT_PROBES = ('8.8.8.8', '1.0.0.1')
 # Distance the router's pre-existing DHCP default is demoted to. High enough that
@@ -51,7 +62,22 @@ def _ros_major(device):
 
 
 def validate_wan_config(config):
-    """Validate + normalise a wan_config dict. Returns (clean, error_or_None)."""
+    """Validate + normalise a wan_config dict. Returns (clean, error_or_None).
+
+    Accepts two shapes and always returns the newer one:
+
+      legacy  {"wan1": {...}, "wan2": {...}, "probe_hosts": [a, b], "primary_wan": "wan1"}
+      current {"lines": [{id, port, type, role, weight, priority, probe, ...}, ...]}
+
+    Every router in the field stores the legacy shape, and nothing rewrites it —
+    a device keeps its stored JSON until its next successful apply. So the two
+    must stay interchangeable indefinitely, not just across one release.
+
+    The legacy keys are also mirrored back onto the result (`wan1`, `wan2`,
+    `probe_hosts`, `primary_wan`) so callers that have not been generalised yet
+    keep working unchanged. That mirroring is what lets this land without
+    touching the generator in the same commit.
+    """
     if not isinstance(config, dict):
         return None, 'wan_config must be an object'
 
@@ -64,53 +90,173 @@ def validate_wan_config(config):
         'mode': mode,
         'lan_interface': (config.get('lan_interface') or DEFAULT_LAN).strip(),
         'primary_wan': (config.get('primary_wan') or 'wan1').strip().lower(),
-        'probe_hosts': [],
         'pin_management_to': config.get('pin_management_to') or None,
         'subscriber_list': (config.get('subscriber_list') or DEFAULT_SUB_LIST).strip(),
     }
-    if clean['primary_wan'] not in ('wan1', 'wan2'):
-        clean['primary_wan'] = 'wan1'
 
     if mode == 'off':
+        clean['lines'] = []
+        clean['probe_hosts'] = []
         return clean, None
 
-    for key in ('wan1', 'wan2'):
-        wan = config.get(key) or {}
-        port = (wan.get('port') or '').strip()
-        wtype = (wan.get('type') or 'dhcp').strip().lower()
-        if not port:
-            return None, f'{key}.port is required'
-        if wtype not in VALID_WAN_TYPES:
-            return None, f'{key}.type must be one of {", ".join(VALID_WAN_TYPES)}'
-        cleaned_wan = {'port': port, 'type': wtype, 'weight': int(wan.get('weight') or 1)}
-        if wtype == 'static':
-            ip = (wan.get('ip') or '').strip()
-            gw = (wan.get('gateway') or '').strip()
-            try:
-                ipaddress.ip_interface(ip)          # e.g. 100.64.0.2/30
-                ipaddress.ip_address(gw)
-            except ValueError:
-                return None, f'{key}: static WAN needs a valid ip (CIDR) and gateway'
-            cleaned_wan['ip'] = ip
-            cleaned_wan['gateway'] = gw
-        clean[key] = cleaned_wan
+    raw_lines, err = _collect_lines(config)
+    if err:
+        return None, err
+    if len(raw_lines) < 2:
+        return None, 'at least two lines are required'
+    if len(raw_lines) > MAX_LINES:
+        return None, f'at most {MAX_LINES} lines are supported'
 
-    if clean['wan1']['port'] == clean['wan2']['port']:
-        return None, 'wan1 and wan2 must use different ports'
-    if clean['wan1']['weight'] < 1 or clean['wan2']['weight'] < 1:
-        return None, 'weights must be >= 1'
+    lines, err = _clean_lines(raw_lines, clean['mode'], clean['primary_wan'])
+    if err:
+        return None, err
 
-    probes = config.get('probe_hosts') or list(DEFAULT_PROBES)
-    for host in probes[:2]:
-        try:
-            ipaddress.ip_address(str(host).strip())
-        except ValueError:
-            return None, f'probe host {host!r} is not a valid IP'
-    clean['probe_hosts'] = [str(h).strip() for h in probes[:2]] or list(DEFAULT_PROBES)
-    if len(clean['probe_hosts']) < 2:
-        clean['probe_hosts'] = list(DEFAULT_PROBES)
+    ports = [line['port'] for line in lines]
+    if len(set(ports)) != len(ports):
+        return None, 'each line must use a different port'
 
+    probes = [line['probe'] for line in lines]
+    if len(set(probes)) != len(probes):
+        # Health is judged per line by whether its own probe answers. Two lines
+        # sharing one means a dead line reports healthy and keeps taking traffic,
+        # which is worse than having no health check at all.
+        return None, 'each line needs its own probe host — two lines share one'
+
+    ids = [line['id'] for line in lines]
+    if clean['primary_wan'] not in ids:
+        clean['primary_wan'] = min(lines, key=lambda x: x['priority'])['id']
+    if clean['pin_management_to'] and clean['pin_management_to'] not in ids:
+        return None, f'pin_management_to names an unknown line: {clean["pin_management_to"]}'
+
+    clean['lines'] = lines
+    # --- legacy mirror, for callers not yet generalised ---------------------
+    for index, line in enumerate(lines[:2], start=1):
+        mirror = {'port': line['port'], 'type': line['type'], 'weight': line['weight']}
+        if line['type'] == 'static':
+            mirror['ip'] = line['ip']
+            mirror['gateway'] = line['gateway']
+        clean[f'wan{index}'] = mirror
+    clean['probe_hosts'] = probes[:2]
     return clean, None
+
+
+def _collect_lines(config):
+    """The lines from either shape, in order. Returns (list, error_or_None)."""
+    if isinstance(config.get('lines'), list):
+        return list(config['lines']), None
+
+    lines = []
+    probes = config.get('probe_hosts') or list(DEFAULT_PROBES)
+    for index, key in enumerate(('wan1', 'wan2')):
+        wan = config.get(key)
+        if not isinstance(wan, dict):
+            return None, f'{key} is required'
+        line = dict(wan)
+        line.setdefault('id', key)
+        # Positional in the legacy shape; belongs to the line in the new one.
+        if not line.get('probe'):
+            line['probe'] = probes[index] if index < len(probes) else None
+        lines.append(line)
+    return lines, None
+
+
+def _clean_lines(raw_lines, mode, primary_wan):
+    """Validate and normalise each line. Returns (list, error_or_None)."""
+    lines, used_ids = [], set()
+    for index, raw in enumerate(raw_lines):
+        if not isinstance(raw, dict):
+            return None, f'line {index + 1} must be an object'
+        position = index + 1
+
+        # The id names RouterOS objects (to_WAN1, WAN1_conn, infora-lb-probe1),
+        # so it must survive edits to the list. Removing the second of three
+        # lines must not renumber the third, or teardown stops matching what is
+        # actually on the router.
+        line_id = (raw.get('id') or f'wan{position}').strip().lower()
+        if not re.fullmatch(r'wan\d+', line_id):
+            return None, f'line {position}: id must look like wan1, wan2, …'
+        if line_id in used_ids:
+            return None, f'duplicate line id {line_id}'
+        used_ids.add(line_id)
+
+        port = (raw.get('port') or '').strip()
+        if not port:
+            return None, f'{line_id}.port is required'
+        wtype = (raw.get('type') or 'dhcp').strip().lower()
+        if wtype not in VALID_WAN_TYPES:
+            return None, f'{line_id}.type must be one of {", ".join(VALID_WAN_TYPES)}'
+
+        # Default only when the field is absent. `or 1` would turn an explicit
+        # weight of 0 into 1 — silently giving a line traffic the operator asked
+        # it not to carry, instead of telling them 0 is not a valid weight.
+        weight = raw.get('weight')
+        weight = 1 if weight in (None, '') else weight
+        try:
+            weight = int(weight)
+        except (TypeError, ValueError):
+            return None, f'{line_id}.weight must be a number'
+        if weight < 1:
+            return None, 'weights must be >= 1'
+
+        priority = raw.get('priority')
+        priority = position if priority in (None, '') else priority
+        try:
+            priority = int(priority)
+        except (TypeError, ValueError):
+            return None, f'{line_id}.priority must be a number'
+
+        probe = (str(raw.get('probe') or '').strip()
+                 or (DEFAULT_PROBES[index] if index < len(DEFAULT_PROBES) else ''))
+        try:
+            ipaddress.ip_address(probe)
+        except ValueError:
+            return None, f'{line_id}: probe host {probe!r} is not a valid IP'
+
+        line = {
+            'id': line_id,
+            'label': (raw.get('label') or '').strip() or None,
+            'port': port,
+            'type': wtype,
+            'weight': weight,
+            'priority': priority,
+            'probe': probe,
+            # Carried from day one even though `mode` still decides it, so that
+            # exposing per-line roles later is a UI change rather than another
+            # pass over the data model and every consumer of it.
+            'role': _role_for(raw, mode, line_id, primary_wan),
+            # Nullable, unused today. Present so "total supply" can be reported
+            # later without a second migration of every stored config.
+            'capacity_mbps': raw.get('capacity_mbps') or None,
+        }
+        if wtype == 'static':
+            ip = (raw.get('ip') or '').strip()
+            gateway = (raw.get('gateway') or '').strip()
+            try:
+                ipaddress.ip_interface(ip)
+                ipaddress.ip_address(gateway)
+            except ValueError:
+                return None, f'{line_id}: static WAN needs a valid ip (CIDR) and gateway'
+            line['ip'] = ip
+            line['gateway'] = gateway
+        lines.append(line)
+    return lines, None
+
+
+def _role_for(raw, mode, line_id, primary_wan):
+    """A line's role. Explicit when given, otherwise derived from the mode.
+
+    Deriving keeps the four presets meaning exactly what they mean today:
+    failover is one active line plus standbys, load_balance is all active, and
+    app_steer is the primary active with the rest as steer targets.
+    """
+    explicit = (raw.get('role') or '').strip().lower()
+    if explicit in VALID_ROLES:
+        return explicit
+    if mode == 'load_balance':
+        return 'active'
+    if mode == 'app_steer':
+        return 'active' if line_id == primary_wan else 'steer'
+    return 'active' if line_id == primary_wan else 'standby'
 
 
 def _pcc_buckets(w1, w2):

@@ -1,0 +1,4258 @@
+{
+ "7.14|failover|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|failover|(1, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|failover|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|failover|(3, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|failover|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "7.14|load_balance|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:2/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:2/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|load_balance|(1, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:2/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:2/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|load_balance|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/2 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-3",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:4/3 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|load_balance|(3, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/2 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-3",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:4/3 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|load_balance|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "7.14|app_steer|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|app_steer|(1, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|app_steer|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|app_steer|(3, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "table-wan1",
+   ":do {/routing table add name=to_WAN1 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "table-wan2",
+   ":do {/routing table add name=to_WAN2 fib comment=\"infora-lb\"} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-table=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-table=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-table=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "7.14|app_steer|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "7.14|off|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "7.14|off|(1, 1)|('static', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "7.14|off|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "7.14|off|(3, 1)|('static', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "7.14|off|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|failover|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|failover|(1, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|failover|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|failover|(3, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|failover|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|load_balance|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:2/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:2/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|load_balance|(1, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:2/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:2/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|load_balance|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/2 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-3",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:4/3 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|load_balance|(3, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-0",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/0 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/1 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN1_conn per-connection-classifier=both-addresses:4/2 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-3",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-type=!local action=mark-connection new-connection-mark=WAN2_conn per-connection-classifier=both-addresses:4/3 passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN1",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "pcc-route-to_WAN2",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter remove [find action=fasttrack-connection]} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|load_balance|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|app_steer|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|app_steer|(1, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|app_steer|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether1]]=0) do={/ip dhcp-client add interface=ether1 disabled=no}"
+  ],
+  [
+   "wan1-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether1] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw1\\\"]; /ip route remove [find comment~\\\"infora-lb-bk1\\\"]; /ip route remove [find comment~\\\"infora-lb-probe1\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\\\"infora-lb-gw1\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\\\"infora-lb-bk1\\\"; /ip route add dst-address=8.8.8.8/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe1\\\" }\""
+  ],
+  [
+   "wan1-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether1] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw1\"]; /ip route remove [find comment~\"infora-lb-bk1\"]; /ip route remove [find comment~\"infora-lb-probe1\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\"; /ip route add dst-address=8.8.8.8/32 gateway=$gw scope=10 comment=\"infora-lb-probe1\" }"
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|app_steer|(3, 1)|('static', 'dhcp')": [
+  [
+   "reset-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-mangle",
+   ":do {/ip firewall mangle remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reset-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "reclaim-wan1",
+   ":do {/interface bridge port remove [find interface=ether1]} on-error={}"
+  ],
+  [
+   "reclaim-wan2",
+   ":do {/interface bridge port remove [find interface=ether2]} on-error={}"
+  ],
+  [
+   "demote-defconf-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=200} on-error={}"
+  ],
+  [
+   "wan-addr-reset",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "wan1-addr",
+   "/ip address add interface=ether1 address=100.64.0.2/30 comment=\"infora-lb\""
+  ],
+  [
+   "wan2-dhcp-ensure",
+   ":if ([:len [/ip dhcp-client find interface=ether2]]=0) do={/ip dhcp-client add interface=ether2 disabled=no}"
+  ],
+  [
+   "wan2-dhcp-configure",
+   "/ip dhcp-client set [find interface=ether2] add-default-route=yes default-route-distance=200 use-peer-dns=no comment=\"infora-lb\" script=\":if (\\$bound=1) do={ /ip route remove [find comment~\\\"infora-lb-gw2\\\"]; /ip route remove [find comment~\\\"infora-lb-bk2\\\"]; /ip route remove [find comment~\\\"infora-lb-probe2\\\"]; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\\\"infora-lb-gw2\\\"; /ip route add dst-address=0.0.0.0/0 gateway=\\$\\\"gateway-address\\\" routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\\\"infora-lb-bk2\\\"; /ip route add dst-address=1.0.0.1/32 gateway=\\$\\\"gateway-address\\\" scope=10 comment=\\\"infora-lb-probe2\\\" }\""
+  ],
+  [
+   "wan2-dhcp-seed",
+   ":local gw [/ip dhcp-client get [find interface=ether2] gateway]; :if ([:len $gw] > 0) do={ /ip route remove [find comment~\"infora-lb-gw2\"]; /ip route remove [find comment~\"infora-lb-bk2\"]; /ip route remove [find comment~\"infora-lb-probe2\"]; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN2 distance=1 check-gateway=ping comment=\"infora-lb-gw2\"; /ip route add dst-address=0.0.0.0/0 gateway=$gw routing-mark=to_WAN1 distance=2 check-gateway=ping comment=\"infora-lb-bk2\"; /ip route add dst-address=1.0.0.1/32 gateway=$gw scope=10 comment=\"infora-lb-probe2\" }"
+  ],
+  [
+   "wan1-route0",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN1 distance=1 check-gateway=ping comment=\"infora-lb-gw1\""
+  ],
+  [
+   "wan1-route1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1 routing-mark=to_WAN2 distance=2 check-gateway=ping comment=\"infora-lb-bk1\""
+  ],
+  [
+   "wan1-route2",
+   "/ip route add dst-address=8.8.8.8/32 gateway=100.64.0.1 scope=10 comment=\"infora-lb-probe1\""
+  ],
+  [
+   "blackhole-8.8.8.8",
+   "/ip route add dst-address=8.8.8.8/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "blackhole-1.0.0.1",
+   "/ip route add dst-address=1.0.0.1/32 type=blackhole distance=250 scope=10 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-1",
+   "/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "main-default-2",
+   "/ip route add dst-address=0.0.0.0/0 gateway=1.0.0.1 distance=2 check-gateway=ping target-scope=11 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-1",
+   "/ip firewall mangle add chain=input in-interface=ether1 action=mark-connection new-connection-mark=WAN1_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-in-2",
+   "/ip firewall mangle add chain=input in-interface=ether2 action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-1",
+   "/ip firewall mangle add chain=output connection-mark=WAN1_conn action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\""
+  ],
+  [
+   "mangle-out-2",
+   "/ip firewall mangle add chain=output connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "meta-list-reset",
+   ":do {/ip firewall address-list remove [find list=infora-meta]} on-error={}"
+  ],
+  [
+   "meta:31.13.24.0/21",
+   "/ip firewall address-list add list=infora-meta address=31.13.24.0/21 comment=\"infora-lb\""
+  ],
+  [
+   "meta:31.13.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=31.13.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:45.64.40.0/22",
+   "/ip firewall address-list add list=infora-meta address=45.64.40.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:66.220.144.0/20",
+   "/ip firewall address-list add list=infora-meta address=66.220.144.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.63.176.0/20",
+   "/ip firewall address-list add list=infora-meta address=69.63.176.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:69.171.224.0/19",
+   "/ip firewall address-list add list=infora-meta address=69.171.224.0/19 comment=\"infora-lb\""
+  ],
+  [
+   "meta:74.119.76.0/22",
+   "/ip firewall address-list add list=infora-meta address=74.119.76.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:102.132.96.0/20",
+   "/ip firewall address-list add list=infora-meta address=102.132.96.0/20 comment=\"infora-lb\""
+  ],
+  [
+   "meta:129.134.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=129.134.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:157.240.0.0/16",
+   "/ip firewall address-list add list=infora-meta address=157.240.0.0/16 comment=\"infora-lb\""
+  ],
+  [
+   "meta:173.252.64.0/18",
+   "/ip firewall address-list add list=infora-meta address=173.252.64.0/18 comment=\"infora-lb\""
+  ],
+  [
+   "meta:179.60.192.0/22",
+   "/ip firewall address-list add list=infora-meta address=179.60.192.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:185.60.216.0/22",
+   "/ip firewall address-list add list=infora-meta address=185.60.216.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "meta:204.15.20.0/22",
+   "/ip firewall address-list add list=infora-meta address=204.15.20.0/22 comment=\"infora-lb\""
+  ],
+  [
+   "steer-meta",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new dst-address-list=infora-meta action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-subs",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-state=new src-address-list=ISP2-SUBS action=mark-connection new-connection-mark=WAN2_conn passthrough=yes comment=\"infora-lb\""
+  ],
+  [
+   "steer-route",
+   "/ip firewall mangle add chain=prerouting in-interface=infora-bridge connection-mark=WAN2_conn action=mark-routing new-routing-mark=to_WAN2 comment=\"infora-lb\""
+  ],
+  [
+   "pin-mgmt",
+   "/ip firewall mangle add chain=output connection-mark=no-mark action=mark-routing new-routing-mark=to_WAN1 comment=\"infora-lb\" place-before=0"
+  ],
+  [
+   "nat-reset",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}"
+  ],
+  [
+   "nat-defconf-reset",
+   ":do {/ip firewall nat remove [find comment=\"defconf\"]} on-error={}"
+  ],
+  [
+   "nat-1",
+   "/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "nat-2",
+   "/ip firewall nat add chain=srcnat out-interface=ether2 action=masquerade comment=\"infora-lb\""
+  ],
+  [
+   "fasttrack",
+   ":do {/ip firewall filter set [find action=fasttrack-connection] connection-mark=no-mark} on-error={}"
+  ],
+  [
+   "wg-keepalive",
+   ":do {/interface wireguard peers set [find comment~\"infora\"] persistent-keepalive=25s} on-error={}"
+  ]
+ ],
+ "6.49|app_steer|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|off|(1, 1)|('dhcp', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|off|(1, 1)|('static', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|off|(3, 1)|('dhcp', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|off|(3, 1)|('static', 'dhcp')": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ],
+ "6.49|off|remove": [
+  [
+   "remove-mangle",
+   ":do {/ip firewall mangle remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-nat",
+   ":do {/ip firewall nat remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-routes",
+   ":do {/ip route remove [find comment~\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-addr",
+   ":do {/ip address remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-dhcp",
+   ":do {/ip dhcp-client set [find comment=\"infora-lb\"] script=\"\" add-default-route=yes default-route-distance=1 use-peer-dns=yes comment=\"infora-uplink\"} on-error={}"
+  ],
+  [
+   "undemote-defconf",
+   ":do {/ip dhcp-client set [find comment=\"defconf\"] default-route-distance=1} on-error={}"
+  ],
+  [
+   "remove-addrlist",
+   ":do {/ip firewall address-list remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "remove-tables",
+   ":do {/routing table remove [find comment=\"infora-lb\"]} on-error={}"
+  ],
+  [
+   "restore-nat",
+   ":do {/ip firewall nat remove [find comment=\"infora-masquerade\"]} on-error={}; /ip firewall nat add chain=srcnat action=masquerade comment=\"infora-masquerade\""
+  ],
+  [
+   "restore-fasttrack",
+   ":if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={/ip firewall filter add chain=forward action=fasttrack-connection connection-state=established,related comment=\"infora-fasttrack\"}"
+  ]
+ ]
+}
