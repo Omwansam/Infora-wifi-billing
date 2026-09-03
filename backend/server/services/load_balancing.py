@@ -548,17 +548,49 @@ def _iface_is_running(state, port):
     return None
 
 def _addresses_on(state, port):
-    """Every address string currently configured on ``port``."""
+    """Every address currently configured on ``port``.
+
+    Handles both shapes RouterOS prints, because the two callers historically
+    disagreed about which one they were reading:
+
+      terse     ``address=192.168.0.100/24 interface=ether1 ...``
+      columnar  ``1 D 192.168.0.100/24  192.168.0.0  ether1  main``
+
+    `_read_router_state` uses ``print without-paging``, which is columnar — so
+    while this only understood the terse form it returned nothing for every port
+    on every router. That silently disabled the blocker below it: a "WAN" patched
+    into our own LAN, which is the exact wiring mistake that cost us Kifaru, was
+    never once detected.
+    """
     found, current = [], None
-    for line in state.get('addresses', '').splitlines():
-        if 'address=' in line:
-            current = line
-        if f'interface={port}' in line or f'actual-interface={port}' in line:
-            source = current or line
+    for raw in state.get('addresses', '').splitlines():
+        line = raw.strip()
+        if not line or line.startswith((';;;', 'Flags:', 'Columns:', '#')):
+            continue
+
+        # --- terse ---
+        if 'address=' in raw:
+            current = raw
+        if f'interface={port}' in raw or f'actual-interface={port}' in raw:
+            source = current or raw
             for token in source.split():
                 if token.startswith('address='):
                     found.append(token.split('=', 1)[1])
             current = None
+            continue
+
+        # --- columnar: the interface name is its own field, and the address is
+        #     the first token carrying a "/" prefix length. Matching on the whole
+        #     token avoids "ether1" also matching "ether10".
+        parts = raw.split()
+        if port not in parts:
+            continue
+        for token in parts:
+            if '/' in token:
+                head = token.split('/')[0]
+                if head.count('.') == 3 or ':' in head:
+                    found.append(token)
+                    break
     return found
 
 
