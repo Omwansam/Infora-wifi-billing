@@ -85,6 +85,18 @@ def _write_server_wg_conf(state):
             '[Peer]',
             f"PublicKey = {device.management_wg_public_key}",
             f"AllowedIPs = {peer_ip}/32",
+            # Every managed router sits behind someone else's NAT, usually on a
+            # dynamic address. Without this the server only ever *replies*: it
+            # learns an endpoint from the router's handshake and then lets the
+            # NAT mapping age out, after which server-originated traffic — the
+            # SSH sync, a dual-WAN push, WebFig, the ACS — is dropped silently by
+            # a middlebox with nothing to log. The router looks "powered off"
+            # while it is serving subscribers perfectly well.
+            #
+            # 25s is the WireGuard default and comfortably under the ~30s UDP
+            # timeout common on consumer NAT. It costs one small packet per peer
+            # per 25s, which is nothing next to a truck roll.
+            'PersistentKeepalive = 25',
             '',
         ])
 
@@ -98,6 +110,8 @@ def _write_server_wg_conf(state):
             '[Peer]',
             f"PublicKey = {op['public_key']}",
             f"AllowedIPs = {op['ip']}/32",
+            # Laptops roam between networks and sleep; same reasoning as above.
+            'PersistentKeepalive = 25',
             '',
         ])
 
