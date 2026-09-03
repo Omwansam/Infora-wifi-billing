@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { label: 'Pricing', href: '/#pricing' },
   { label: 'Why Lumen', href: '/#compare' },
   { label: 'Changelog', href: '/#changelog' },
+  { label: 'Docs', href: '/docs/introduction' },
   { label: 'FAQ', href: '/#faq' },
   { label: 'Contact', href: '/#contact' },
 ];

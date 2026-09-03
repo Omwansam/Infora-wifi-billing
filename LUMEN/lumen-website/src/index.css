@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Class-based dark mode, used only by /docs. Tailwind 4 defaults `dark:`
+   to prefers-color-scheme; the docs need an explicit toggle that can
+   override the OS, so the variant is redefined to key off a .dark class
+   on <html>. The marketing pages carry no dark: variants and are
+   unaffected — DocsLayout removes the class when it unmounts. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 

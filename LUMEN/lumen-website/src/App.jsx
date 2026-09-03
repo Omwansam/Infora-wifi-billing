@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import TrustedBy from './components/TrustedBy';
@@ -22,8 +22,24 @@ import Footer from './components/Footer';
 import WhatsAppButton from './components/WhatsAppButton';
 import ScrollToTop from './components/ScrollToTop';
 import ScrollToHash from './components/ScrollToHash';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { TermsPage, PrivacyPage, AffiliatePage } from './pages/LegalPages';
+import { FIRST_SLUG } from './docs/nav';
+
+/**
+ * The documentation is lazy-loaded on purpose.
+ *
+ * Its content is tens of thousands of words, and bundling it with the landing
+ * page made every marketing visitor download the whole manual before seeing the
+ * hero. Only `nav.js` is imported eagerly — it is the small slug list the
+ * redirect below needs.
+ */
+const DocsLayout = lazy(() => import('./docs/DocsLayout'));
+
+/** Neutral placeholder while the docs chunk arrives — usually imperceptible. */
+function DocsFallback() {
+  return <div className="min-h-screen bg-white dark:bg-slate-950" />;
+}
 import { LOGIN_URL, SIGNUP_URL } from './lib/brand';
 
 /**
@@ -79,6 +95,14 @@ export default function App() {
         <Route path="/signup" element={<ExternalRedirect to={SIGNUP_URL} />} />
         <Route path="/get-started" element={<ExternalRedirect to={SIGNUP_URL} />} />
         <Route path="/login" element={<ExternalRedirect to={LOGIN_URL} />} />
+        {/* The docs are a section of this app, served at /docs and at the
+            docs subdomain (which redirects its root here). Bare /docs has no
+            landing page of its own — the introduction is the landing page. */}
+        <Route path="/docs" element={<Navigate to={`/docs/${FIRST_SLUG}`} replace />} />
+        <Route
+          path="/docs/:slug"
+          element={<Suspense fallback={<DocsFallback />}><DocsLayout /></Suspense>}
+        />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/affiliate" element={<AffiliatePage />} />
