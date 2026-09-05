@@ -1097,6 +1097,80 @@ def device_outages(device_id):
     }), 200
 
 
+@devices_bp.route('/<int:device_id>/outages/<int:outage_id>/analysis', methods=['GET'])
+@jwt_required()
+def device_outage_analysis(device_id, outage_id):
+    """Diagnose one outage: scope, whether it restarted, impact and pattern.
+
+    Deterministic and free — every conclusion is derived from stored samples and
+    the other routers' outage rows. The AI narrative below is a separate,
+    opt-in call so that opening an outage never costs a token.
+    """
+    from models import DeviceOutage
+    from services.outage_analysis import analyse
+
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    outage = DeviceOutage.query.filter_by(id=outage_id, device_id=device.id).first()
+    if outage is None:
+        return jsonify({'error': 'Outage not found for this device'}), 404
+
+    return jsonify(analyse(outage)), 200
+
+
+@devices_bp.route('/<int:device_id>/outages/<int:outage_id>/explain', methods=['POST'])
+@jwt_required()
+def device_outage_explain(device_id, outage_id):
+    """Ask the assistant to reason over the evidence for one outage.
+
+    Deliberately a second request rather than part of the analysis above: the
+    deterministic findings must stand on their own, load instantly and cost
+    nothing, and an operator should choose to spend a call rather than have
+    every row open spend one. The model is handed the SAME structured evidence
+    the panel shows and is told not to invent anything beyond it — a confident
+    narrative over no evidence is the failure mode worth designing out.
+    """
+    from models import DeviceOutage
+    from services import ai_assistant
+    from services.outage_analysis import analyse
+
+    device = MikrotikDevice.query.get_or_404(device_id)
+    current_user = get_current_user()
+    if current_user.role != 'admin' and device.isp_id != current_user.isp_id:
+        return jsonify({'error': 'Access denied'}), 403
+
+    outage = DeviceOutage.query.filter_by(id=outage_id, device_id=device.id).first()
+    if outage is None:
+        return jsonify({'error': 'Outage not found for this device'}), 404
+
+    evidence = analyse(outage)
+    question = (
+        'You are diagnosing one router outage for an ISP operator. Below is ALL the evidence '
+        'the platform holds about it, as JSON.\n\n'
+        f'{json.dumps(evidence, indent=2)}\n\n'
+        'Write a short diagnosis for a field engineer: the most likely cause, what to check first, '
+        'and what would confirm or rule it out. Ground every claim in the evidence above — if it '
+        'does not settle something, say so plainly rather than guessing. Do not repeat the raw '
+        'numbers back; interpret them. Keep it under 200 words, no preamble.'
+    )
+
+    try:
+        result = ai_assistant.ask(device.isp, question)
+    except ai_assistant.AiNotConfigured as exc:
+        return jsonify({'error': str(exc), 'configured': False}), 400
+    except ai_assistant.AiError as exc:
+        return jsonify({'error': str(exc)}), 502
+
+    return jsonify({
+        'answer': result.get('answer'),
+        'model': result.get('model'),
+        'source': result.get('source'),
+    }), 200
+
+
 @devices_bp.route('/<int:device_id>/self-check', methods=['POST'])
 @jwt_required()
 def device_self_check(device_id):

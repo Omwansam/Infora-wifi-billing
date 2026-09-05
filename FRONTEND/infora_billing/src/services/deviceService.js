@@ -60,6 +60,33 @@ class DeviceService {
     return data;
   }
 
+  /** Deterministic diagnosis for one outage — free, instant, no AI. */
+  async getOutageAnalysis(token, deviceId, outageId) {
+    const response = await fetch(
+      `${this.baseURL}/${deviceId}/outages/${outageId}/analysis`,
+      { method: 'GET', headers: getAuthHeaders(token) },
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP error! status: ${response.status}`);
+    return data;
+  }
+
+  /** Ask the assistant to reason over that same evidence. Costs a call, so it
+   *  is only ever fired when the operator explicitly asks for it. */
+  async explainOutage(token, deviceId, outageId) {
+    const response = await fetch(
+      `${this.baseURL}/${deviceId}/outages/${outageId}/explain`,
+      { method: 'POST', headers: getAuthHeaders(token) },
+    );
+    const data = await response.json();
+    if (!response.ok) {
+      const err = new Error(data.error || `HTTP error! status: ${response.status}`);
+      err.configured = data.configured;
+      throw err;
+    }
+    return data;
+  }
+
   async getDevice(token, deviceId) {
     try {
       const response = await fetch(`${this.baseURL}/${deviceId}`, {

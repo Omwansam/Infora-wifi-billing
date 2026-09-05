@@ -9,6 +9,7 @@ import { formatDuration } from '../../lib/networkUtils';
 import {
   byDuration, byHour, insights as buildInsights, reliability,
 } from '../../lib/outageAnalytics';
+import OutageAnalysisDrawer from './OutageAnalysisDrawer';
 
 /** "720h 0m" is technically right and unreadable; past a day, say days. */
 function spanLabel(minutes) {
@@ -239,6 +240,7 @@ function Tile({ icon: Icon, label, value, sub, tone = 'text-slate-900 dark:text-
 
 export default function DeviceDowntimeHistory({ deviceId }) {
   const [days, setDays] = useState(30);
+  const [openOutageId, setOpenOutageId] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -447,7 +449,14 @@ export default function DeviceDowntimeHistory({ deviceId }) {
           )}
 
           <div className="mt-6">
-            <p className="mb-3 text-sm font-medium text-slate-700 dark:text-slate-200">Outage log</p>
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Outage log</p>
+              {outages.length > 0 && (
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  Select any outage to diagnose what caused it
+                </p>
+              )}
+            </div>
             {outages.length === 0 ? (
               <div className="flex flex-col items-center rounded-xl border border-dashed border-slate-200 py-12 text-center dark:border-slate-800">
                 <CheckCircle2 className="h-9 w-9 text-emerald-500/70" />
@@ -470,11 +479,25 @@ export default function DeviceDowntimeHistory({ deviceId }) {
                       <th className="px-4 py-2.5 text-right font-semibold">Duration</th>
                       <th className="px-4 py-2.5 text-right font-semibold">Uptime before</th>
                       <th className="px-4 py-2.5 font-semibold">Subscriber credit</th>
+                      <th className="px-4 py-2.5 font-semibold"><span className="sr-only">Analyse</span></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {outages.map((o, i) => (
-                      <tr key={o.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                      <tr
+                        key={o.id}
+                        onClick={() => setOpenOutageId(o.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setOpenOutageId(o.id);
+                          }
+                        }}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`Analyse the outage that started ${new Date(o.started_at).toLocaleString()}`}
+                        className="group cursor-pointer hover:bg-slate-50/70 focus:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:hover:bg-slate-800/40 dark:focus:bg-slate-800/60"
+                      >
                         <td className="px-4 py-3 whitespace-nowrap text-slate-900 dark:text-white">
                           {new Date(o.started_at).toLocaleString()}
                         </td>
@@ -521,6 +544,12 @@ export default function DeviceDowntimeHistory({ deviceId }) {
                             <span className="text-slate-400 dark:text-slate-500">—</span>
                           )}
                         </td>
+                        {/* A row that does something has to look like it does. */}
+                        <td className="px-4 py-3 text-right">
+                          <span className="whitespace-nowrap text-xs font-medium text-blue-600 opacity-0 transition group-hover:opacity-100 group-focus:opacity-100 dark:text-blue-400">
+                            Analyse →
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -529,6 +558,14 @@ export default function DeviceDowntimeHistory({ deviceId }) {
             )}
           </div>
         </>
+      )}
+
+      {openOutageId != null && (
+        <OutageAnalysisDrawer
+          deviceId={deviceId}
+          outageId={openOutageId}
+          onClose={() => setOpenOutageId(null)}
+        />
       )}
     </div>
   );
