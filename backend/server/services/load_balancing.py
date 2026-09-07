@@ -646,9 +646,19 @@ def build_lb_steps(device, config):
     return steps
 
 
-def build_lb_remove_steps(config=None):
-    """Teardown: strip every infora-lb artifact and restore single-WAN NAT."""
-    lan_note = (config or {}).get('lan_interface', DEFAULT_LAN)  # noqa: F841 (kept for symmetry)
+def build_lb_remove_steps(config=None, restore_ports=None):
+    """Teardown: strip every infora-lb artifact and restore single-WAN NAT.
+
+    ``restore_ports`` is an explicit list of ``(port, bridge)`` pairs to put
+    back into a bridge. It is passed in rather than derived from ``config``
+    because the WAN ports alone do not say where a port belongs: only the
+    caller knows which of them were LAN ports before the apply reclaimed them.
+
+    Re-bridging must never be guessed. Adding a genuine second ISP uplink into
+    the subscriber bridge would be far worse than leaving it out — the ISP's
+    DHCP would leak onto the LAN, and on a switched estate it can form a loop.
+    So this restores only what it is explicitly told to.
+    """
     steps = [
         ('remove-mangle', f':do {{/ip firewall mangle remove [find comment~"{LB_COMMENT}"]}} on-error={{}}'),
         ('remove-nat', f':do {{/ip firewall nat remove [find comment~"{LB_COMMENT}"]}} on-error={{}}'),
@@ -677,6 +687,19 @@ def build_lb_remove_steps(config=None):
     steps.append(('restore-nat',
         ':do {/ip firewall nat remove [find comment="infora-masquerade"]} on-error={}; '
         '/ip firewall nat add chain=srcnat action=masquerade comment="infora-masquerade"'))
+    # Put reclaimed subscriber ports back into the LAN bridge.
+    #
+    # Without this, "Disable dual-WAN" left the port outside the bridge: the
+    # routing artifacts all went away and the config read as clean, while a
+    # downstream port stayed dead and nothing in the console said so. Guarded by
+    # a find, so re-running teardown cannot add a duplicate port row.
+    for port, bridge in (restore_ports or []):
+        if not port or not bridge:
+            continue
+        steps.append((f'rebridge-{port}',
+            f':if ([:len [/interface bridge port find interface={port}]]=0) do={{'
+            f'/interface bridge port add bridge={bridge} interface={port}}}'))
+
     # Turn FastTrack back on (a plain accelerator rule) for single-WAN.
     steps.append(('restore-fasttrack',
         ':if ([:len [/ip firewall filter find action=fasttrack-connection]]=0) do={'
@@ -840,6 +863,29 @@ def _unreadable(state, *keys):
     """
     unread = set(state.get('_unread') or ())
     return [k for k in keys if k in unread]
+
+
+def _is_slave_of(state, port, bridge):
+    """True when ``port`` is enslaved specifically to ``bridge``.
+
+    Deliberately matched by both names appearing on one row of
+    ``/interface bridge port print`` rather than by column position: the column
+    order differs between RouterOS versions, and a row naming both the port and
+    the bridge means exactly one thing. Header and legend rows never name both.
+
+    The distinction this enables matters. Being *some* bridge's slave is normal
+    and expected — a factory MikroTik ships ether1 inside ``bridgeLocal``, and
+    reclaiming it is the whole point of the apply. Being a slave of the LAN
+    bridge we ourselves built is different: that port is carrying subscriber
+    traffic right now.
+    """
+    if not bridge:
+        return False
+    for line in state.get('bridge_ports', '').splitlines():
+        parts = line.split()
+        if port in parts and bridge in parts:
+            return True
+    return False
 
 
 def _iface_is_slave(state, port):
@@ -1099,6 +1145,23 @@ def preflight_wan_config(device, config):
                 f'default route until the rollback guard restores it.'
             )
 
+        # Reclaiming a port from SOME bridge is routine — defconf bridges ether1
+        # on a factory router and the apply exists partly to undo that. Taking a
+        # port out of the LAN bridge we built is not routine: that port is
+        # serving subscribers this second, and pointing a "WAN" at it both cuts
+        # them off and gives the router an uplink with no upstream. Fusion was
+        # lost for four days exactly this way — ether2 was a PPPoE subscriber
+        # port and was selected as WAN2, so the recursive default failed over
+        # onto a line that faces our own customers.
+        if _is_slave_of(state, port, lan):
+            blockers.append(
+                f'{key}: {port} is a port of the LAN bridge {lan} — it is serving '
+                f'subscribers right now, not facing an ISP. Using it as an uplink '
+                f'would remove it from the bridge (cutting those subscribers off) and '
+                f'point a default route at your own network. Move the uplink to a free '
+                f'port, or re-run Configure Services with {port} set to skip first.'
+            )
+            continue
         if _iface_is_slave(state, port):
             warnings.append(
                 f'{key}: {port} is currently a bridge slave; it will be removed '
@@ -1268,9 +1331,50 @@ def push_lb_steps(device, steps):
     return {'success': not failed, 'log': log}
 
 
-def build_lb_remove_script(device, config=None):
+def ports_to_restore(device, config=None):
+    """``(port, bridge)`` pairs the teardown may safely put back in the bridge.
+
+    Only ports the device's own service config calls a LAN role qualify. A port
+    that was a real uplink is never returned: bridging an ISP handoff into the
+    subscriber LAN is a worse outage than the one being repaired.
+
+    Reads the stored ``wan_config`` when none is supplied, because Disable is
+    normally pressed with no config in hand.
+    """
+    import json as _json
+
+    if config is None:
+        raw = getattr(device, 'wan_config', None)
+        try:
+            config = _json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            config = {}
+
+    try:
+        service = _json.loads(getattr(device, 'service_config', None) or '{}')
+    except (TypeError, ValueError):
+        service = {}
+    roles = service.get('port_roles') or {}
+    if not roles:
+        return []
+
+    lan = (config.get('lan_interface') or DEFAULT_LAN).strip()
+    ports = [line.get('port') for line in (config.get('lines') or []) if line.get('port')]
+    if not ports:  # legacy {wan1, wan2} shape
+        ports = [config.get(key, {}).get('port') for key in ('wan1', 'wan2')
+                 if isinstance(config.get(key), dict)]
+
+    out = []
+    for port in ports:
+        role = roles.get(port)
+        if role and role != 'skip':
+            out.append((port, lan))
+    return out
+
+
+def build_lb_remove_script(device, config=None, restore_ports=None):
     """Full teardown .rsc for the Disable action."""
-    steps = build_lb_remove_steps(config)
+    steps = build_lb_remove_steps(config, restore_ports=restore_ports)
     header = [
         f'# Infora dual-WAN — DISABLE / rollback for {getattr(device, "device_name", "router")}',
         f'# Removes every comment="{LB_COMMENT}" artifact and restores single-WAN NAT.',

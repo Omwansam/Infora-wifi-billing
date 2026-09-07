@@ -431,14 +431,25 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
 
       {isOn && (
         <>
+          {/* This used to be advice. It is now a stop.
+              A router was lost for four days to exactly this: a subscriber port
+              picked as WAN2, reclaimed from the bridge, and then used as a
+              failover target that faced our own customers instead of an ISP.
+              The warning was shown and the apply went ahead anyway, so the
+              warning was not doing the job a warning can do. */}
           {lanPortWarnings.length > 0 && (
-            <div className="mt-4 flex gap-2 rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+            <div className="mt-4 flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-500/30 dark:bg-rose-950/30 dark:text-rose-300">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
               <span>
-                {lanPortWarnings.join(', ')} {lanPortWarnings.length === 1 ? 'is' : 'are'} currently
-                {' '}LAN {lanPortWarnings.length === 1 ? 'port' : 'ports'}. Using {lanPortWarnings.length === 1 ? 'it' : 'them'} as
-                an uplink removes {lanPortWarnings.length === 1 ? 'it' : 'them'} from the bridge — {lanPortWarnings.length === 1 ? 'that downstream port goes' : 'those downstream ports go'} away.
-                Run <strong>Configure services</strong> first so the LAN bridge exists, then apply multi-WAN.
+                <strong>
+                  {lanPortWarnings.join(', ')} {lanPortWarnings.length === 1 ? 'is a LAN port' : 'are LAN ports'} —
+                  this cannot be applied.
+                </strong>{' '}
+                {lanPortWarnings.length === 1 ? 'It is' : 'They are'} serving subscribers right now, not facing an ISP.
+                Using {lanPortWarnings.length === 1 ? 'it' : 'them'} as an uplink removes {lanPortWarnings.length === 1 ? 'it' : 'them'} from
+                the bridge — cutting those subscribers off — and points a default route at your own network.
+                Move the uplink to a free port, or re-run <strong>Configure services</strong> with
+                {' '}{lanPortWarnings.length === 1 ? 'that port' : 'those ports'} set to skip first.
               </span>
             </div>
           )}
@@ -534,9 +545,11 @@ export default function DualWanPanel({ deviceId, device, onApplied }) {
           </button>
           <button
             onClick={apply}
-            disabled={!!busy || !isOn || problems.length > 0}
+            disabled={!!busy || !isOn || problems.length > 0 || lanPortWarnings.length > 0}
+            title={lanPortWarnings.length > 0
+              ? 'Blocked: a chosen uplink port is currently serving subscribers'
+              : 'Push over the management tunnel'}
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-            title="Push over the management tunnel"
           >
             {busy === 'apply' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
             {busy === 'apply' ? 'Applying…' : 'Apply now'}

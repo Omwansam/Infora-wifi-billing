@@ -1345,7 +1345,9 @@ def load_balancing_script(device_id):
     device, denied = _lb_authz(device_id)
     if denied:
         return denied
-    from services.load_balancing import validate_wan_config, build_lb_script, build_lb_remove_script
+    from services.load_balancing import (
+        validate_wan_config, build_lb_script, build_lb_remove_script, ports_to_restore,
+    )
 
     config, err = validate_wan_config(request.get_json(silent=True) or {})
     if err:
@@ -1354,7 +1356,8 @@ def load_balancing_script(device_id):
         'ok': True,
         'mode': config['mode'],
         'script': build_lb_script(device, config),
-        'remove_script': build_lb_remove_script(device, config),
+        'remove_script': build_lb_remove_script(
+            device, config, restore_ports=ports_to_restore(device, config)),
     }), 200
 
 
@@ -1600,13 +1603,20 @@ def disable_load_balancing(device_id):
     device, denied = _lb_authz(device_id)
     if denied:
         return denied
-    from services.load_balancing import build_lb_remove_steps, push_lb_steps, validate_wan_config
+    from services.load_balancing import (
+        build_lb_remove_steps, ports_to_restore, push_lb_steps, validate_wan_config,
+    )
 
     payload = request.get_json(silent=True) or {}
     apply_now = bool(payload.get('apply', True))
     result = {'ok': True, 'applied': False}
+    # Ports the apply reclaimed from the LAN bridge have to go back, or Disable
+    # reports success while a downstream port stays dead. Computed from the
+    # stored config before it is overwritten with `off` below.
+    restore = ports_to_restore(device)
+    result['restored_ports'] = [port for port, _ in restore]
     if apply_now:
-        push = push_lb_steps(device, build_lb_remove_steps())
+        push = push_lb_steps(device, build_lb_remove_steps(restore_ports=restore))
         result['applied'] = push['success']
         result['log'] = push['log']
         result['ok'] = push['success']
