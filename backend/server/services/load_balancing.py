@@ -1145,24 +1145,25 @@ def preflight_wan_config(device, config):
                 f'default route until the rollback guard restores it.'
             )
 
-        # Reclaiming a port from SOME bridge is routine — defconf bridges ether1
-        # on a factory router and the apply exists partly to undo that. Taking a
-        # port out of the LAN bridge we built is not routine: that port is
-        # serving subscribers this second, and pointing a "WAN" at it both cuts
-        # them off and gives the router an uplink with no upstream. Fusion was
-        # lost for four days exactly this way — ether2 was a PPPoE subscriber
-        # port and was selected as WAN2, so the recursive default failed over
-        # onto a line that faces our own customers.
+        # Promoting a LAN port to a WAN is a supported operation — repurposing a
+        # port is exactly what you do when a second uplink arrives — so this
+        # warns rather than blocks. It is deliberately NOT a blocker: the role
+        # comes from the last pushed service config, which goes stale precisely
+        # when someone rewires a port, and refusing on a stale role would reject
+        # configs the router itself validates.
+        #
+        # The real hazard — a "WAN" with nothing upstream — is caught by state
+        # rather than by role: the carrier check below, the LAN-subnet check
+        # above, and verify_lb's "has an upstream address", which fails the
+        # apply and lets the rollback guard put the router back.
         if _is_slave_of(state, port, lan):
-            blockers.append(
-                f'{key}: {port} is a port of the LAN bridge {lan} — it is serving '
-                f'subscribers right now, not facing an ISP. Using it as an uplink '
-                f'would remove it from the bridge (cutting those subscribers off) and '
-                f'point a default route at your own network. Move the uplink to a free '
-                f'port, or re-run Configure Services with {port} set to skip first.'
+            warnings.append(
+                f'{key}: {port} is currently a port of the LAN bridge {lan}. It will be '
+                f'removed from the bridge to act as a WAN, and anything connected to it '
+                f'loses service until it is put back. Disabling dual-WAN restores it to '
+                f'the bridge.'
             )
-            continue
-        if _iface_is_slave(state, port):
+        elif _iface_is_slave(state, port):
             warnings.append(
                 f'{key}: {port} is currently a bridge slave; it will be removed '
                 f'from that bridge so it can act as a WAN'

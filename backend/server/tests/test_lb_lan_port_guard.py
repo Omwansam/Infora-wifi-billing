@@ -7,14 +7,26 @@ over onto that line and the management tunnel never came back. The router itself
 stayed perfectly healthy the whole time — uptime climbing, CPU at 2% — which is
 why nothing else on the page caught it.
 
-Two defects, tested here:
+Promoting a LAN port to a WAN is a SUPPORTED operation — repurposing a port is
+exactly what you do when a second uplink arrives — so it is not blocked. It was
+blocked briefly and that was wrong: the port role comes from the last pushed
+service config and goes stale the moment someone rewires, so refusing on it
+rejects configs the router itself validates. Fusion's own config verified at
+apply time, which is why it persisted.
 
-1. Pre-flight treated "is a bridge slave" as a WARNING. It has to stay a warning
-   in general (a factory MikroTik bridges ether1 in defconf, and reclaiming it is
-   the entire point of the apply) but being a slave of *our own LAN bridge* is a
-   different fact and must block.
-2. Teardown never restored bridge membership, so "Disable dual-WAN" reported
-   success while the subscriber port stayed dead.
+What is guaranteed instead:
+
+1. The operator is TOLD what the operation costs — the port leaves the bridge and
+   whatever is on it loses service — with the role named precisely. Warning, not
+   blocker.
+2. Teardown restores bridge membership, so the operation is reversible. It
+   previously did not, and "Disable dual-WAN" reported success while a subscriber
+   port stayed dead.
+
+The real hazard — an uplink with nothing upstream — is caught by state rather
+than by role: the carrier check, the LAN-subnet check, and verify_lb's "has an
+upstream address", which fails the apply so the rollback guard restores the
+router.
 
 Run: backend/.venv/bin/python -m pytest backend/server/tests -q
 """
@@ -152,30 +164,35 @@ def _preflight(monkeypatch, config, state=None):
     return lb.preflight_wan_config(FakeDevice(), config)
 
 
-def test_the_fusion_config_is_now_blocked(monkeypatch):
-    """The exact config that stranded Fusion: ether2 is a LAN bridge port."""
-    blockers, _ = _preflight(monkeypatch, {
-        'mode': 'load_balance', 'lan_interface': 'infora-bridge',
-        'wan1': {'port': 'ether1', 'type': 'dhcp'},
-        'wan2': {'port': 'ether2', 'type': 'dhcp'},
-        'probe_hosts': ['8.8.8.8', '1.0.0.1'],
-    })
-    assert any('ether2' in b and 'infora-bridge' in b for b in blockers), blockers
+FUSION_CONFIG = {
+    'mode': 'load_balance', 'lan_interface': 'infora-bridge',
+    'wan1': {'port': 'ether1', 'type': 'dhcp'},
+    'wan2': {'port': 'ether2', 'type': 'dhcp'},
+    'probe_hosts': ['8.8.8.8', '1.0.0.1'],
+}
 
 
-def test_the_block_says_how_to_clear_it(monkeypatch):
-    blockers, _ = _preflight(monkeypatch, {
-        'mode': 'failover', 'lan_interface': 'infora-bridge',
-        'wan1': {'port': 'ether1', 'type': 'dhcp'},
-        'wan2': {'port': 'ether2', 'type': 'dhcp'},
-        'probe_hosts': ['8.8.8.8', '1.0.0.1'],
-    })
-    joined = ' '.join(blockers)
-    assert 'serving subscribers' in joined and 'Configure Services' in joined
+def test_promoting_a_lan_port_to_a_wan_is_allowed(monkeypatch):
+    """The regression this file exists to hold: it must NOT be refused.
+
+    Repurposing a port is a real thing operators do. Blocking it on a stored
+    role also blocks the case where they have already moved the cable.
+    """
+    blockers, _ = _preflight(monkeypatch, FUSION_CONFIG)
+    assert blockers == [], blockers
 
 
-def test_a_factory_bridged_uplink_still_only_warns(monkeypatch):
-    """ether1 in defconf's bridge must remain applyable — that is the normal case."""
+def test_but_the_operator_is_told_what_it_costs(monkeypatch):
+    _, warnings = _preflight(monkeypatch, FUSION_CONFIG)
+    joined = ' '.join(warnings)
+    assert 'ether2' in joined and 'infora-bridge' in joined, warnings
+    assert 'loses service' in joined, warnings
+    # ...and that it is reversible, which is only true because teardown restores.
+    assert 'restores it to the bridge' in joined, warnings
+
+
+def test_a_factory_bridged_uplink_warns_without_naming_our_bridge(monkeypatch):
+    """ether1 in defconf's bridge is the normal case and must stay applyable."""
     state = dict(FUSION_STATE, bridge_ports=DEFCONF_PORTS)
     blockers, warnings = _preflight(monkeypatch, {
         'mode': 'failover', 'lan_interface': 'infora-bridge',
@@ -185,3 +202,14 @@ def test_a_factory_bridged_uplink_still_only_warns(monkeypatch):
     }, state=state)
     assert blockers == [], blockers
     assert any('bridge slave' in w for w in warnings), warnings
+
+
+def test_a_dead_port_is_still_refused(monkeypatch):
+    """State-based checks keep their teeth: no carrier is still a blocker."""
+    blockers, _ = _preflight(monkeypatch, {
+        'mode': 'failover', 'lan_interface': 'infora-bridge',
+        'wan1': {'port': 'ether1', 'type': 'dhcp'},
+        'wan2': {'port': 'ether4', 'type': 'dhcp'},
+        'probe_hosts': ['8.8.8.8', '1.0.0.1'],
+    }, state=dict(FUSION_STATE, interfaces=FUSION_INTERFACES + ' 4     ether4  ether  1500\n'))
+    assert any('ether4' in b and 'no link' in b for b in blockers), blockers
